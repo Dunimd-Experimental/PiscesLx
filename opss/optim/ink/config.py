@@ -49,7 +49,7 @@ from utils.opsc.interface import PiscesLxOperatorConfig
 
 
 @dataclass
-class POPSSInkConfig(PiscesLxOperatorConfig):
+class PiscesLxInkConfig(PiscesLxOperatorConfig):
     """
     Ink Optimizer Configuration - Unified Optimization with Memory Compression.
     
@@ -114,7 +114,7 @@ class POPSSInkConfig(PiscesLxOperatorConfig):
         
     Example:
         >>> # Basic configuration
-        >>> config = POPSSInkConfig(
+        >>> config = PiscesLxInkConfig(
         ...     lr=1e-3,
         ...     momentum_bits=8,
         ...     variance_bits=4,
@@ -122,7 +122,7 @@ class POPSSInkConfig(PiscesLxOperatorConfig):
         ... )
         
         >>> # Full configuration with all integrations
-        >>> config = POPSSInkConfig(
+        >>> config = PiscesLxInkConfig(
         ...     lr=1e-4,
         ...     momentum_bits=8,
         ...     variance_bits=4,
@@ -133,8 +133,8 @@ class POPSSInkConfig(PiscesLxOperatorConfig):
         ...     use_root_ortho=True
         ... )
         
-        >>> # Create from existing OptimizerConfig
-        >>> ink_config = POPSSInkConfig.from_optimizer_config(optimizer_config)
+        >>> # Create from existing PiscesLxOptimizerConfig
+        >>> ink_config = PiscesLxInkConfig.from_optimizer_config(optimizer_config)
     """
     name: str = "ink"
     version: str = VERSION
@@ -221,18 +221,18 @@ class POPSSInkConfig(PiscesLxOperatorConfig):
             raise ValueError(f"variance_block_size must be positive, got {self.variance_block_size}")
     
     @classmethod
-    def from_optimizer_config(cls, opt_config: Any) -> "POPSSInkConfig":
+    def from_optimizer_config(cls, opt_config: Any) -> "PiscesLxInkConfig":
         """
-        Create Ink configuration from existing OptimizerConfig.
+        Create Ink configuration from existing PiscesLxOptimizerConfig.
         
         This method reads all relevant parameters from the existing
-        OptimizerConfig to ensure backward compatibility.
+        PiscesLxOptimizerConfig to ensure backward compatibility.
         
         Args:
-            opt_config: Existing OptimizerConfig instance
+            opt_config: Existing PiscesLxOptimizerConfig instance
             
         Returns:
-            POPSSInkConfig instance with parameters from opt_config
+            PiscesLxInkConfig instance with parameters from opt_config
         """
         return cls(
             lr=getattr(opt_config, 'learning_rate', 1e-4),

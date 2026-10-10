@@ -26,7 +26,7 @@ from __future__ import annotations
 import os
 from typing import Dict, List, Any, Optional
 
-from evalscope.models import ModelConfig
+from evalscope.models import PiscesLxModelConfig
 from evalscope.metrics import MetricConfig
 from evalscope.datasets import DatasetConfig
 from evalscope import TaskConfig
@@ -39,8 +39,8 @@ class PiscesLxToolsModelConfigBuilder:
     """Builder for model configurations"""
 
     @staticmethod
-    def build(config: PiscesLxToolsBenchmarkConfig) -> ModelConfig:
-        return ModelConfig(
+    def build(config: PiscesLxToolsBenchmarkConfig) -> PiscesLxModelConfig:
+        return PiscesLxModelConfig(
             model_id=config.model_path,
             model_name=config.model_name,
             device=config.device,

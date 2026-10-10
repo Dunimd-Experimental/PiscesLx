@@ -635,8 +635,8 @@ class YvDynamicMoELayer(nn.Module):
         self.fused_dispatch = None
         if self.use_fused_moe:
             try:
-                from opss.infer.fused_moe import FusedMoEDispatch
-                self.fused_dispatch = FusedMoEDispatch(
+                from opss.infer.fused_moe import PiscesLxFusedMoEDispatch
+                self.fused_dispatch = PiscesLxFusedMoEDispatch(
                     num_experts=self.num_experts,
                     top_k=self.top_k,
                 )

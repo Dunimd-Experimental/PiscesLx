@@ -27,7 +27,7 @@ from __future__ import annotations
 Run Store - State File Management for YvReActAction System.
 
 This module provides the core storage layer for action system state files.
-All state files are protected by POPSSStateGuard to ensure only authorized
+All state files are protected by PiscesLxStateGuard to ensure only authorized
 action system components can modify them.
 
 State Files:
@@ -40,7 +40,7 @@ State Files:
     - artifacts.json: Artifact records
 
 Note:
-    External modules should use POPSSStateReader for read-only access.
+    External modules should use PiscesLxStateReader for read-only access.
     Direct write access is restricted to action system components only.
 """
 
@@ -51,10 +51,10 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-from .lock import POPSSFileLock
+from .lock import PiscesLxFileLock
 
 
-class POPSSRunStore:
+class PiscesLxRunStore:
     """
     Run Store - State File Management for YvReActAction System.
     
@@ -67,7 +67,7 @@ class POPSSRunStore:
         _paths: Dictionary mapping file keys to paths.
     
     Example:
-        >>> store = POPSSRunStore("train_001")
+        >>> store = PiscesLxRunStore("train_001")
         >>> store.write_state({"status": "running", "pid": 12345})
         >>> state = store.read_state()
         {'status': 'running', 'pid': 12345}
@@ -129,7 +129,7 @@ class POPSSRunStore:
         os.replace(tmp, file_path)
 
     def write_spec(self, spec: Dict[str, Any]) -> None:
-        with POPSSFileLock(self._paths["lock"]):
+        with PiscesLxFileLock(self._paths["lock"]):
             self._atomic_write_json(self._paths["spec"], spec)
 
     def read_spec(self) -> Dict[str, Any]:
@@ -140,7 +140,7 @@ class POPSSRunStore:
             return json.load(f) or {}
 
     def write_state(self, state: Dict[str, Any]) -> None:
-        with POPSSFileLock(self._paths["lock"]):
+        with PiscesLxFileLock(self._paths["lock"]):
             self._atomic_write_json(self._paths["state"], state)
 
     def read_state(self) -> Dict[str, Any]:
@@ -151,7 +151,7 @@ class POPSSRunStore:
             return json.load(f) or {}
 
     def merge_state(self, patch: Dict[str, Any]) -> Dict[str, Any]:
-        with POPSSFileLock(self._paths["lock"]):
+        with PiscesLxFileLock(self._paths["lock"]):
             cur = self.read_state()
             cur.update(patch or {})
             self._atomic_write_json(self._paths["state"], cur)
@@ -161,7 +161,7 @@ class POPSSRunStore:
         p = self._paths[key]
         self.ensure()
         line = json.dumps(obj, ensure_ascii=False)
-        with POPSSFileLock(self._paths["lock"]):
+        with PiscesLxFileLock(self._paths["lock"]):
             with open(p, "a", encoding="utf-8") as f:
                 f.write(line + "\n")
                 f.flush()
@@ -183,7 +183,7 @@ class POPSSRunStore:
             return json.load(f) or {}
 
     def merge_artifacts(self, patch: Dict[str, Any]) -> Dict[str, Any]:
-        with POPSSFileLock(self._paths["lock"]):
+        with PiscesLxFileLock(self._paths["lock"]):
             cur = self.read_artifacts()
             cur.update(patch or {})
             self._atomic_write_json(self._paths["artifacts"], cur)

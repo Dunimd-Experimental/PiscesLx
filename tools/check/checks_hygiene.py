@@ -524,7 +524,7 @@ class PiscesLxDanglingImportCheck(PiscesLxStandardCheck):
         names = set()
         # Top-level ``if TRITON:`` / ``try:`` blocks bind module attributes at runtime,
         # so names defined only inside them must count as exported. Restricting the walk
-        # to ``tree.body`` reported FusedAdamW and fused_rms_norm as missing.
+        # to ``tree.body`` reported PiscesLxFusedAdamW and fused_rms_norm as missing.
         scope_nodes = []
         for node in tree.body:
             scope_nodes.append(node)
@@ -563,7 +563,7 @@ class PiscesLxDanglingImportCheck(PiscesLxStandardCheck):
 
         A plain substring test gave false negatives: searching for
         ``AdaptiveBitAllocationOperator`` inside a module defining
-        ``POPSSAdaptiveBitAllocationOperator`` matches, so a genuinely missing symbol was
+        ``PiscesLxAdaptiveBitAllocationOperator`` matches, so a genuinely missing symbol was
         reported as present. Only ``__init__.py`` re-exports, and matching must be on
         word boundaries within import statements or ``__all__`` entries.
         """

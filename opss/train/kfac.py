@@ -80,23 +80,23 @@ Dependencies:
 
 Usage Examples:
     >>> from opss.train.kfac import (
-    ...     POPSSKFacConfig,
-    ...     POPSSKFacOperator
+    ...     PiscesLxKFacConfig,
+    ...     PiscesLxKFacOperator
     ... )
     
-    >>> config = POPSSKFacConfig(
+    >>> config = PiscesLxKFacConfig(
     ...     damping=0.001,
     ...     update_freq=100,
     ...     diag_first=True,
     ...     adaptive_damping=True
     ... )
     
-    >>> operator = POPSSKFacOperator(config)
+    >>> operator = PiscesLxKFacOperator(config)
     >>> result = operator.execute({"model": model})
 
 Integration:
     This operator integrates with PiscesLxTrainingEngine through the
-    AdvancedTrainingCoordinator in opss/train/impl.py. It should be
+    PiscesLxAdvancedTrainingCoordinator in opss/train/impl.py. It should be
     executed after backward pass and before optimizer.step().
 
 See Also:
@@ -125,7 +125,7 @@ from utils.opsc.interface import (
 )
 
 
-class POPSSKFacLayerType(Enum):
+class PiscesLxKFacLayerType(Enum):
     """
     Classification of layer types for K-FAC computation.
     
@@ -149,7 +149,7 @@ class POPSSKFacLayerType(Enum):
 
 
 @dataclass
-class POPSSKFacConfig(PiscesLxOperatorConfig):
+class PiscesLxKFacConfig(PiscesLxOperatorConfig):
     """
     Configuration for K-FAC natural gradient preconditioning.
     
@@ -193,7 +193,7 @@ class POPSSKFacConfig(PiscesLxOperatorConfig):
         warmup_steps: 100
         
     Example:
-        >>> config = POPSSKFacConfig(
+        >>> config = PiscesLxKFacConfig(
         ...     damping=0.001,
         ...     update_freq=100,
         ...     momentum=0.95,
@@ -227,7 +227,7 @@ class POPSSKFacConfig(PiscesLxOperatorConfig):
 
 
 # Paper: Martens & Grosse, "Optimizing Neural Networks with Kronecker-factored Approximate Curvature", ICML 2015
-class POPSSKFacOperator(PiscesLxOperatorInterface):
+class PiscesLxKFacOperator(PiscesLxOperatorInterface):
     """
     K-FAC natural gradient preconditioning operator.
     
@@ -249,7 +249,7 @@ class POPSSKFacOperator(PiscesLxOperatorInterface):
        - Gradient preconditioning in eigenbasis
     
     Attributes:
-        config: POPSSKFacConfig instance
+        config: PiscesLxKFacConfig instance
         layer_info: Dictionary tracking layer information
         cov_a: Dictionary of input covariances (A = E[aa^T])
         cov_g: Dictionary of output covariances (G = E[gg^T])
@@ -267,7 +267,7 @@ class POPSSKFacOperator(PiscesLxOperatorInterface):
         Diagonal approximations reduce to O(n * d).
     """
     
-    def __init__(self, config: Optional[POPSSKFacConfig] = None):
+    def __init__(self, config: Optional[PiscesLxKFacConfig] = None):
         """
         Initialize the K-FAC operator.
         
@@ -276,7 +276,7 @@ class POPSSKFacOperator(PiscesLxOperatorInterface):
                    with standard K-FAC parameters is used.
         """
         super().__init__(config)
-        self.config = config or POPSSKFacConfig()
+        self.config = config or PiscesLxKFacConfig()
         self.layer_info: Dict[str, Dict] = {}
         self.cov_a: Dict[str, torch.Tensor] = {}
         self.cov_g: Dict[str, torch.Tensor] = {}
@@ -430,7 +430,7 @@ class POPSSKFacOperator(PiscesLxOperatorInterface):
     def _detect_layer_type(
         self,
         module: nn.Module
-    ) -> POPSSKFacLayerType:
+    ) -> PiscesLxKFacLayerType:
         """
         Detect the type of a neural network module.
         
@@ -438,23 +438,23 @@ class POPSSKFacOperator(PiscesLxOperatorInterface):
             module: The module to classify.
             
         Returns:
-            POPSSKFacLayerType enum value.
+            PiscesLxKFacLayerType enum value.
         """
         if isinstance(module, nn.Linear):
-            return POPSSKFacLayerType.LINEAR
+            return PiscesLxKFacLayerType.LINEAR
         elif isinstance(module, nn.Conv2d):
-            return POPSSKFacLayerType.CONV2D
+            return PiscesLxKFacLayerType.CONV2D
         elif isinstance(module, nn.Embedding):
-            return POPSSKFacLayerType.EMBEDDING
+            return PiscesLxKFacLayerType.EMBEDDING
         elif isinstance(module, nn.LayerNorm):
-            return POPSSKFacLayerType.LAYER_NORM
+            return PiscesLxKFacLayerType.LAYER_NORM
         elif isinstance(module, nn.BatchNorm2d):
-            return POPSSKFacLayerType.BATCH_NORM
+            return PiscesLxKFacLayerType.BATCH_NORM
         else:
             for child in module.children():
                 if isinstance(child, nn.MultiheadAttention):
-                    return POPSSKFacLayerType.ATTENTION
-            return POPSSKFacLayerType.LINEAR
+                    return PiscesLxKFacLayerType.ATTENTION
+            return PiscesLxKFacLayerType.LINEAR
     
     def _register_hooks(
         self,
@@ -502,7 +502,7 @@ class POPSSKFacOperator(PiscesLxOperatorInterface):
         
         for module in model.modules():
             layer_type = self._detect_layer_type(module)
-            if layer_type in [POPSSKFacLayerType.LINEAR, POPSSKFacLayerType.CONV2D]:
+            if layer_type in [PiscesLxKFacLayerType.LINEAR, PiscesLxKFacLayerType.CONV2D]:
                 handle_f = module.register_forward_hook(forward_hook)
                 handle_b = module.register_backward_hook(backward_hook)
                 handles.extend([handle_f, handle_b])
@@ -524,14 +524,14 @@ class POPSSKFacOperator(PiscesLxOperatorInterface):
         layer_info = self.layer_info[layer_id]
         layer_type = layer_info['type']
         
-        if layer_type == POPSSKFacLayerType.LINEAR:
+        if layer_type == PiscesLxKFacLayerType.LINEAR:
             dim = activation.shape[-1]
             if self.config.diag_first:
                 self.cov_a[layer_id] = torch.zeros(dim, device=activation.device)
             else:
                 self.cov_a[layer_id] = torch.eye(dim, device=activation.device)
         
-        elif layer_type == POPSSKFacLayerType.CONV2D:
+        elif layer_type == PiscesLxKFacLayerType.CONV2D:
             batch, channels, height, width = activation.shape
             dim = channels * height * width
             if self.config.diag_first:
@@ -556,14 +556,14 @@ class POPSSKFacOperator(PiscesLxOperatorInterface):
         layer_info = self.layer_info[layer_id]
         layer_type = layer_info['type']
         
-        if layer_type == POPSSKFacLayerType.LINEAR:
+        if layer_type == PiscesLxKFacLayerType.LINEAR:
             dim = grad_output.shape[-1]
             if self.config.diag_first:
                 self.cov_g[layer_id] = torch.zeros(dim, device=grad_output.device)
             else:
                 self.cov_g[layer_id] = torch.eye(dim, device=grad_output.device)
         
-        elif layer_type == POPSSKFacLayerType.CONV2D:
+        elif layer_type == PiscesLxKFacLayerType.CONV2D:
             batch, channels, height, width = grad_output.shape
             dim = channels * height * width
             if self.config.diag_first:
@@ -587,10 +587,10 @@ class POPSSKFacOperator(PiscesLxOperatorInterface):
         """
         layer_type = self.layer_info[layer_id]['type']
         
-        if layer_type == POPSSKFacLayerType.LINEAR:
+        if layer_type == PiscesLxKFacLayerType.LINEAR:
             activation = activation.view(-1, activation.shape[-1])
         
-        elif layer_type == POPSSKFacLayerType.CONV2D:
+        elif layer_type == PiscesLxKFacLayerType.CONV2D:
             batch, channels, height, width = activation.shape
             activation = activation.view(batch, -1)
         
@@ -621,10 +621,10 @@ class POPSSKFacOperator(PiscesLxOperatorInterface):
         """
         layer_type = self.layer_info[layer_id]['type']
         
-        if layer_type == POPSSKFacLayerType.LINEAR:
+        if layer_type == PiscesLxKFacLayerType.LINEAR:
             grad_output = grad_output.view(-1, grad_output.shape[-1])
         
-        elif layer_type == POPSSKFacLayerType.CONV2D:
+        elif layer_type == PiscesLxKFacLayerType.CONV2D:
             batch, channels, height, width = grad_output.shape
             grad_output = grad_output.view(batch, -1)
         
@@ -1000,7 +1000,7 @@ class POPSSKFacOperator(PiscesLxOperatorInterface):
         self._logger.info("K-FAC operator state reset")
 
 
-class POPSSKFacFacade:
+class PiscesLxKFacFacade:
     """
     Convenience facade for quick K-FAC setup and usage.
     
@@ -1008,7 +1008,7 @@ class POPSSKFacFacade:
     automatically handling hook registration and step coordination.
     
     Usage:
-        >>> facade = POPSSKFacFacade()
+        >>> facade = PiscesLxKFacFacade()
         >>> 
         >>> # During forward pass
         >>> facade.register_hooks(model)
@@ -1037,14 +1037,14 @@ class POPSSKFacFacade:
             adaptive_damping: Enable adaptive damping adjustment
             **kwargs: Additional configuration
         """
-        config = POPSSKFacConfig(
+        config = PiscesLxKFacConfig(
             damping=damping,
             update_freq=update_freq,
             momentum=momentum,
             adaptive_damping=adaptive_damping,
             **kwargs
         )
-        self.operator = POPSSKFacOperator(config)
+        self.operator = PiscesLxKFacOperator(config)
         self._handles = []
     
     def register_hooks(self, model: nn.Module) -> None:
@@ -1121,8 +1121,8 @@ class POPSSKFacFacade:
 
 
 __all__ = [
-    "POPSSKFacLayerType",
-    "POPSSKFacConfig",
-    "POPSSKFacOperator",
-    "POPSSKFacFacade",
+    "PiscesLxKFacLayerType",
+    "PiscesLxKFacConfig",
+    "PiscesLxKFacOperator",
+    "PiscesLxKFacFacade",
 ]

@@ -38,7 +38,7 @@ preference pairs. The algorithm follows SPIN/Self-Rewarding paradigm:
 
 Key Design:
     - No external reward model required — uses model's own judgment
-    - Optional POPSSGenerativeRewardModel head for denser reward signal
+    - Optional PiscesLxGenerativeRewardModel head for denser reward signal
     - GRPO-style group-relative advantage when num_samples >= 2
     - Self-critique via perplexity/confidence/log-probability scoring
 
@@ -64,7 +64,7 @@ from utils.opsc.interface import (
 
 
 @dataclass
-class POPSSSelfPlayConfig(PiscesLxOperatorConfig):
+class PiscesLxSelfPlayConfig(PiscesLxOperatorConfig):
     name: str = "self_play"
     version: str = VERSION
 
@@ -99,16 +99,16 @@ class POPSSSelfPlayConfig(PiscesLxOperatorConfig):
     mmr_lambda: float = 0.5
 
 
-class POPSSSelfPlayTrainer:
+class PiscesLxSelfPlayTrainer:
     """
     Self-Play Trainer orchestrating generate → critique → train → repeat.
 
     The trainer can operate in two modes:
         1. Self-Critic mode (default): model scores its own generations
-        2. Reward Model mode: external POPSSGenerativeRewardModel scores
+        2. Reward Model mode: external PiscesLxGenerativeRewardModel scores
 
     Example:
-        >>> config = POPSSSelfPlayConfig(num_rounds=3, num_samples=4)
+        >>> config = PiscesLxSelfPlayConfig(num_rounds=3, num_samples=4)
         >>> trainer = YvSelfPlayTrainer(model, tokenizer, config)
         >>> result = trainer.train(prompts=training_prompts)
     """
@@ -117,14 +117,14 @@ class POPSSSelfPlayTrainer:
         self,
         model: nn.Module,
         tokenizer: Any,
-        config: Optional[POPSSSelfPlayConfig] = None,
+        config: Optional[PiscesLxSelfPlayConfig] = None,
         reward_model: Optional[nn.Module] = None,
         optimizer: Optional[torch.optim.Optimizer] = None,
         reference_model: Optional[nn.Module] = None,
     ):
         self.model = model
         self.tokenizer = tokenizer
-        self.config = config or POPSSSelfPlayConfig()
+        self.config = config or PiscesLxSelfPlayConfig()
         self.reward_model = reward_model
         self.reference_model = reference_model
         self.optimizer = optimizer or torch.optim.AdamW(

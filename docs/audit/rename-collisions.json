@@ -1,0 +1,37 @@
+[
+ {
+  "from": "LoadBalancer",
+  "to": "PiscesLxLoadBalancer",
+  "files": [
+   "opss/infer/moe_runtime.py"
+  ]
+ },
+ {
+  "from": "POPSSGPUScheduler",
+  "to": "PiscesLxGPUScheduler",
+  "files": [
+   "opss/run/gpu_scheduler.py"
+  ]
+ },
+ {
+  "from": "POPSSResourceAllocation",
+  "to": "PiscesLxResourceAllocation",
+  "files": [
+   "opss/run/resources.py"
+  ]
+ },
+ {
+  "from": "POPSSParallelismType",
+  "to": "PiscesLxParallelismType",
+  "files": [
+   "opss/train/parallel_3d.py"
+  ]
+ },
+ {
+  "from": "RunInfo",
+  "to": "PiscesLxRunInfo",
+  "files": [
+   "tools/infer/protocol.py"
+  ]
+ }
+]

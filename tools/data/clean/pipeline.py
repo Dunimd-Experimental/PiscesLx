@@ -29,7 +29,7 @@ import json
 import hashlib
 import pandas as pd
 from typing import Optional, Dict, Any, List, Tuple, Callable, Iterator
-from datasets import load_from_disk, Dataset, concatenate_datasets
+from datasets import load_from_disk, PiscesLxDataset, concatenate_datasets
 from dataclasses import dataclass, field
 from enum import Enum
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
@@ -45,7 +45,7 @@ from .quality import PiscesLxToolsDataQualityController
 _LOG = PiscesLxLogger("PiscesLx.Tools.Data", file_path=get_log_file("PiscesLx.Tools.Data"), enable_file=True)
 
 
-class CleaningMode(Enum):
+class PiscesLxCleaningMode(Enum):
     LOCAL = "local"
     DISTRIBUTED_RAY = "distributed_ray"
     DISTRIBUTED_DASK = "distributed_dask"
@@ -61,7 +61,7 @@ class PiscesLxDataCleaningConfig:
     enable_quality_scoring: bool = True
     enable_incremental: bool = False
     checkpoint_interval: int = 5000
-    mode: CleaningMode = CleaningMode.LOCAL
+    mode: PiscesLxCleaningMode = PiscesLxCleaningMode.LOCAL
     preserve_metadata: bool = True
     dedup_enabled: bool = False
     dedup_method: str = "minhash"
@@ -189,7 +189,7 @@ class PiscesLxDataQualityAwareCleaner:
         return self._cleaning_stats.copy()
 
 
-class DatasetCleaner:
+class PiscesLxDatasetCleaner:
     _incremental_states: Dict[str, PiscesLxDataIncrementalState] = {}
 
     @classmethod
@@ -207,7 +207,7 @@ class DatasetCleaner:
         **clean_kwargs: Any
     ) -> Tuple[int, int]:
         if not os.path.exists(input_path):
-            raise FileNotFoundError(f"Dataset path does not exist: {input_path}")
+            raise FileNotFoundError(f"PiscesLxDataset path does not exist: {input_path}")
 
         config = config or PiscesLxDataCleaningConfig(
             min_text_length=int(clean_kwargs.get("min_length", 1)),
@@ -255,7 +255,7 @@ class DatasetCleaner:
                     raise ValueError(f"No text field found. Columns: {list(df.columns)}")
 
         if text_field in ["conversations", "messages", "conversation", "code"]:
-            df[text_field] = df[text_field].apply(DatasetCleaner._extract_text_from_complex_format)
+            df[text_field] = df[text_field].apply(PiscesLxDatasetCleaner._extract_text_from_complex_format)
 
         quality_cleaner = PiscesLxDataQualityAwareCleaner(config)
 
@@ -275,7 +275,7 @@ class DatasetCleaner:
         df = df[mask]
 
         df = df.dropna(how="all")
-        cleaned = Dataset.from_pandas(df, preserve_index=False)
+        cleaned = PiscesLxDataset.from_pandas(df, preserve_index=False)
         cleaned.save_to_disk(output_path)
 
         return len(df), original_size
@@ -314,12 +314,12 @@ class DatasetCleaner:
         config = config or PiscesLxDataCleaningConfig()
         results: Dict[str, Tuple[int, int]] = {}
 
-        if config.mode == CleaningMode.DISTRIBUTED_RAY:
-            results = DatasetCleaner._process_with_ray(input_paths, output_dir, config, progress_callback)
-        elif config.mode == CleaningMode.DISTRIBUTED_DASK:
-            results = DatasetCleaner._process_with_dask(input_paths, output_dir, config, progress_callback)
+        if config.mode == PiscesLxCleaningMode.DISTRIBUTED_RAY:
+            results = PiscesLxDatasetCleaner._process_with_ray(input_paths, output_dir, config, progress_callback)
+        elif config.mode == PiscesLxCleaningMode.DISTRIBUTED_DASK:
+            results = PiscesLxDatasetCleaner._process_with_dask(input_paths, output_dir, config, progress_callback)
         else:
-            results = DatasetCleaner._process_with_multiprocessing(input_paths, output_dir, config, progress_callback)
+            results = PiscesLxDatasetCleaner._process_with_multiprocessing(input_paths, output_dir, config, progress_callback)
 
         return results
 
@@ -334,7 +334,7 @@ class DatasetCleaner:
             import ray
         except ImportError:
             _LOG.warning("Ray not installed, falling back to multiprocessing")
-            return DatasetCleaner._process_with_multiprocessing(input_paths, output_dir, config, progress_callback)
+            return PiscesLxDatasetCleaner._process_with_multiprocessing(input_paths, output_dir, config, progress_callback)
 
         if not ray.is_initialized():
             ray.init(ignore_reinit_error=True)
@@ -343,7 +343,7 @@ class DatasetCleaner:
         def clean_remote(input_path: str, output_path: str, config_dict: dict):
             cfg = PiscesLxDataCleaningConfig(**config_dict)
             try:
-                return DatasetCleaner.process_dataset(input_path, output_path, config=cfg)
+                return PiscesLxDatasetCleaner.process_dataset(input_path, output_path, config=cfg)
             except Exception as e:
                 _LOG.error(f"Ray worker failed: {e}")
                 return (0, 0)
@@ -393,7 +393,7 @@ class DatasetCleaner:
             from dask.distributed import Client
         except ImportError:
             _LOG.warning("Dask not installed, falling back to multiprocessing")
-            return DatasetCleaner._process_with_multiprocessing(input_paths, output_dir, config, progress_callback)
+            return PiscesLxDatasetCleaner._process_with_multiprocessing(input_paths, output_dir, config, progress_callback)
 
         results = {}
         total = len(input_paths)
@@ -402,7 +402,7 @@ class DatasetCleaner:
             try:
                 name = os.path.basename(input_path)
                 output_path = os.path.join(output_dir, f"{name}_clean")
-                result = DatasetCleaner.process_dataset(input_path, output_path, config=config)
+                result = PiscesLxDatasetCleaner.process_dataset(input_path, output_path, config=config)
                 results[input_path] = result
                 if progress_callback:
                     progress_callback(i + 1, total)
@@ -428,7 +428,7 @@ class DatasetCleaner:
                 name = os.path.basename(input_path)
                 output_path = os.path.join(output_dir, f"{name}_clean")
                 try:
-                    result = DatasetCleaner.process_dataset(input_path, output_path, config=config)
+                    result = PiscesLxDatasetCleaner.process_dataset(input_path, output_path, config=config)
                     results[input_path] = result
                 except Exception as e:
                     _LOG.error(f"Processing failed for {input_path}: {e}")
@@ -443,7 +443,7 @@ class DatasetCleaner:
                 args.append((input_path, output_path, config))
 
             with ProcessPoolExecutor(max_workers=workers) as executor:
-                futures = {executor.submit(DatasetCleaner._process_single_wrapper, arg): arg[0] for arg in args}
+                futures = {executor.submit(PiscesLxDatasetCleaner._process_single_wrapper, arg): arg[0] for arg in args}
                 for i, future in enumerate(as_completed(futures)):
                     input_path = futures[future]
                     try:
@@ -459,7 +459,7 @@ class DatasetCleaner:
     @staticmethod
     def _process_single_wrapper(args):
         input_path, output_path, config = args
-        return DatasetCleaner.process_dataset(input_path, output_path, config=config)
+        return PiscesLxDatasetCleaner.process_dataset(input_path, output_path, config=config)
 
     @staticmethod
     def process_incremental(
@@ -471,7 +471,7 @@ class DatasetCleaner:
         config = config or PiscesLxDataCleaningConfig(enable_incremental=True)
 
         state_path = state_file or os.path.join(output_dir, ".cleaning_state.json")
-        state = DatasetCleaner.get_incremental_state(state_path)
+        state = PiscesLxDatasetCleaner.get_incremental_state(state_path)
 
         todo_paths = []
         for name in os.listdir(input_dir):
@@ -484,7 +484,7 @@ class DatasetCleaner:
             _LOG.info("No new files to process (incremental mode)")
             return {}
 
-        results = DatasetCleaner.process_distributed(todo_paths, output_dir, config)
+        results = PiscesLxDatasetCleaner.process_distributed(todo_paths, output_dir, config)
 
         for input_path, (cleaned, total) in results.items():
             state.mark_processed(input_path, cleaned)
@@ -516,7 +516,7 @@ class DatasetCleaner:
                 if text_field in row:
                     v = row[text_field]
                     if isinstance(v, (list, dict)):
-                        v = DatasetCleaner._extract_text_from_complex_format(v)
+                        v = PiscesLxDatasetCleaner._extract_text_from_complex_format(v)
 
                     cleaned_text, score, metrics = quality_cleaner.clean_with_quality(str(v) if v else "")
                     row[text_field] = cleaned_text
@@ -579,7 +579,7 @@ class DatasetCleaner:
         def _worker(ds_path):
             try:
                 ds = load_from_disk(ds_path)
-                cleaner = _StreamCleaner(min_len=min_len, max_len=max_len)
+                cleaner = _PiscesLxStreamCleaner(min_len=min_len, max_len=max_len)
                 chunk = []
                 step = 10000
                 for s in range(0, len(ds), step):
@@ -595,7 +595,7 @@ class DatasetCleaner:
                                 lambda x: cleaner.clean_media(str(x), mtype) if pd.notna(x) else None
                             )
                     if len(df) > 0:
-                        chunk.append(Dataset.from_pandas(df))
+                        chunk.append(PiscesLxDataset.from_pandas(df))
                     del df, sub
                     gc.collect()
                 return concatenate_datasets(chunk) if chunk else None
@@ -655,8 +655,8 @@ class DatasetCleaner:
         for name in os.listdir(input_dir):
             in_p = os.path.join(input_dir, name)
             if os.path.isdir(in_p) and not name.endswith("_clean"):
-                if not DatasetCleaner.is_download_complete(in_p):
-                    _LOG.debug(f"Dataset {name} download not complete, skip")
+                if not PiscesLxDatasetCleaner.is_download_complete(in_p):
+                    _LOG.debug(f"PiscesLxDataset {name} download not complete, skip")
                     continue
                 out_p = os.path.join(output_dir, f"{name}_clean")
                 if not os.path.exists(out_p):
@@ -670,12 +670,12 @@ class DatasetCleaner:
 
         if config.max_workers <= 1 or len(todo) <= 1:
             for name, in_p, out_p in todo:
-                DatasetCleaner._process_single_dataset(name, in_p, out_p, media_fields, config=config, **clean_kwargs)
+                PiscesLxDatasetCleaner._process_single_dataset(name, in_p, out_p, media_fields, config=config, **clean_kwargs)
         else:
             _LOG.debug(f"Using {config.max_workers} processes to clean {len(todo)} datasets...")
             args = [(n, i, o, media_fields, config, clean_kwargs) for (n, i, o) in todo]
             with ProcessPoolExecutor(max_workers=config.max_workers) as ex:
-                fut = {ex.submit(DatasetCleaner._process_single_dataset_wrapper, a): a[0] for a in args}
+                fut = {ex.submit(PiscesLxDatasetCleaner._process_single_dataset_wrapper, a): a[0] for a in args}
                 for f in as_completed(fut):
                     name = fut[f]
                     try:
@@ -692,7 +692,7 @@ class DatasetCleaner:
     @staticmethod
     def _process_single_dataset_wrapper(args):
         n, i, o, m, cfg, kw = args
-        return DatasetCleaner._process_single_dataset(n, i, o, m, config=cfg, **kw)
+        return PiscesLxDatasetCleaner._process_single_dataset(n, i, o, m, config=cfg, **kw)
 
     @staticmethod
     def _process_single_dataset(
@@ -707,13 +707,13 @@ class DatasetCleaner:
 
         try:
             if not os.path.exists(input_path):
-                _LOG.debug(f"Dataset does not exist: {input_path}")
+                _LOG.debug(f"PiscesLxDataset does not exist: {input_path}")
                 return (0, 0)
 
             try:
                 dataset = load_from_disk(input_path)
                 if len(dataset) == 0:
-                    _LOG.debug(f"Dataset {dataset_name} is empty, skip")
+                    _LOG.debug(f"PiscesLxDataset {dataset_name} is empty, skip")
                     return (0, 0)
                 _LOG.debug(f"Processing dataset: {dataset_name} ({len(dataset)} rows)")
             except Exception as e:
@@ -721,11 +721,11 @@ class DatasetCleaner:
                 return (0, 0)
 
             if media_fields:
-                cleaned, total = DatasetCleaner.process_multimodal_dataset(
+                cleaned, total = PiscesLxDatasetCleaner.process_multimodal_dataset(
                     input_path, output_path, media_fields=media_fields, config=config, **clean_kwargs
                 )
             else:
-                cleaned, total = DatasetCleaner.process_dataset(
+                cleaned, total = PiscesLxDatasetCleaner.process_dataset(
                     input_path, output_path, config=config, **clean_kwargs
                 )
             return (cleaned, total)
@@ -759,7 +759,7 @@ class DatasetCleaner:
             return (0, 0)
 
         total = len(dataset)
-        multimodal_fields = media_fields or _StreamCleaner.find_multimodal_fields_from_dataset(dataset)
+        multimodal_fields = media_fields or _PiscesLxStreamCleaner.find_multimodal_fields_from_dataset(dataset)
 
         cleaned_rows: List[Dict[str, Any]] = []
         text_scores: List[float] = []
@@ -767,7 +767,7 @@ class DatasetCleaner:
 
         for i in range(0, total, config.batch_size):
             chunk = dataset.select(range(i, min(i + config.batch_size, total)))
-            rows, ts, ms = DatasetCleaner._process_chunk_with_quality(
+            rows, ts, ms = PiscesLxDatasetCleaner._process_chunk_with_quality(
                 chunk, text_field, multimodal_fields, config.enable_quality_scoring, config, **kwargs
             )
             cleaned_rows.extend(rows)
@@ -782,14 +782,14 @@ class DatasetCleaner:
 
         if cleaned_rows:
             df = pd.DataFrame(cleaned_rows)
-            ds = Dataset.from_pandas(df)
+            ds = PiscesLxDataset.from_pandas(df)
             ds.save_to_disk(output_path)
             return (len(cleaned_rows), total)
 
         return (0, total)
 
 
-class _StreamCleaner:
+class _PiscesLxStreamCleaner:
     def __init__(self, min_len: int = 1, max_len: int = 1024):
         self.min_len = min_len
         self.max_len = max_len

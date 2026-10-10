@@ -29,7 +29,7 @@ import torch.nn.functional as F
 from typing import Optional, List, Tuple
 
 
-class FusedMoEDispatch(nn.Module):
+class PiscesLxFusedMoEDispatch(nn.Module):
     """Sort-based MoE dispatch with contiguous expert computation.
 
     Replaces the per-expert mask-scan loop with a single argsort,
@@ -126,6 +126,6 @@ def fused_moe_dispatch(
 
     Convenience wrapper for one-off use without instantiating the module.
     """
-    return FusedMoEDispatch(num_experts, top_k)(
+    return PiscesLxFusedMoEDispatch(num_experts, top_k)(
         x_flat, routing_weights, expert_indices, experts
     )

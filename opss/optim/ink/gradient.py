@@ -49,7 +49,7 @@ from dataclasses import dataclass
 from configs.version import VERSION
 
 
-class POPSSInkGradientCompressor:
+class PiscesLxInkGradientCompressor:
     """
     INT8 Gradient Compressor.
     
@@ -63,7 +63,7 @@ class POPSSInkGradientCompressor:
         stochastic_rounding: Whether to use stochastic rounding
     
     Example:
-        >>> compressor = POPSSInkGradientCompressor(gradient_bits=8, block_size=128)
+        >>> compressor = PiscesLxInkGradientCompressor(gradient_bits=8, block_size=128)
         >>> compressed_grad, scales = compressor.compress(gradient)
         >>> decompressed = compressor.decompress(compressed_grad, scales, shape)
     """

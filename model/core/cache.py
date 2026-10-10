@@ -2559,7 +2559,7 @@ class YvLynxKVQuantizer:
 class YvSTARKVAdapter:
     """Adapter connecting STAR-KV compression to the Yv cache pipeline.
 
-    Integrates STARKVCompression from opss/quantize/methods.py into the
+    Integrates PiscesLxSTARKVCompression from opss/quantize/methods.py into the
     cache update path. 75% KV compression, 6.9x attention speedup (arXiv:2606.08382).
     """
     def __init__(self, kv_dim: int, compression_target: float = 0.75):

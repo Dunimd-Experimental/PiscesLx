@@ -37,9 +37,9 @@ Key Features:
     - Recovery state persistence
 
 Usage:
-    from opss.run.recovery import POPSSTaskRecovery
+    from opss.run.recovery import PiscesLxTaskRecovery
     
-    recovery = POPSSTaskRecovery(controller)
+    recovery = PiscesLxTaskRecovery(controller)
     
     if recovery.check_crashed("train_001"):
         checkpoint = recovery.find_latest_checkpoint("train_001")
@@ -57,12 +57,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from .controller import POPSSRunController
-from .store import POPSSRunStore
+from .controller import PiscesLxRunController
+from .store import PiscesLxRunStore
 
 
 @dataclass
-class POPSSCheckpointInfo:
+class PiscesLxCheckpointInfo:
     """Checkpoint information structure."""
     checkpoint_path: str
     step: int
@@ -75,7 +75,7 @@ class POPSSCheckpointInfo:
 
 
 @dataclass
-class POPSSRecoveryState:
+class PiscesLxRecoveryState:
     """Recovery state for a task."""
     task_id: str
     original_run_id: str
@@ -87,7 +87,7 @@ class POPSSRecoveryState:
     recovery_history: List[Dict[str, Any]] = field(default_factory=list)
 
 
-class POPSSTaskRecovery:
+class PiscesLxTaskRecovery:
     """
     Auto-Recovery System for LLM Training Tasks.
     
@@ -102,7 +102,7 @@ class POPSSTaskRecovery:
         _checkpoint_patterns: Regex patterns for checkpoint discovery.
     
     Example:
-        >>> recovery = POPSSTaskRecovery(controller)
+        >>> recovery = PiscesLxTaskRecovery(controller)
         >>> if recovery.check_and_recover("train_001"):
         ...     print("Task recovered successfully")
     """
@@ -117,7 +117,7 @@ class POPSSTaskRecovery:
     
     def __init__(
         self,
-        controller: Optional[POPSSRunController] = None,
+        controller: Optional[PiscesLxRunController] = None,
         state_dir: Optional[str] = None,
         checkpoint_dirs: Optional[List[str]] = None,
     ):
@@ -130,7 +130,7 @@ class POPSSTaskRecovery:
             checkpoint_dirs: List of checkpoint directories to search.
         """
         self._controller = controller
-        self._recovery_states: Dict[str, POPSSRecoveryState] = {}
+        self._recovery_states: Dict[str, PiscesLxRecoveryState] = {}
         self._lock = threading.RLock()
         
         if state_dir is None:
@@ -159,7 +159,7 @@ class POPSSTaskRecovery:
                 data = json.load(f)
             
             for task_id, state_data in data.get("recovery_states", {}).items():
-                self._recovery_states[task_id] = POPSSRecoveryState(
+                self._recovery_states[task_id] = PiscesLxRecoveryState(
                     task_id=state_data["task_id"],
                     original_run_id=state_data["original_run_id"],
                     restart_count=state_data.get("restart_count", 0),
@@ -202,7 +202,7 @@ class POPSSTaskRecovery:
         run_id: str,
         max_restarts: int = 3,
         recovery_enabled: bool = True,
-    ) -> POPSSRecoveryState:
+    ) -> PiscesLxRecoveryState:
         """
         Register a task for recovery tracking.
         
@@ -216,7 +216,7 @@ class POPSSTaskRecovery:
             Recovery state for the task.
         """
         with self._lock:
-            state = POPSSRecoveryState(
+            state = PiscesLxRecoveryState(
                 task_id=task_id,
                 original_run_id=run_id,
                 max_restarts=max_restarts,
@@ -243,7 +243,7 @@ class POPSSTaskRecovery:
                 return True
             return False
     
-    def get_recovery_state(self, task_id: str) -> Optional[POPSSRecoveryState]:
+    def get_recovery_state(self, task_id: str) -> Optional[PiscesLxRecoveryState]:
         """
         Get recovery state for a task.
         
@@ -256,7 +256,7 @@ class POPSSTaskRecovery:
         with self._lock:
             return self._recovery_states.get(task_id)
     
-    def check_crashed(self, task_id: str, store: Optional[POPSSRunStore] = None) -> bool:
+    def check_crashed(self, task_id: str, store: Optional[PiscesLxRunStore] = None) -> bool:
         """
         Check if a task has crashed.
         
@@ -297,7 +297,7 @@ class POPSSTaskRecovery:
         task_id: str,
         checkpoint_dir: Optional[str] = None,
         validate: bool = True,
-    ) -> Optional[POPSSCheckpointInfo]:
+    ) -> Optional[PiscesLxCheckpointInfo]:
         """
         Find the latest valid checkpoint for a task.
         
@@ -334,7 +334,7 @@ class POPSSTaskRecovery:
         directory: str,
         validate: bool,
         task_filter: Optional[str] = None,
-    ) -> List[POPSSCheckpointInfo]:
+    ) -> List[PiscesLxCheckpointInfo]:
         """Scan a directory for checkpoints."""
         checkpoints = []
         
@@ -375,7 +375,7 @@ class POPSSTaskRecovery:
         path: str,
         step: int,
         validate: bool,
-    ) -> Optional[POPSSCheckpointInfo]:
+    ) -> Optional[PiscesLxCheckpointInfo]:
         """Create checkpoint info from path."""
         try:
             stat = os.stat(path)
@@ -396,7 +396,7 @@ class POPSSTaskRecovery:
             if validate:
                 is_valid = self._validate_checkpoint(path)
             
-            return POPSSCheckpointInfo(
+            return PiscesLxCheckpointInfo(
                 checkpoint_path=path,
                 step=step,
                 epoch=metadata.get("epoch", 0),
@@ -452,8 +452,8 @@ class POPSSTaskRecovery:
     def restart_task(
         self,
         task_id: str,
-        checkpoint: Optional[POPSSCheckpointInfo] = None,
-        store: Optional[POPSSRunStore] = None,
+        checkpoint: Optional[PiscesLxCheckpointInfo] = None,
+        store: Optional[PiscesLxRunStore] = None,
     ) -> Tuple[bool, str]:
         """
         Restart a crashed task from checkpoint.
@@ -501,7 +501,7 @@ class POPSSTaskRecovery:
     def check_and_recover(
         self,
         task_id: str,
-        store: Optional[POPSSRunStore] = None,
+        store: Optional[PiscesLxRunStore] = None,
     ) -> Tuple[bool, str]:
         """
         Check if task crashed and attempt recovery.
@@ -568,7 +568,7 @@ class POPSSTaskRecovery:
                 ),
             }
     
-    def get_all_recovery_states(self) -> Dict[str, POPSSRecoveryState]:
+    def get_all_recovery_states(self) -> Dict[str, PiscesLxRecoveryState]:
         """
         Get all recovery states.
         
@@ -638,7 +638,7 @@ class POPSSTaskRecovery:
             
             return len(to_remove)
     
-    def scan_all_checkpoints(self) -> Dict[str, List[POPSSCheckpointInfo]]:
+    def scan_all_checkpoints(self) -> Dict[str, List[PiscesLxCheckpointInfo]]:
         """
         Scan all checkpoint directories for available checkpoints.
         

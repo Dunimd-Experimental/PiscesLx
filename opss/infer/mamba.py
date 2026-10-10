@@ -41,9 +41,9 @@ References:
     - S5: Simplified State Space Layers (Smith et al., 2022)
 
 Usage:
-    >>> from opss.infer.mamba import POPSSMambaOperator, POPSSMambaConfig
-    >>> config = POPSSMambaConfig(d_model=4096, d_state=16, d_conv=4)
-    >>> operator = POPSSMambaOperator(config)
+    >>> from opss.infer.mamba import PiscesLxMambaOperator, PiscesLxMambaConfig
+    >>> config = PiscesLxMambaConfig(d_model=4096, d_state=16, d_conv=4)
+    >>> operator = PiscesLxMambaOperator(config)
     >>> result = operator.execute({"hidden_states": hidden_states})
 """
 
@@ -62,7 +62,7 @@ from utils.paths import get_log_file
 from configs.version import VERSION
 
 
-class POPSSSSMType(Enum):
+class PiscesLxSSMType(Enum):
     """State Space Model types."""
     MAMBA = "mamba"
     S4 = "s4"
@@ -72,7 +72,7 @@ class POPSSSSMType(Enum):
 
 
 @dataclass
-class POPSSMambaConfig:
+class PiscesLxMambaConfig:
     """
     Configuration for Mamba/SSM Operator.
     
@@ -105,13 +105,13 @@ class POPSSMambaConfig:
     dt_init_floor: float = 1e-4
     conv_bias: bool = True
     bias: bool = False
-    ssm_type: POPSSSSMType = POPSSSSMType.MAMBA
+    ssm_type: PiscesLxSSMType = PiscesLxSSMType.MAMBA
     use_fast_path: bool = True
     layer_norm_epsilon: float = 1e-5
     
     def __post_init__(self):
         if isinstance(self.ssm_type, str):
-            self.ssm_type = POPSSSSMType(self.ssm_type)
+            self.ssm_type = PiscesLxSSMType(self.ssm_type)
         
         self.d_inner = self.d_model * self.expand_factor
         
@@ -119,7 +119,7 @@ class POPSSMambaConfig:
             self.dt_rank = math.ceil(self.d_model / 16)
 
 
-class POPSSMambaOperator(PiscesLxOperatorInterface):
+class PiscesLxMambaOperator(PiscesLxOperatorInterface):
     """
     Mamba/SSM Operator for Efficient Sequence Modeling.
     
@@ -137,18 +137,18 @@ class POPSSMambaOperator(PiscesLxOperatorInterface):
         - Mamba SSM: O(n)
     
     Example:
-        >>> config = POPSSMambaConfig(d_model=4096, d_state=16)
-        >>> operator = POPSSMambaOperator(config)
+        >>> config = PiscesLxMambaConfig(d_model=4096, d_state=16)
+        >>> operator = PiscesLxMambaOperator(config)
         >>> output = operator.execute({"hidden_states": x})
     """
     
-    def __init__(self, config: Optional[POPSSMambaConfig] = None):
+    def __init__(self, config: Optional[PiscesLxMambaConfig] = None):
         super().__init__()
         self.name = "infer.mamba"
         self.version = VERSION
         self.type = "inference"
         self._LOG = PiscesLxLogger("PiscesLx.Opss.Infer",file_path=get_log_file("PiscesLx.Opss.Infer"), enable_file=True)
-        self.config = config or POPSSMambaConfig()
+        self.config = config or PiscesLxMambaConfig()
         
         self._init_parameters()
         self._mamba_available = self._check_mamba_availability()
@@ -356,7 +356,7 @@ class POPSSMambaOperator(PiscesLxOperatorInterface):
         }
 
 
-class POPSSMambaLayer(nn.Module):
+class PiscesLxMambaLayer(nn.Module):
     """
     Mamba Layer for transformer-style integration.
     
@@ -364,10 +364,10 @@ class POPSSMambaLayer(nn.Module):
     O(n) complexity for long sequences.
     """
     
-    def __init__(self, config: POPSSMambaConfig):
+    def __init__(self, config: PiscesLxMambaConfig):
         super().__init__()
         self.config = config
-        self.operator = POPSSMambaOperator(config)
+        self.operator = PiscesLxMambaOperator(config)
     
     def forward(self, hidden_states: torch.Tensor,
                 inference_params: Optional[Any] = None) -> torch.Tensor:
@@ -382,7 +382,7 @@ class POPSSMambaLayer(nn.Module):
             raise RuntimeError(f"Mamba forward failed: {result.error}")
 
 
-class POPSSMambaMixer(nn.Module):
+class PiscesLxMambaMixer(nn.Module):
     """
     Mamba Mixer block combining Mamba with MLP.
     
@@ -390,12 +390,12 @@ class POPSSMambaMixer(nn.Module):
         LayerNorm -> Mamba -> LayerNorm -> MLP
     """
     
-    def __init__(self, config: POPSSMambaConfig, mlp_ratio: float = 4.0):
+    def __init__(self, config: PiscesLxMambaConfig, mlp_ratio: float = 4.0):
         super().__init__()
         self.config = config
         
         self.norm1 = nn.LayerNorm(config.d_model)
-        self.mamba = POPSSMambaLayer(config)
+        self.mamba = PiscesLxMambaLayer(config)
         
         self.norm2 = nn.LayerNorm(config.d_model)
         self.mlp = nn.Sequential(
@@ -410,7 +410,7 @@ class POPSSMambaMixer(nn.Module):
         return hidden_states
 
 
-class POPSSMamba2Operator(PiscesLxOperatorInterface):
+class PiscesLxMamba2Operator(PiscesLxOperatorInterface):
     """
     Mamba-2 Operator with improved architecture.
     
@@ -420,15 +420,15 @@ class POPSSMamba2Operator(PiscesLxOperatorInterface):
         - Better hardware utilization
     """
     
-    def __init__(self, config: Optional[POPSSMambaConfig] = None):
+    def __init__(self, config: Optional[PiscesLxMambaConfig] = None):
         super().__init__()
         self.name = "infer.mamba2"
         self.version = VERSION
         self.type = "inference"
         self._LOG = PiscesLxLogger("popss.ops.infer.mamba2")
-        self.config = config or POPSSMambaConfig(ssm_type=POPSSSSMType.MAMBA2)
+        self.config = config or PiscesLxMambaConfig(ssm_type=PiscesLxSSMType.MAMBA2)
         
-        self._mamba1 = POPSSMambaOperator(self.config)
+        self._mamba1 = PiscesLxMambaOperator(self.config)
     
     def execute(self, inputs: Dict[str, Any], **kwargs) -> PiscesLxOperatorResult:
         """Execute Mamba-2 forward pass."""
@@ -458,10 +458,10 @@ class POPSSMamba2Operator(PiscesLxOperatorInterface):
 
 
 __all__ = [
-    "POPSSSSMType",
-    "POPSSMambaConfig",
-    "POPSSMambaOperator",
-    "POPSSMambaLayer",
-    "POPSSMambaMixer",
-    "POPSSMamba2Operator",
+    "PiscesLxSSMType",
+    "PiscesLxMambaConfig",
+    "PiscesLxMambaOperator",
+    "PiscesLxMambaLayer",
+    "PiscesLxMambaMixer",
+    "PiscesLxMamba2Operator",
 ]

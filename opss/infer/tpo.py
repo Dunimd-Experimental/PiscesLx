@@ -73,7 +73,7 @@ from utils.opsc.interface import (
 )
 
 
-class POPSSTPOFeedbackType(Enum):
+class PiscesLxTPOFeedbackType(Enum):
     """Types of feedback for TPO."""
     TEXTUAL = "textual"
     NUMERIC = "numeric"
@@ -81,7 +81,7 @@ class POPSSTPOFeedbackType(Enum):
 
 
 @dataclass
-class POPSSTPOConfig(PiscesLxOperatorConfig):
+class PiscesLxTPOConfig(PiscesLxOperatorConfig):
     """
     TPO (Test-Time Preference Optimization) Configuration.
     
@@ -147,7 +147,7 @@ class POPSSTPOConfig(PiscesLxOperatorConfig):
 
 
 # Paper: Original contribution by Dunimd Team (Yv Architecture)
-class POPSSTPOOperator(PiscesLxOperatorInterface):
+class PiscesLxTPOOperator(PiscesLxOperatorInterface):
     """
     Test-Time Preference Optimization (TPO) Operator.
     
@@ -162,8 +162,8 @@ class POPSSTPOOperator(PiscesLxOperatorInterface):
         - Early stopping
     
     Example:
-        >>> config = POPSSTPOConfig(max_iterations=3, reward_threshold=0.8)
-        >>> tpo = POPSSTPOOperator()
+        >>> config = PiscesLxTPOConfig(max_iterations=3, reward_threshold=0.8)
+        >>> tpo = PiscesLxTPOOperator()
         >>> aligned_response = tpo.align_at_inference(
         ...     model=llm,
         ...     prompt="Write a Python function to sort a list",
@@ -211,7 +211,7 @@ class POPSSTPOOperator(PiscesLxOperatorInterface):
             model = inputs.get("model")
             prompt = inputs.get("prompt", "")
             preference = inputs.get("preference", "")
-            config = inputs.get("config", POPSSTPOConfig())
+            config = inputs.get("config", PiscesLxTPOConfig())
             tokenizer = inputs.get("tokenizer")
             feedback_model = inputs.get("feedback_model")
             reward_model = inputs.get("reward_model")
@@ -267,7 +267,7 @@ class POPSSTPOOperator(PiscesLxOperatorInterface):
         model: nn.Module,
         prompt: str,
         preference: str,
-        config: Optional[POPSSTPOConfig] = None,
+        config: Optional[PiscesLxTPOConfig] = None,
         tokenizer = None,
         feedback_model: Optional[nn.Module] = None,
         reward_model: Optional[nn.Module] = None,
@@ -288,7 +288,7 @@ class POPSSTPOOperator(PiscesLxOperatorInterface):
             Tuple of (aligned_response, statistics)
         """
         if config is None:
-            config = POPSSTPOConfig()
+            config = PiscesLxTPOConfig()
         
         feedback_model = feedback_model or model
         reward_model = reward_model or model
@@ -369,7 +369,7 @@ class POPSSTPOOperator(PiscesLxOperatorInterface):
         model: nn.Module,
         prompt: str,
         preference: str,
-        config: POPSSTPOConfig,
+        config: PiscesLxTPOConfig,
         tokenizer,
         reward_model: nn.Module,
     ) -> Tuple[str, Dict[str, Any]]:
@@ -410,7 +410,7 @@ class POPSSTPOOperator(PiscesLxOperatorInterface):
         self,
         model: nn.Module,
         prompt: str,
-        config: POPSSTPOConfig,
+        config: PiscesLxTPOConfig,
         tokenizer,
     ) -> str:
         """
@@ -462,7 +462,7 @@ class POPSSTPOOperator(PiscesLxOperatorInterface):
         self,
         model: nn.Module,
         input_ids: torch.Tensor,
-        config: POPSSTPOConfig,
+        config: PiscesLxTPOConfig,
     ) -> torch.Tensor:
         """Manual generation for models without generate method."""
         generated = input_ids.clone()
@@ -502,7 +502,7 @@ class POPSSTPOOperator(PiscesLxOperatorInterface):
         model: nn.Module,
         response: str,
         preference: str,
-        config: POPSSTPOConfig,
+        config: PiscesLxTPOConfig,
         tokenizer,
     ) -> str:
         """
@@ -537,7 +537,7 @@ class POPSSTPOOperator(PiscesLxOperatorInterface):
         model: nn.Module,
         response: str,
         preference: str,
-        config: POPSSTPOConfig,
+        config: PiscesLxTPOConfig,
         tokenizer,
     ) -> float:
         """
@@ -591,7 +591,7 @@ class POPSSTPOOperator(PiscesLxOperatorInterface):
         response: str,
         feedback: str,
         preference: str,
-        config: POPSSTPOConfig,
+        config: PiscesLxTPOConfig,
     ) -> str:
         """
         Refine prompt based on feedback.
@@ -617,12 +617,12 @@ class POPSSTPOOperator(PiscesLxOperatorInterface):
         return refined_prompt
 
 
-class POPSSTPOAligner:
+class PiscesLxTPOAligner:
     """
     High-level TPO Aligner for easy preference alignment.
     
     Example:
-        >>> aligner = POPSSTPOAligner(model, tokenizer)
+        >>> aligner = PiscesLxTPOAligner(model, tokenizer)
         >>> aligned = aligner.align(
         ...     prompt="Write a sorting function",
         ...     preference="Code should be efficient and documented",
@@ -633,16 +633,16 @@ class POPSSTPOAligner:
         self,
         model: nn.Module,
         tokenizer = None,
-        config: Optional[POPSSTPOConfig] = None,
+        config: Optional[PiscesLxTPOConfig] = None,
         feedback_model: Optional[nn.Module] = None,
         reward_model: Optional[nn.Module] = None,
     ):
         self.model = model
         self.tokenizer = tokenizer
-        self.config = config or POPSSTPOConfig()
+        self.config = config or PiscesLxTPOConfig()
         self.feedback_model = feedback_model or model
         self.reward_model = reward_model or model
-        self.operator = POPSSTPOOperator()
+        self.operator = PiscesLxTPOOperator()
     
     def align(
         self,
@@ -703,7 +703,7 @@ class POPSSTPOAligner:
         
         return aligned_responses
     
-    def _merge_config(self, kwargs: Dict[str, Any]) -> POPSSTPOConfig:
+    def _merge_config(self, kwargs: Dict[str, Any]) -> PiscesLxTPOConfig:
         """Merge kwargs with default config."""
         config_dict = {
             "name": self.config.name,
@@ -724,7 +724,7 @@ class POPSSTPOAligner:
             "reward_prompt": kwargs.get("reward_prompt", self.config.reward_prompt),
         }
         
-        return POPSSTPOConfig(**config_dict)
+        return PiscesLxTPOConfig(**config_dict)
     
     def set_preference_templates(
         self,
@@ -741,7 +741,7 @@ class POPSSTPOAligner:
             self.config.reward_prompt = reward_prompt
 
 
-class POPSSTPOPreferenceLibrary:
+class PiscesLxTPOPreferenceLibrary:
     """
     Library of common preferences for TPO alignment.
     """

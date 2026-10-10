@@ -114,56 +114,56 @@ from utils.log_bridge import PiscesLxThirdPartyLogBridge
 from utils.paths import get_log_file
 
 from .config import (
-    InferenceConfig,
-    ServiceConfig,
-    ModelSpec,
+    PiscesLxInferenceConfig,
+    PiscesLxServiceConfig,
+    PiscesLxModelSpec,
     MODEL_SPECS,
-    OPSSConfig,
-    RunConfig,
+    PiscesLxOPSSConfig,
+    PiscesLxRunConfig,
     get_model_spec,
     list_available_models,
 )
 from .core import PiscesLxInferenceEngine
 from .protocol import (
-    ChatCompletionRequest,
-    ChatCompletionResponse,
-    ChatCompletionChoice,
-    ChatCompletionUsage,
-    ChatCompletionChunk,
-    ChatCompletionChunkChoice,
-    ChatCompletionChunkDelta,
+    PiscesLxChatCompletionRequest,
+    PiscesLxChatCompletionResponse,
+    PiscesLxChatCompletionChoice,
+    PiscesLxChatCompletionUsage,
+    PiscesLxChatCompletionChunk,
+    PiscesLxChatCompletionChunkChoice,
+    PiscesLxChatCompletionChunkDelta,
     PiscesLxChatMessage,
-    CompletionRequest,
-    CompletionResponse,
-    CompletionChoice,
-    EmbeddingRequest,
-    EmbeddingResponse,
-    EmbeddingData,
-    ImageGenerationRequest,
-    ImageGenerationResponse,
-    ImageData,
-    VideoGenerationRequest,
-    VideoGenerationResponse,
-    VideoData,
-    AgentExecuteRequest,
-    AgentExecuteResponse,
-    SwarmExecuteRequest,
-    SwarmExecuteResponse,
-    ToolExecuteRequest,
-    ToolExecuteResponse,
-    ToolInfo,
-    ToolListResponse,
-    ToolSearchRequest,
+    PiscesLxCompletionRequest,
+    PiscesLxCompletionResponse,
+    PiscesLxCompletionChoice,
+    PiscesLxEmbeddingRequest,
+    PiscesLxEmbeddingResponse,
+    PiscesLxEmbeddingData,
+    PiscesLxImageGenerationRequest,
+    PiscesLxImageGenerationResponse,
+    PiscesLxImageData,
+    PiscesLxVideoGenerationRequest,
+    PiscesLxVideoGenerationResponse,
+    PiscesLxVideoData,
+    PiscesLxAgentExecuteRequest,
+    PiscesLxAgentExecuteResponse,
+    PiscesLxSwarmExecuteRequest,
+    PiscesLxSwarmExecuteResponse,
+    PiscesLxToolExecuteRequest,
+    PiscesLxToolExecuteResponse,
+    PiscesLxToolInfo,
+    PiscesLxToolListResponse,
+    PiscesLxToolSearchRequest,
     RunInfo,
-    RunListResponse,
-    RunControlRequest,
-    RunControlResponse,
-    ModelInfo,
-    ModelListResponse,
-    ServiceStats,
-    HealthResponse,
-    ReadyResponse,
-    ErrorResponse,
+    PiscesLxRunListResponse,
+    PiscesLxRunControlRequest,
+    PiscesLxRunControlResponse,
+    PiscesLxModelInfo,
+    PiscesLxModelListResponse,
+    PiscesLxServiceStats,
+    PiscesLxHealthResponse,
+    PiscesLxReadyResponse,
+    PiscesLxErrorResponse,
 )
 from .model_router import PiscesLxModelRouter, PiscesLxRoutingStrategy
 from .agent_interceptor import PiscesLxAgentInterceptor, PiscesLxAgentMode
@@ -208,8 +208,8 @@ class PiscesLxInferService:
         port: int = 8000,
         model_size: str = "7B",
         model_path: Optional[str] = None,
-        config: Optional[ServiceConfig] = None,
-        inference_config: Optional[InferenceConfig] = None,
+        config: Optional[PiscesLxServiceConfig] = None,
+        inference_config: Optional[PiscesLxInferenceConfig] = None,
     ):
         """
         Initialize the inference service.
@@ -227,13 +227,13 @@ class PiscesLxInferService:
         self.model_size = model_size
         self.model_path = model_path
         
-        self.config = config or ServiceConfig(
+        self.config = config or PiscesLxServiceConfig(
             model_size=model_size,
             host=host,
             port=port,
         )
         
-        self.inference_config = inference_config or InferenceConfig()
+        self.inference_config = inference_config or PiscesLxInferenceConfig()
         if model_path:
             self.inference_config.model.model_path = model_path
         
@@ -314,27 +314,27 @@ class PiscesLxInferService:
         """Register all API routes."""
         
         # === Model Endpoints ===
-        @self._app.get("/v1/models", response_model=ModelListResponse)
+        @self._app.get("/v1/models", response_model=PiscesLxModelListResponse)
         async def list_models():
             return self._list_models()
         
         # === Chat Endpoints ===
         @self._app.post("/v1/chat/completions")
-        async def chat_completions(request: ChatCompletionRequest):
+        async def chat_completions(request: PiscesLxChatCompletionRequest):
             return await self._chat_completions(request)
         
         @self._app.post("/v1/completions")
-        async def completions(request: CompletionRequest):
+        async def completions(request: PiscesLxCompletionRequest):
             return await self._completions(request)
         
         # === Embedding Endpoints ===
-        @self._app.post("/v1/embeddings", response_model=EmbeddingResponse)
-        async def embeddings(request: EmbeddingRequest):
+        @self._app.post("/v1/embeddings", response_model=PiscesLxEmbeddingResponse)
+        async def embeddings(request: PiscesLxEmbeddingRequest):
             return await self._embeddings(request)
         
         # === Image Endpoints ===
-        @self._app.post("/v1/images/generations", response_model=ImageGenerationResponse)
-        async def image_generations(request: ImageGenerationRequest):
+        @self._app.post("/v1/images/generations", response_model=PiscesLxImageGenerationResponse)
+        async def image_generations(request: PiscesLxImageGenerationRequest):
             return await self._image_generations(request)
         
         @self._app.post("/v1/images/edits")
@@ -342,8 +342,8 @@ class PiscesLxInferService:
             return await self._image_edits(request)
         
         # === Video Endpoints ===
-        @self._app.post("/v1/videos/generations", response_model=VideoGenerationResponse)
-        async def video_generations(request: VideoGenerationRequest):
+        @self._app.post("/v1/videos/generations", response_model=PiscesLxVideoGenerationResponse)
+        async def video_generations(request: PiscesLxVideoGenerationRequest):
             return await self._video_generations(request)
         
         # === Audio Endpoints ===
@@ -352,33 +352,33 @@ class PiscesLxInferService:
             return await self._audio_speech(request)
         
         # === Agent Endpoints ===
-        @self._app.post("/v1/agents/execute", response_model=AgentExecuteResponse)
-        async def agents_execute(request: AgentExecuteRequest):
+        @self._app.post("/v1/agents/execute", response_model=PiscesLxAgentExecuteResponse)
+        async def agents_execute(request: PiscesLxAgentExecuteRequest):
             return await self._agents_execute(request)
         
         @self._app.get("/v1/agents/list")
         async def agents_list():
             return await self._agents_list()
         
-        @self._app.post("/v1/agents/swarm", response_model=SwarmExecuteResponse)
-        async def agents_swarm(request: SwarmExecuteRequest):
+        @self._app.post("/v1/agents/swarm", response_model=PiscesLxSwarmExecuteResponse)
+        async def agents_swarm(request: PiscesLxSwarmExecuteRequest):
             return await self._agents_swarm(request)
         
         # === Tool Endpoints ===
-        @self._app.post("/v1/tools/execute", response_model=ToolExecuteResponse)
-        async def tools_execute(request: ToolExecuteRequest):
+        @self._app.post("/v1/tools/execute", response_model=PiscesLxToolExecuteResponse)
+        async def tools_execute(request: PiscesLxToolExecuteRequest):
             return await self._tools_execute(request)
         
-        @self._app.get("/v1/tools/list", response_model=ToolListResponse)
+        @self._app.get("/v1/tools/list", response_model=PiscesLxToolListResponse)
         async def tools_list(category: Optional[str] = None):
             return await self._tools_list(category)
         
         @self._app.post("/v1/tools/search")
-        async def tools_search(request: ToolSearchRequest):
+        async def tools_search(request: PiscesLxToolSearchRequest):
             return await self._tools_search(request)
         
         # === Run Endpoints ===
-        @self._app.get("/v1/runs", response_model=RunListResponse)
+        @self._app.get("/v1/runs", response_model=PiscesLxRunListResponse)
         async def runs_list():
             return self._runs_list()
         
@@ -386,8 +386,8 @@ class PiscesLxInferService:
         async def run_get(run_id: str):
             return self._run_get(run_id)
         
-        @self._app.post("/v1/runs/{run_id}/control", response_model=RunControlResponse)
-        async def run_control(run_id: str, request: RunControlRequest):
+        @self._app.post("/v1/runs/{run_id}/control", response_model=PiscesLxRunControlResponse)
+        async def run_control(run_id: str, request: PiscesLxRunControlRequest):
             return self._run_control(run_id, request)
         
         # === Health Endpoints ===
@@ -405,22 +405,22 @@ class PiscesLxInferService:
     
     # === Model Endpoints Implementation ===
     
-    def _list_models(self) -> ModelListResponse:
+    def _list_models(self) -> PiscesLxModelListResponse:
         """GET /v1/models"""
         models = []
         for size in list_available_models():
-            models.append(ModelInfo(
+            models.append(PiscesLxModelInfo(
                 id=f"piscesl1-{size.lower()}",
                 object="model",
                 created=int(self._start_time),
                 owned_by="piscesl1",
             ))
         
-        return ModelListResponse(data=models)
+        return PiscesLxModelListResponse(data=models)
     
     # === Chat Endpoints Implementation ===
     
-    async def _chat_completions(self, request: ChatCompletionRequest):
+    async def _chat_completions(self, request: PiscesLxChatCompletionRequest):
         """POST /v1/chat/completions"""
         start_time = time.time()
         self._request_count += 1
@@ -498,7 +498,7 @@ class PiscesLxInferService:
             self._LOG.error(f"Chat completion failed: {e}")
             raise HTTPException(status_code=500, detail=str(e))
     
-    async def _stream_chat(self, request: ChatCompletionRequest, prompt: str) -> AsyncGenerator[str, None]:
+    async def _stream_chat(self, request: PiscesLxChatCompletionRequest, prompt: str) -> AsyncGenerator[str, None]:
         """SSE streaming for chat completions."""
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
         created = int(time.time())
@@ -547,7 +547,7 @@ class PiscesLxInferService:
             }
             yield f"data: {json.dumps(error_chunk)}\n\n"
     
-    async def _completions(self, request: CompletionRequest) -> JSONResponse:
+    async def _completions(self, request: PiscesLxCompletionRequest) -> JSONResponse:
         """POST /v1/completions"""
         start_time = time.time()
         self._request_count += 1
@@ -586,7 +586,7 @@ class PiscesLxInferService:
     
     # === Embedding Endpoints Implementation ===
     
-    async def _embeddings(self, request: EmbeddingRequest) -> EmbeddingResponse:
+    async def _embeddings(self, request: PiscesLxEmbeddingRequest) -> PiscesLxEmbeddingResponse:
         """POST /v1/embeddings"""
         start_time = time.time()
         self._request_count += 1
@@ -597,7 +597,7 @@ class PiscesLxInferService:
             embeddings = []
             for i, text in enumerate(inputs):
                 emb = self._engine.embed(text)
-                embeddings.append(EmbeddingData(
+                embeddings.append(PiscesLxEmbeddingData(
                     object="embedding",
                     index=i,
                     embedding=emb.tolist() if hasattr(emb, 'tolist') else list(emb),
@@ -607,10 +607,10 @@ class PiscesLxInferService:
             
             self._record_success(start_time)
             
-            return EmbeddingResponse(
+            return PiscesLxEmbeddingResponse(
                 data=embeddings,
                 model=request.model,
-                usage=ChatCompletionUsage(
+                usage=PiscesLxChatCompletionUsage(
                     prompt_tokens=total_tokens,
                     total_tokens=total_tokens,
                 )
@@ -622,7 +622,7 @@ class PiscesLxInferService:
     
     # === Image Endpoints Implementation ===
     
-    async def _image_generations(self, request: ImageGenerationRequest) -> ImageGenerationResponse:
+    async def _image_generations(self, request: PiscesLxImageGenerationRequest) -> PiscesLxImageGenerationResponse:
         """POST /v1/images/generations"""
         start_time = time.time()
         self._request_count += 1
@@ -638,11 +638,11 @@ class PiscesLxInferService:
                 image_bytes = self._tensor_to_bytes(image_tensor)
                 b64_image = base64.b64encode(image_bytes).decode('utf-8')
                 
-                images.append(ImageData(b64_json=b64_image))
+                images.append(PiscesLxImageData(b64_json=b64_image))
             
             self._record_success(start_time)
             
-            return ImageGenerationResponse(data=images)
+            return PiscesLxImageGenerationResponse(data=images)
             
         except Exception as e:
             self._record_error(start_time)
@@ -682,7 +682,7 @@ class PiscesLxInferService:
     
     # === Video Endpoints Implementation ===
     
-    async def _video_generations(self, request: VideoGenerationRequest) -> VideoGenerationResponse:
+    async def _video_generations(self, request: PiscesLxVideoGenerationRequest) -> PiscesLxVideoGenerationResponse:
         """POST /v1/videos/generations"""
         start_time = time.time()
         self._request_count += 1
@@ -699,8 +699,8 @@ class PiscesLxInferService:
             
             self._record_success(start_time)
             
-            return VideoGenerationResponse(
-                data=[VideoData(b64_json=b64_video, duration=float(request.duration))]
+            return PiscesLxVideoGenerationResponse(
+                data=[PiscesLxVideoData(b64_json=b64_video, duration=float(request.duration))]
             )
             
         except Exception as e:
@@ -736,7 +736,7 @@ class PiscesLxInferService:
     
     # === Agent Endpoints Implementation ===
     
-    async def _agents_execute(self, request: AgentExecuteRequest) -> AgentExecuteResponse:
+    async def _agents_execute(self, request: PiscesLxAgentExecuteRequest) -> PiscesLxAgentExecuteResponse:
         """POST /v1/agents/execute"""
         start_time = time.time()
         self._request_count += 1
@@ -751,7 +751,7 @@ class PiscesLxInferService:
             
             self._record_success(start_time)
             
-            return AgentExecuteResponse(
+            return PiscesLxAgentExecuteResponse(
                 agent=request.agent,
                 success=result.get("success", False),
                 result=result.get("output", result.get("result", "")),
@@ -760,7 +760,7 @@ class PiscesLxInferService:
             
         except Exception as e:
             self._record_error(start_time)
-            return AgentExecuteResponse(
+            return PiscesLxAgentExecuteResponse(
                 agent=request.agent,
                 success=False,
                 error=str(e),
@@ -786,7 +786,7 @@ class PiscesLxInferService:
             ]
         })
     
-    async def _agents_swarm(self, request: SwarmExecuteRequest) -> SwarmExecuteResponse:
+    async def _agents_swarm(self, request: PiscesLxSwarmExecuteRequest) -> PiscesLxSwarmExecuteResponse:
         """POST /v1/agents/swarm"""
         start_time = time.time()
         self._request_count += 1
@@ -803,7 +803,7 @@ class PiscesLxInferService:
             
             self._record_success(start_time)
             
-            return SwarmExecuteResponse(
+            return PiscesLxSwarmExecuteResponse(
                 task_id=task_id.get("task_id", str(uuid.uuid4())),
                 status="submitted",
                 topology=request.topology,
@@ -815,7 +815,7 @@ class PiscesLxInferService:
     
     # === Tool Endpoints Implementation ===
     
-    async def _tools_execute(self, request: ToolExecuteRequest) -> ToolExecuteResponse:
+    async def _tools_execute(self, request: PiscesLxToolExecuteRequest) -> PiscesLxToolExecuteResponse:
         """POST /v1/tools/execute"""
         start_time = time.time()
         self._request_count += 1
@@ -828,7 +828,7 @@ class PiscesLxInferService:
             
             self._record_success(start_time)
             
-            return ToolExecuteResponse(
+            return PiscesLxToolExecuteResponse(
                 tool_name=request.tool_name,
                 success=True,
                 result=result,
@@ -836,19 +836,19 @@ class PiscesLxInferService:
             
         except Exception as e:
             self._record_error(start_time)
-            return ToolExecuteResponse(
+            return PiscesLxToolExecuteResponse(
                 tool_name=request.tool_name,
                 success=False,
                 error=str(e),
             )
     
-    async def _tools_list(self, category: Optional[str] = None) -> ToolListResponse:
+    async def _tools_list(self, category: Optional[str] = None) -> PiscesLxToolListResponse:
         """GET /v1/tools/list"""
         tools = self._engine.list_tools(category=category)
         
-        return ToolListResponse(
+        return PiscesLxToolListResponse(
             tools=[
-                ToolInfo(
+                PiscesLxToolInfo(
                     name=t.get("name", ""),
                     description=t.get("description", ""),
                     category=t.get("category"),
@@ -859,7 +859,7 @@ class PiscesLxInferService:
             total=len(tools),
         )
     
-    async def _tools_search(self, request: ToolSearchRequest) -> JSONResponse:
+    async def _tools_search(self, request: PiscesLxToolSearchRequest) -> JSONResponse:
         """POST /v1/tools/search"""
         tools = self._engine.search_tools(request.query)
         
@@ -876,13 +876,13 @@ class PiscesLxInferService:
     
     # === Run Endpoints Implementation ===
     
-    def _runs_list(self) -> RunListResponse:
+    def _runs_list(self) -> PiscesLxRunListResponse:
         """GET /v1/runs"""
         runs = []
         if self._run:
             runs = self._run.list_runs()
         
-        return RunListResponse(
+        return PiscesLxRunListResponse(
             runs=[
                 RunInfo(
                     run_id=r.run_id,
@@ -917,10 +917,10 @@ class PiscesLxInferService:
             "pid": run.pid,
         })
     
-    def _run_control(self, run_id: str, request: RunControlRequest) -> RunControlResponse:
+    def _run_control(self, run_id: str, request: PiscesLxRunControlRequest) -> PiscesLxRunControlResponse:
         """POST /v1/runs/{run_id}/control"""
         if not self._run:
-            return RunControlResponse(
+            return PiscesLxRunControlResponse(
                 success=False,
                 run_id=run_id,
                 action=request.action,
@@ -945,7 +945,7 @@ class PiscesLxInferService:
         else:
             message = f"Unknown action: {request.action}"
         
-        return RunControlResponse(
+        return PiscesLxRunControlResponse(
             success=success,
             run_id=run_id,
             action=request.action,
@@ -1165,9 +1165,9 @@ class PiscesLxBackendServer:
         
         self._LOG = PiscesLxLogger("PiscesLx.Tools.Infer", file_path=get_log_file("PiscesLx.Tools.Infer"), enable_file=True)
     
-    def _build_config(self) -> ServiceConfig:
+    def _build_config(self) -> PiscesLxServiceConfig:
         """Build service configuration from CLI arguments."""
-        config = ServiceConfig(
+        config = PiscesLxServiceConfig(
             model_size=self.model_size,
             host=self.host,
             port=self.port,

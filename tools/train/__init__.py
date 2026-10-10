@@ -39,7 +39,7 @@ Architecture Overview:
          gradient checkpointing, and distributed training support
     
     2. Configuration Layer (config.py):
-       - TrainingConfig: Centralized configuration management for all training
+       - PiscesLxTrainingConfig: Centralized configuration management for all training
          parameters including optimizer, scheduler, data, and quantization settings
     
     3. Orchestration Layer (orchestrator.py):
@@ -47,7 +47,7 @@ Architecture Overview:
          training lifecycle, component initialization, and workflow execution
     
     4. Pipeline Layer (pipeline.py):
-       - TrainingPipelineOperator: End-to-end training pipeline with epoch
+       - PiscesLxTrainingPipelineOperator: End-to-end training pipeline with epoch
          management, evaluation loops, and callback systems
     
     5. Optimization Layer (optimizers.py):
@@ -59,7 +59,7 @@ Architecture Overview:
     
     6. Quantization Layer (quantization.py):
        - QuantizationAwareTrainingOperator: QAT with fake quantization
-       - MixedPrecisionTrainingOperator: FP16/BF16 automatic mixed precision
+       - PiscesLxMixedPrecisionTrainingOperator: FP16/BF16 automatic mixed precision
        - KnowledgeDistillationOperator: Teacher-student knowledge transfer
        - GradientAccumulationOperator: Large batch simulation
        - ModelPruningOperator: Structured and unstructured pruning
@@ -71,10 +71,10 @@ Architecture Overview:
        - TransferLearningOperator: Cross-task knowledge transfer
     
     8. Monitoring Layer (monitoring.py):
-       - TrainingMonitorOperator: Real-time metrics tracking and visualization
-       - PerformanceProfilerOperator: Detailed performance bottleneck analysis
-       - SystemResourceMonitor: GPU/CPU resource monitoring
-       - TrainingVisualizer: Training curve generation and dashboard
+       - PiscesLxTrainingMonitorOperator: Real-time metrics tracking and visualization
+       - PiscesLxPerformanceProfilerOperator: Detailed performance bottleneck analysis
+       - PiscesLxSystemResourceMonitor: GPU/CPU resource monitoring
+       - PiscesLxTrainingVisualizer: Training curve generation and dashboard
 
 Key Features:
     - Operator Pattern: All components implement standardized operator interfaces
@@ -95,9 +95,9 @@ Key Features:
 
 Usage Examples:
     Basic Training:
-        >>> from tools.train import TrainingConfig, TrainingOrchestrator
+        >>> from tools.train import PiscesLxTrainingConfig, TrainingOrchestrator
         >>> 
-        >>> config = TrainingConfig(
+        >>> config = PiscesLxTrainingConfig(
         ...     model_name="my-model",
         ...     output_dir="./checkpoints",
         ...     max_steps=100000,
@@ -113,21 +113,21 @@ Usage Examples:
         >>> results = orchestrator.start_training(epochs=3)
 
     Advanced Configuration:
-        >>> from tools.train.config import OptimizerConfig, SchedulerConfig
+        >>> from tools.train.config import PiscesLxOptimizerConfig, PiscesLxSchedulerConfig
         >>> 
-        >>> config = TrainingConfig(
-        ...     optimizer=OptimizerConfig(
+        >>> config = PiscesLxTrainingConfig(
+        ...     optimizer=PiscesLxOptimizerConfig(
         ...         name="adamw",
         ...         learning_rate=5e-5,
         ...         use_galore=True,
         ...         galore_rank=128
         ...     ),
-        ...     scheduler=SchedulerConfig(
+        ...     scheduler=PiscesLxSchedulerConfig(
         ...         name="cosine",
         ...         warmup_steps=1000,
         ...         min_lr_ratio=0.1
         ...     ),
-        ...     quantization=QuantizationConfig(
+        ...     quantization=PiscesLxQuantizationConfig(
         ...         enable_quantization=True,
         ...         quant_method="int8"
         ...     )
@@ -159,8 +159,8 @@ from configs.version import VERSION, AUTHOR
 
 _LAZY_SYMBOLS = {
     "PiscesLxTrainingOperator": (".core", "PiscesLxTrainingOperator"),
-    "TrainingConfig": (".config", "TrainingConfig"),
-    "EvolutionConfig": (".config", "EvolutionConfig"),
+    "PiscesLxTrainingConfig": (".config", "PiscesLxTrainingConfig"),
+    "PiscesLxEvolutionConfig": (".config", "PiscesLxEvolutionConfig"),
     "PiscesLxTrainOrchestrator": (".orchestrator", "PiscesLxTrainOrchestrator"),
 }
 
@@ -179,8 +179,8 @@ __author__ = AUTHOR
 
 __all__ = [
     "PiscesLxTrainingOperator",
-    "TrainingConfig", 
-    "EvolutionConfig",
+    "PiscesLxTrainingConfig", 
+    "PiscesLxEvolutionConfig",
     "PiscesLxTrainOrchestrator",
     "TrainingPipelineWatermarkOperator"
 ]

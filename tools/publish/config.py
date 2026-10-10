@@ -62,10 +62,10 @@ Usage Examples:
         ... )
 
     Export Only:
-        >>> from tools.publish.config import PiscesLxPublishConfig, ExportAction
+        >>> from tools.publish.config import PiscesLxPublishConfig, PiscesLxExportAction
         >>> config = PiscesLxPublishConfig(
         ...     model_path="./checkpoints/7B",
-        ...     action=ExportAction.EXPORT_ONLY
+        ...     action=PiscesLxExportAction.EXPORT_ONLY
         ... )
 
     Full Publish:
@@ -102,7 +102,7 @@ from typing import Dict, Any, Optional, List
 from enum import Enum
 
 
-class ExportAction(Enum):
+class PiscesLxExportAction(Enum):
     """Export action types"""
     EXPORT_ONLY = "export_only"
     BUILD_ONLY = "build_only"
@@ -110,7 +110,7 @@ class ExportAction(Enum):
     ALL = "all"
 
 
-class ExportFormat(Enum):
+class PiscesLxExportFormat(Enum):
     """Model export format types"""
     SAFETENSORS = "safetensors"
     PYTORCH = "pytorch"
@@ -137,7 +137,7 @@ class PiscesLxPublishModelExportConfig:
         >>> export_config = PiscesLxPublishModelExportConfig(
         ...     checkpoint_path="./checkpoints/7B/model.pt",
         ...     output_dir="./publish/7B",
-        ...     export_format=ExportFormat.SAFETENSORS,
+        ...     export_format=PiscesLxExportFormat.SAFETENSORS,
         ...     quantization="int8"
         ... )
     """
@@ -152,7 +152,7 @@ class PiscesLxPublishModelExportConfig:
 
     def __post_init__(self):
         """Validate configuration after initialization."""
-        if self.export_format not in [e.value for e in ExportFormat]:
+        if self.export_format not in [e.value for e in PiscesLxExportFormat]:
             raise ValueError(f"Invalid export format: {self.export_format}")
         if self.quantization not in [None, "int8", "int4", "fp8"]:
             raise ValueError(f"Invalid quantization: {self.quantization}")
@@ -398,7 +398,7 @@ class PiscesLxPublishConfig:
             ...     model_name="PiscesLx-7B",
             ...     model_path="./checkpoints/7B",
             ...     output_dir="./publish",
-            ...     action=ExportAction.ALL,
+            ...     action=PiscesLxExportAction.ALL,
             ...     export=PiscesLxPublishModelExportConfig(
             ...         checkpoint_path="./checkpoints/7B/model.pt",
             ...         export_format="safetensors"

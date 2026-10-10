@@ -67,7 +67,7 @@ Command Categories:
         - action: Manage background training/inference processes
         - Cross-terminal tracking and control
     
-    **Dataset Commands:**
+    **PiscesLxDataset Commands:**
         - download: Download and prepare training datasets
     
     **Benchmark Commands:**
@@ -142,7 +142,7 @@ def help():
     2. **Training**: train with extensive options
     3. **Backend Service**: serve for OpenAI-compatible API
     4. **Background Management**: action for process control
-    5. **Dataset**: download for data preparation
+    5. **PiscesLxDataset**: download for data preparation
     6. **Benchmark**: benchmark for evaluation
     7. **Monitor**: check and monitor for system status
     8. **MCP**: mcp for tool management
@@ -281,7 +281,7 @@ def help():
     print("      --checkpoint <path>         Specific checkpoint to recover from")
     print("      --max_restarts <int>        Maximum restart attempts (default: 3)")
     print("")
-    print("Dataset:")
+    print("PiscesLxDataset:")
     print("  download    Download datasets for training")
     print("    --max_samples <int>           Max samples per dataset (default: 50000)")
     print("")
@@ -434,7 +434,7 @@ def help():
     print("  python manage.py action recover train_001")
     print("  python manage.py action recover train_001 --checkpoint runs/train_001/ckpt.pt")
     print("")
-    print("  # Dataset")
+    print("  # PiscesLxDataset")
     print("  python manage.py download --max_samples 50000")
     print("")
     print("  # Benchmark")

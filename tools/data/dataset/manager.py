@@ -23,7 +23,7 @@
 
 from __future__ import annotations
 
-from .core import Dataset
+from .core import PiscesLxDataset
 from .registry import REGISTRY as DATASETS
 from typing import List, Optional, Dict, Any
 from .streaming import PiscesLxToolsDataLargeScaleStreamingDataset
@@ -39,13 +39,13 @@ class PiscesLxToolsDataDatasetManager:
         """
         pass
 
-    def load(self, name: str = None, subset: str = "tiny", split: str = "train", config: Optional[Dict[str, Any]] = None, max_samples: Optional[int] = None) -> Dataset:
+    def load(self, name: str = None, subset: str = "tiny", split: str = "train", config: Optional[Dict[str, Any]] = None, max_samples: Optional[int] = None) -> PiscesLxDataset:
         """
         Load a dataset based on the specified subset and split.
 
         This method first checks if there is a registered builder for the given subset.
         If a builder is found, it uses the builder to create the dataset.
-        Otherwise, it creates a new Dataset instance directly.
+        Otherwise, it creates a new PiscesLxDataset instance directly.
 
         Args:
             name (str, optional): The name of the dataset. Defaults to None.
@@ -55,14 +55,14 @@ class PiscesLxToolsDataDatasetManager:
             max_samples (Optional[int], optional): The maximum number of samples to load. Defaults to None.
 
         Returns:
-            Dataset: A loaded Dataset instance.
+            PiscesLxDataset: A loaded PiscesLxDataset instance.
         """
         # Retrieve the registered builder for the subset
         builder = DATASETS.get(subset)
         if builder:
             ds = builder(name=name, subset=subset, split=split, config=config, max_samples=max_samples)
             return ds
-        ds = Dataset(name=name, subset=subset, split=split, config=config, max_samples=max_samples)
+        ds = PiscesLxDataset(name=name, subset=subset, split=split, config=config, max_samples=max_samples)
         return ds
 
     def dataloader(self, dataset, batch_config: Optional[PiscesLxToolsDataBatchConfig] = None):

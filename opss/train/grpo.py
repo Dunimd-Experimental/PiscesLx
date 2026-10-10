@@ -51,7 +51,7 @@ import math
 
 import torch
 
-from .dapo import YvDAPO
+from .dapo import PiscesLxDAPO
 import torch.nn as nn
 import torch.nn.functional as F
 import transformer_engine.pytorch as te
@@ -71,7 +71,7 @@ from utils.opsc.interface import (
 
 
 @dataclass
-class POPSSGRPOConfig(PiscesLxOperatorConfig):
+class PiscesLxGRPOConfig(PiscesLxOperatorConfig):
     """
     GRPO (Group Relative Policy Optimization) Configuration.
     
@@ -207,7 +207,7 @@ class POPSSGRPOConfig(PiscesLxOperatorConfig):
 
 
 @dataclass
-class POPSSAgenticRLConfig(PiscesLxOperatorConfig):
+class PiscesLxAgenticRLConfig(PiscesLxOperatorConfig):
     """
     Agentic RL Post-Training Configuration.
 
@@ -233,7 +233,7 @@ class POPSSAgenticRLConfig(PiscesLxOperatorConfig):
     efficiency_penalty: float = -0.01
     use_agentic_grpo: bool = False
 
-    grpo_config: POPSSGRPOConfig = field(default_factory=POPSSGRPOConfig)
+    grpo_config: PiscesLxGRPOConfig = field(default_factory=PiscesLxGRPOConfig)
 
     def __post_init__(self):
         super().__post_init__()
@@ -244,7 +244,7 @@ class POPSSAgenticRLConfig(PiscesLxOperatorConfig):
 
 
 @dataclass
-class TrajectoryEntry:
+class PiscesLxTrajectoryEntry:
     """Entry in the MMR-GRPO diversity buffer.
 
     Stores the embedding of a trajectory and its associated rewards
@@ -256,7 +256,7 @@ class TrajectoryEntry:
 
 
 # Paper: DeepSeek-AI, "DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning", arXiv:2501.12948
-class POPSSGRPOOperator(PiscesLxOperatorInterface):
+class PiscesLxGRPOOperator(PiscesLxOperatorInterface):
     """
     Group Relative Policy Optimization (GRPO) Operator.
     
@@ -271,8 +271,8 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         - KL regularization: Maintains proximity to reference model
     
     Example:
-        >>> config = POPSSGRPOConfig(group_size=4, temperature=1.0)
-        >>> grpo = POPSSGRPOOperator()
+        >>> config = PiscesLxGRPOConfig(group_size=4, temperature=1.0)
+        >>> grpo = PiscesLxGRPOOperator()
         >>> result = grpo.execute({
         ...     "model": policy_model,
         ...     "reference_model": ref_model,
@@ -324,7 +324,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
             reference_model = inputs.get("reference_model")
             prompts = inputs.get("prompts", [])
             reward_function = inputs.get("reward_function")
-            config = inputs.get("config", POPSSGRPOConfig())
+            config = inputs.get("config", PiscesLxGRPOConfig())
             optimizer = inputs.get("optimizer")
             tokenizer = inputs.get("tokenizer")
             
@@ -426,7 +426,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         reference_model: Optional[nn.Module],
         prompt: str,
         reward_function,
-        config: POPSSGRPOConfig,
+        config: PiscesLxGRPOConfig,
         optimizer: Optional[torch.optim.Optimizer],
         tokenizer,
     ) -> Dict[str, List[float]]:
@@ -650,7 +650,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         model: nn.Module,
         prompt: str,
         group_size: int,
-        config: POPSSGRPOConfig,
+        config: PiscesLxGRPOConfig,
         tokenizer,
     ) -> Tuple[List[str], torch.Tensor, torch.Tensor]:
         """Sample a group of responses and compute log probabilities."""
@@ -682,7 +682,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         self,
         model: nn.Module,
         prompt: str,
-        config: POPSSGRPOConfig,
+        config: PiscesLxGRPOConfig,
         tokenizer,
     ) -> Tuple[str, torch.Tensor]:
         """Generate a single response with log probability."""
@@ -802,7 +802,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         model: nn.Module,
         prompt: str,
         original_response: str,
-        config: POPSSGRPOConfig,
+        config: PiscesLxGRPOConfig,
         tokenizer,
     ) -> Tuple[str, float]:
         """Refine a response through self-verification and improvement."""
@@ -863,7 +863,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         model: nn.Module,
         prompt: str,
         responses: List[str],
-        config: POPSSGRPOConfig,
+        config: PiscesLxGRPOConfig,
         tokenizer,
     ) -> Tuple[List[str], List[float]]:
         """Apply iterative refinement to responses with self-verification."""
@@ -892,7 +892,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         prompt: str,
         responses: List[str],
         tokenizer,
-        config: Optional[POPSSGRPOConfig] = None,
+        config: Optional[PiscesLxGRPOConfig] = None,
     ) -> torch.Tensor:
         """Compute log probabilities under reference model."""
         device = next(reference_model.parameters()).device
@@ -930,7 +930,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         old_log_probs: torch.Tensor,
         ref_log_probs: torch.Tensor,
         advantages: torch.Tensor,
-        config: POPSSGRPOConfig,
+        config: PiscesLxGRPOConfig,
         optimizer: Optional[torch.optim.Optimizer],
     ) -> Dict[str, List[float]]:
         """Perform PPO-style policy update with optional DAPO."""
@@ -947,7 +947,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
 
         # DAPO: Decoupled clipping and dynamic sampling
         if getattr(config, 'use_dapo', False):
-            dapo = YvDAPO(
+            dapo = PiscesLxDAPO(
                 epsilon_low=config.dapo_epsilon_low,
                 epsilon_high=config.dapo_epsilon_high,
                 beta=config.kl_coef,
@@ -1031,7 +1031,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         self,
         model: nn.Module,
         prompt: str,
-        config: POPSSGRPOConfig,
+        config: PiscesLxGRPOConfig,
         tokenizer,
         reward_function,
     ) -> Tuple[List[str], torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -1105,7 +1105,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         rewards: torch.Tensor,
         consistency_scores: torch.Tensor,
         group_size: int,
-        config: POPSSGRPOConfig,
+        config: PiscesLxGRPOConfig,
     ) -> torch.Tensor:
         """Compute self-conditioned advantages with draft baseline.
 
@@ -1130,7 +1130,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         self,
         model: nn.Module,
         prompt: str,
-        config: POPSSGRPOConfig,
+        config: PiscesLxGRPOConfig,
         tokenizer,
         reward_function,
     ) -> Tuple[List[str], torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -1201,7 +1201,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         response: str,
         log_prob: torch.Tensor,
         depth: int,
-        config: POPSSGRPOConfig,
+        config: PiscesLxGRPOConfig,
         tokenizer,
     ) -> List[dict]:
         """Recursively expand branches at decision points in a response."""
@@ -1256,7 +1256,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         self,
         rewards: torch.Tensor,
         group_size: int,
-        config: POPSSGRPOConfig,
+        config: PiscesLxGRPOConfig,
     ) -> torch.Tensor:
         """Compute graph-structure-aware advantages."""
         rewards = rewards.view(-1, group_size)
@@ -1288,7 +1288,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
     def _codapo_adaptive_clip_ratio(
         self,
         confidence: torch.Tensor,
-        config: POPSSGRPOConfig,
+        config: PiscesLxGRPOConfig,
     ) -> torch.Tensor:
         """Adjust clip ratio per response based on confidence."""
         low_clip = getattr(config, 'codapo_clip_low_confidence', 0.1)
@@ -1299,7 +1299,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
     def _codapo_adaptive_kl_coef(
         self,
         confidence: torch.Tensor,
-        config: POPSSGRPOConfig,
+        config: PiscesLxGRPOConfig,
     ) -> torch.Tensor:
         """Adjust KL coefficient per response based on confidence."""
         low_kl = getattr(config, 'codapo_kl_low_confidence', 0.05)
@@ -1314,7 +1314,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         old_log_probs: torch.Tensor,
         ref_log_probs: torch.Tensor,
         advantages: torch.Tensor,
-        config: POPSSGRPOConfig,
+        config: PiscesLxGRPOConfig,
         optimizer: Optional[torch.optim.Optimizer],
     ) -> Dict[str, List[float]]:
         """CoDaPO policy update with confidence/difficulty adaptive parameters."""
@@ -1447,7 +1447,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         sequences: List[str],
         rewards: torch.Tensor,
         tokenizer=None,
-        config: Optional[POPSSGRPOConfig] = None,
+        config: Optional[PiscesLxGRPOConfig] = None,
         prompt: str = "",
         reward_function=None,
     ) -> Tuple[torch.Tensor, List[torch.Tensor]]:
@@ -1463,7 +1463,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         Returns the modified rewards tensor and a list of per-step
         score tensors (one per sequence).
         """
-        cfg = config or POPSSGRPOConfig()
+        cfg = config or PiscesLxGRPOConfig()
         w_out = cfg.vps_outcome_weight
         w_proc = cfg.vps_process_weight
         delimiter = cfg.vps_step_delimiter
@@ -1496,7 +1496,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
     # ║  MMR-GRPO: Diversity-aware Multi-Model Refinement (Yv Architecture, Dunimd Team) ║
     # ╚══════════════════════════════════════════════════════════════════╝
 
-    def _mmr_ensure_buffer(self, config: POPSSGRPOConfig):
+    def _mmr_ensure_buffer(self, config: PiscesLxGRPOConfig):
         """Lazily initialise the diversity buffer."""
         if self._mmr_diversity_buffer is None:
             self._mmr_diversity_buffer = {
@@ -1535,7 +1535,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
     def _mmr_diversity_score(
         self,
         embedding: torch.Tensor,
-        buffer_entries: List[TrajectoryEntry],
+        buffer_entries: List[PiscesLxTrajectoryEntry],
     ) -> float:
         """Compute the minimum cosine distance to any entry in the buffer."""
         if not buffer_entries:
@@ -1548,7 +1548,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         self,
         trajectories: List[str],
         rewards: torch.Tensor,
-        config: POPSSGRPOConfig,
+        config: PiscesLxGRPOConfig,
         tokenizer=None,
         device: Optional[torch.device] = None,
     ):
@@ -1572,7 +1572,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
             if div < (1.0 - threshold) and len(buf["entries"]) > 0:
                 continue
 
-            entry = TrajectoryEntry(embedding=emb, reward=float(r), diversity_score=div)
+            entry = PiscesLxTrajectoryEntry(embedding=emb, reward=float(r), diversity_score=div)
             buf["entries"].append(entry)
 
         # Prune to maxlen: keep the most diverse entries
@@ -1584,7 +1584,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         self,
         responses: List[str],
         rewards: torch.Tensor,
-        config: POPSSGRPOConfig,
+        config: PiscesLxGRPOConfig,
         tokenizer=None,
         device: Optional[torch.device] = None,
     ) -> torch.Tensor:
@@ -1612,7 +1612,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         responses: List[str],
         log_probs: torch.Tensor,
         old_log_probs: torch.Tensor,
-        config: POPSSGRPOConfig,
+        config: PiscesLxGRPOConfig,
         tokenizer=None,
     ) -> Tuple[List[str], torch.Tensor, torch.Tensor]:
         """Mix a fraction of responses from the diversity buffer.
@@ -1666,7 +1666,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         prompt: str,
         responses: List[str],
         tokenizer,
-        config: POPSSGRPOConfig,
+        config: PiscesLxGRPOConfig,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Compute per-token log probabilities for every response.
 
@@ -1745,7 +1745,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         new_log_probs: torch.Tensor,
         rewards: torch.Tensor,
         mask: torch.Tensor,
-        config: POPSSGRPOConfig,
+        config: PiscesLxGRPOConfig,
     ) -> torch.Tensor:
         """TR-GRPO: Token-level advantage computation.
 
@@ -1791,7 +1791,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         token_ref_log_probs: torch.Tensor,
         token_advantages: torch.Tensor,
         mask: torch.Tensor,
-        config: POPSSGRPOConfig,
+        config: PiscesLxGRPOConfig,
         optimizer: Optional[torch.optim.Optimizer],
     ) -> Dict[str, List[float]]:
         """TR-GRPO: Per-token PPO-style policy update.
@@ -1850,13 +1850,13 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
 
         return stats
 
-    def _maybe_scale_loss(self, loss: torch.Tensor, config: POPSSGRPOConfig) -> torch.Tensor:
+    def _maybe_scale_loss(self, loss: torch.Tensor, config: PiscesLxGRPOConfig) -> torch.Tensor:
         if getattr(config, 'use_amp', False):
             scale = getattr(config, 'loss_scale', 128.0)
             return loss * scale
         return loss
 
-    def _maybe_unscale_grads(self, model: nn.Module, config: POPSSGRPOConfig) -> None:
+    def _maybe_unscale_grads(self, model: nn.Module, config: PiscesLxGRPOConfig) -> None:
         if getattr(config, 'use_amp', False):
             scale = getattr(config, 'loss_scale', 128.0)
             has_inf = False
@@ -1883,7 +1883,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
 
 
 # Paper: DeepSeek-AI, "DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning", arXiv:2501.12948
-class POPSSGRPOTrainer:
+class PiscesLxGRPOTrainer:
     """
     High-level GRPO Trainer for preference alignment.
     
@@ -1891,11 +1891,11 @@ class POPSSGRPOTrainer:
     with GRPO, handling the training loop and checkpointing.
     
     Example:
-        >>> trainer = POPSSGRPOTrainer(
+        >>> trainer = PiscesLxGRPOTrainer(
         ...     model=policy_model,
         ...     reference_model=ref_model,
         ...     reward_function=reward_fn,
-        ...     config=POPSSGRPOConfig(group_size=4),
+        ...     config=PiscesLxGRPOConfig(group_size=4),
         ... )
         >>> trainer.train(prompts=train_prompts, num_epochs=10)
     """
@@ -1905,14 +1905,14 @@ class POPSSGRPOTrainer:
         model: nn.Module,
         reference_model: Optional[nn.Module] = None,
         reward_function = None,
-        config: Optional[POPSSGRPOConfig] = None,
+        config: Optional[PiscesLxGRPOConfig] = None,
         optimizer: Optional[torch.optim.Optimizer] = None,
         tokenizer = None,
     ):
         self.model = model
         self.reference_model = reference_model
         self.reward_function = reward_function
-        self.config = config or POPSSGRPOConfig()
+        self.config = config or PiscesLxGRPOConfig()
         self.tokenizer = tokenizer
         
         if optimizer is None:
@@ -1924,7 +1924,7 @@ class POPSSGRPOTrainer:
         else:
             self.optimizer = optimizer
         
-        self.operator = POPSSGRPOOperator()
+        self.operator = PiscesLxGRPOOperator()
         self.training_history = []
     
     def train(
@@ -2009,7 +2009,7 @@ class POPSSGRPOTrainer:
         return checkpoint["step"]
 
 
-class POPSSAgenticRLTrainer:
+class PiscesLxAgenticRLTrainer:
     """
     Agentic RL Post-Training Trainer.
 
@@ -2024,8 +2024,8 @@ class POPSSAgenticRLTrainer:
         - Agent-specific PPO-style policy updates
 
     Example:
-        >>> config = POPSSAgenticRLConfig(agent_rollout_steps=8, max_tool_calls=20)
-        >>> trainer = POPSSAgenticRLTrainer(
+        >>> config = PiscesLxAgenticRLConfig(agent_rollout_steps=8, max_tool_calls=20)
+        >>> trainer = PiscesLxAgenticRLTrainer(
         ...     model=policy_model,
         ...     reference_model=ref_model,
         ...     env_reward_function=reward_fn,
@@ -2039,7 +2039,7 @@ class POPSSAgenticRLTrainer:
         model: nn.Module,
         reference_model: Optional[nn.Module] = None,
         env_reward_function=None,
-        config: Optional[POPSSAgenticRLConfig] = None,
+        config: Optional[PiscesLxAgenticRLConfig] = None,
         optimizer: Optional[torch.optim.Optimizer] = None,
         tokenizer=None,
         tool_executor=None,
@@ -2047,7 +2047,7 @@ class POPSSAgenticRLTrainer:
         self.model = model
         self.reference_model = reference_model
         self.env_reward_function = env_reward_function
-        self.config = config or POPSSAgenticRLConfig()
+        self.config = config or PiscesLxAgenticRLConfig()
         self.tokenizer = tokenizer
         self.tool_executor = tool_executor
 
@@ -2060,7 +2060,7 @@ class POPSSAgenticRLTrainer:
         else:
             self.optimizer = optimizer
 
-        self.grpo_operator = POPSSGRPOOperator()
+        self.grpo_operator = PiscesLxGRPOOperator()
         self.training_history = []
 
     def _collect_agent_trajectory(

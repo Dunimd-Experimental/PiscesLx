@@ -94,9 +94,9 @@ from .mcp import (
     YvMCPToolRegistry,
 )
 from opss.am import (
-    POPSSToolRegistry,
-    POPSSToolType,
-    POPSSToolResult,
+    PiscesLxToolRegistry,
+    PiscesLxToolType,
+    PiscesLxToolResult,
 )
 from .types import (
     YvAgenticState,
@@ -235,7 +235,7 @@ class YvAgentic(nn.Module):
         )
         
         # Unified tool registry for MCP tools, Agent experts, and native functions
-        self.tool_registry = POPSSToolRegistry.get_instance()
+        self.tool_registry = PiscesLxToolRegistry.get_instance()
         
         # Dual-track MCP protocol to coordinate native and external execution
         self.mcp_protocol = YvCoreMCPProtocol(self.agentic_id, self.mcp_tools)
@@ -1570,7 +1570,7 @@ class YvAgentic(nn.Module):
             priority=priority,
         )
     
-    def list_available_tools(self, tool_type: Optional[POPSSToolType] = None) -> List[Dict[str, Any]]:
+    def list_available_tools(self, tool_type: Optional[PiscesLxToolType] = None) -> List[Dict[str, Any]]:
         """List all available tools from the unified registry.
         
         Args:
@@ -1616,7 +1616,7 @@ class YvAgentic(nn.Module):
         name_or_id: str,
         arguments: Dict[str, Any],
         timeout: float = 60.0,
-    ) -> POPSSToolResult:
+    ) -> PiscesLxToolResult:
         """Execute a tool from the unified registry (MCP tool, Agent expert, or native function).
         
         Args:
@@ -1625,7 +1625,7 @@ class YvAgentic(nn.Module):
             timeout: Execution timeout in seconds
             
         Returns:
-            POPSSToolResult containing execution result
+            PiscesLxToolResult containing execution result
         """
         return await self.tool_registry.execute(
             name_or_id=name_or_id,
@@ -1639,7 +1639,7 @@ class YvAgentic(nn.Module):
         name_or_id: str,
         arguments: Dict[str, Any],
         timeout: float = 60.0,
-    ) -> POPSSToolResult:
+    ) -> PiscesLxToolResult:
         """Synchronous version of execute_unified_tool.
         
         Args:
@@ -1648,7 +1648,7 @@ class YvAgentic(nn.Module):
             timeout: Execution timeout in seconds
             
         Returns:
-            POPSSToolResult containing execution result
+            PiscesLxToolResult containing execution result
         """
         return self.tool_registry.execute_sync(
             name_or_id=name_or_id,

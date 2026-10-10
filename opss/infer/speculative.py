@@ -50,7 +50,7 @@ from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResu
 
 
 @dataclass
-class POPSSSpeculativeConfig:
+class PiscesLxSpeculativeConfig:
     """Speculative decoding configuration."""
     
     # Model settings
@@ -75,7 +75,7 @@ class POPSSSpeculativeConfig:
     fallback_to_regular: bool = True
 
 
-class POPSSSpeculativeDecodingOperator(PiscesLxOperatorInterface):
+class PiscesLxSpeculativeDecodingOperator(PiscesLxOperatorInterface):
     """Complete speculative decoding operator implementation."""
     
     def __init__(self):
@@ -96,7 +96,7 @@ class POPSSSpeculativeDecodingOperator(PiscesLxOperatorInterface):
             "target_model": {"type": "torch.nn.Module", "required": True, "description": "Accurate target model"},
             "tokenizer": {"type": "object", "required": True, "description": "Model tokenizer"},
             "prompt": {"type": "str", "required": True, "description": "Input prompt"},
-            "config": {"type": "POPSSSpeculativeConfig", "required": False, "description": "Speculative configuration"}
+            "config": {"type": "PiscesLxSpeculativeConfig", "required": False, "description": "Speculative configuration"}
         }
         
     @property
@@ -152,7 +152,7 @@ class POPSSSpeculativeDecodingOperator(PiscesLxOperatorInterface):
             if custom_config:
                 config = custom_config
             else:
-                config = POPSSSpeculativeConfig()
+                config = PiscesLxSpeculativeConfig()
             
             self._LOG.info(f"Starting speculative decoding with gamma={config.gamma}")
             
@@ -210,7 +210,7 @@ class POPSSSpeculativeDecodingOperator(PiscesLxOperatorInterface):
     
     def _speculative_decode(self, draft_model: nn.Module, target_model: nn.Module, 
                            tokenizer: Any, input_ids: torch.Tensor, 
-                           config: POPSSSpeculativeConfig, device: torch.device) -> Dict[str, Any]:
+                           config: PiscesLxSpeculativeConfig, device: torch.device) -> Dict[str, Any]:
         """Core speculative decoding algorithm."""
         draft_model.eval()
         target_model.eval()
@@ -282,7 +282,7 @@ class POPSSSpeculativeDecodingOperator(PiscesLxOperatorInterface):
         }
     
     def _draft_generation(self, draft_model: nn.Module, input_ids: torch.Tensor,
-                         config: POPSSSpeculativeConfig, device: torch.device) -> torch.Tensor:
+                         config: PiscesLxSpeculativeConfig, device: torch.device) -> torch.Tensor:
         """Generate draft tokens using the fast draft model."""
         generated_tokens = []
 
@@ -315,7 +315,7 @@ class POPSSSpeculativeDecodingOperator(PiscesLxOperatorInterface):
         return torch.tensor(generated_tokens, device=device, dtype=torch.long) if generated_tokens else torch.tensor([], device=device, dtype=torch.long)
     
     def _verify_draft(self, target_model: nn.Module, input_ids: torch.Tensor,
-                     draft_tokens: torch.Tensor, config: POPSSSpeculativeConfig,
+                     draft_tokens: torch.Tensor, config: PiscesLxSpeculativeConfig,
                      device: torch.device) -> Tuple[int, float]:
         """Verify draft tokens using the target model."""
         start_time = time.time()
@@ -361,7 +361,7 @@ class POPSSSpeculativeDecodingOperator(PiscesLxOperatorInterface):
 
 # Additional helper operators
 
-class POPSSAssistedDecodingOperator(POPSSSpeculativeDecodingOperator):
+class PiscesLxAssistedDecodingOperator(PiscesLxSpeculativeDecodingOperator):
     """Assisted decoding variant of speculative decoding."""
     
     def __init__(self):
@@ -376,7 +376,7 @@ class POPSSAssistedDecodingOperator(POPSSSpeculativeDecodingOperator):
         return "Assisted decoding inference operator with teacher-student framework"
     
     def _verify_draft(self, target_model: nn.Module, input_ids: torch.Tensor,
-                     draft_tokens: torch.Tensor, config: POPSSSpeculativeConfig, 
+                     draft_tokens: torch.Tensor, config: PiscesLxSpeculativeConfig, 
                      device: torch.device) -> Tuple[int, float]:
         """Enhanced verification with assisted decoding logic."""
         start_time = time.time()
@@ -415,4 +415,4 @@ class POPSSAssistedDecodingOperator(POPSSSpeculativeDecodingOperator):
 
 
 # Export operators
-__all__ = ['POPSSSpeculativeDecodingOperator', 'POPSSAssistedDecodingOperator', 'POPSSSpeculativeConfig']
+__all__ = ['PiscesLxSpeculativeDecodingOperator', 'PiscesLxAssistedDecodingOperator', 'PiscesLxSpeculativeConfig']

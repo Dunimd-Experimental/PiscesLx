@@ -55,7 +55,7 @@ import sys
 import time
 from pathlib import Path
 
-from opss.knowledge import POPSSKnowledgeBuilder, POPSSKnowledgeBuilderConfig
+from opss.knowledge import PiscesLxKnowledgeBuilder, PiscesLxKnowledgeBuilderConfig
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -198,7 +198,7 @@ def build_from_config(config_path: str) -> None:
     cfg = YvConfig.from_json(config_path)
     store_path = cfg.memory_store_path or "./knowledge_store/7B/"
 
-    builder_cfg = POPSSKnowledgeBuilderConfig(
+    builder_cfg = PiscesLxKnowledgeBuilderConfig(
         encoder_hidden=cfg.knowledge_encoder_hidden,
         encoder_layers=cfg.knowledge_encoder_layers,
         encoder_experts=cfg.knowledge_encoder_experts,
@@ -216,7 +216,7 @@ def build_from_config(config_path: str) -> None:
         use_fp8=cfg.knowledge_store_use_fp8,
         knowledge_dim=cfg.memory_knowledge_dim,
     )
-    builder = POPSSKnowledgeBuilder(builder_cfg)
+    builder = PiscesLxKnowledgeBuilder(builder_cfg)
 
     print(f"Building knowledge store from config: {config_path}")
     print(f"  store_path  = {store_path}")
@@ -249,7 +249,7 @@ def main(argv: list[str] | None = None) -> None:
     store_path = args.store_path
     os.makedirs(store_path, exist_ok=True)
 
-    builder_cfg = POPSSKnowledgeBuilderConfig(
+    builder_cfg = PiscesLxKnowledgeBuilderConfig(
         encoder_hidden=args.encoder_hidden,
         encoder_layers=args.encoder_layers,
         encoder_experts=args.encoder_experts,
@@ -267,7 +267,7 @@ def main(argv: list[str] | None = None) -> None:
         device=args.device,
         use_fp8=args.use_fp8,
     )
-    builder = POPSSKnowledgeBuilder(builder_cfg)
+    builder = PiscesLxKnowledgeBuilder(builder_cfg)
 
     # ── Load corpus ────────────────────────────────────────────────
     if args.stream:

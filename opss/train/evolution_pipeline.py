@@ -42,11 +42,11 @@ Pipeline Stages:
 
 Usage:
     from opss.train.evolution_pipeline import (
-        POPSSEvolutionConfig,
-        POPSSEvolutionPipeline,
+        PiscesLxEvolutionConfig,
+        PiscesLxEvolutionPipeline,
     )
     
-    config = POPSSEvolutionConfig(
+    config = PiscesLxEvolutionConfig(
         seed_size="0.5B",
         target_size="7B",
         growth_stages=[
@@ -56,7 +56,7 @@ Usage:
         ],
     )
     
-    pipeline = POPSSEvolutionPipeline(config)
+    pipeline = PiscesLxEvolutionPipeline(config)
     pl1_model = pipeline.run(teacher_model, dataloader)
 """
 
@@ -72,7 +72,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import PiscesLxDataset, DataLoader
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
@@ -82,22 +82,22 @@ from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResu
 from configs.version import VERSION
 
 from .growth import (
-    POPSSGrowthType,
-    POPSSModelGrowthConfig,
-    POPSSModelGrowthOperator,
+    PiscesLxGrowthType,
+    PiscesLxModelGrowthConfig,
+    PiscesLxModelGrowthOperator,
 )
 from .weak_to_strong import (
-    POPSSWeakToStrongConfig,
-    POPSSWeakToStrongOperator,
-    POPSSIterativeAmplification,
+    PiscesLxWeakToStrongConfig,
+    PiscesLxWeakToStrongOperator,
+    PiscesLxIterativeAmplification,
 )
 from .distill import (
-    POPSSDistillationConfig,
-    POPSSDistillationOperator,
+    PiscesLxDistillationConfig,
+    PiscesLxDistillationOperator,
 )
 
 
-class POPSSEvolutionStage(Enum):
+class PiscesLxEvolutionStage(Enum):
     """Evolution pipeline stages."""
     DISTILL = "distill"
     GROW = "grow"
@@ -107,7 +107,7 @@ class POPSSEvolutionStage(Enum):
 
 
 @dataclass
-class POPSSGrowthStage:
+class PiscesLxGrowthStage:
     """Single growth stage configuration."""
     type: str
     num_layers: int = 0
@@ -115,9 +115,9 @@ class POPSSGrowthStage:
     num_experts: int = 0
     train_steps: int = 1000
     
-    def to_growth_config(self) -> POPSSModelGrowthConfig:
+    def to_growth_config(self) -> PiscesLxModelGrowthConfig:
         """Convert to growth config."""
-        return POPSSModelGrowthConfig(
+        return PiscesLxModelGrowthConfig(
             growth_type=self.type,
             num_new_layers=self.num_layers,
             new_hidden_size=self.hidden_size if self.hidden_size > 0 else None,
@@ -126,7 +126,7 @@ class POPSSGrowthStage:
 
 
 @dataclass
-class POPSSEvolutionConfig:
+class PiscesLxEvolutionConfig:
     """Complete evolution pipeline configuration.
     
     Attributes:
@@ -176,24 +176,24 @@ class POPSSEvolutionConfig:
         if not self.checkpoint_dir:
             self.checkpoint_dir = str(get_checkpoint_dir("evolution"))
         
-        # Convert dict stages to POPSSGrowthStage
+        # Convert dict stages to PiscesLxGrowthStage
         self._parsed_stages = []
         for stage in self.growth_stages:
             if isinstance(stage, dict):
-                self._parsed_stages.append(POPSSGrowthStage(**stage))
-            elif isinstance(stage, POPSSGrowthStage):
+                self._parsed_stages.append(PiscesLxGrowthStage(**stage))
+            elif isinstance(stage, PiscesLxGrowthStage):
                 self._parsed_stages.append(stage)
     
-    def get_growth_stages(self) -> List[POPSSGrowthStage]:
+    def get_growth_stages(self) -> List[PiscesLxGrowthStage]:
         """Get parsed growth stages."""
         return self._parsed_stages
 
 
-class POPSSEvolutionTracker:
+class PiscesLxEvolutionTracker:
     """Tracks evolution pipeline progress and metrics."""
     
     def __init__(self):
-        self.stage = POPSSEvolutionStage.DISTILL
+        self.stage = PiscesLxEvolutionStage.DISTILL
         self.step = 0
         self.stage_step = 0
         self.metrics = {
@@ -209,7 +209,7 @@ class POPSSEvolutionTracker:
             enable_file=True,
         )
     
-    def set_stage(self, stage: POPSSEvolutionStage):
+    def set_stage(self, stage: PiscesLxEvolutionStage):
         """Set current stage."""
         self.stage = stage
         self.stage_step = 0
@@ -237,17 +237,17 @@ class POPSSEvolutionTracker:
         }
 
 
-class _EvolutionPipelineImpl(PiscesLxOperatorInterface):
+class _PiscesLxEvolutionPipelineImpl(PiscesLxOperatorInterface):
     """Evolution pipeline implementation."""
     
-    def __init__(self, config: POPSSEvolutionConfig):
+    def __init__(self, config: PiscesLxEvolutionConfig):
         super().__init__()
         self._name = "training.evolution_pipeline"
         self._version = VERSION
         self.type = "training"
         
         self.config = config
-        self.tracker = POPSSEvolutionTracker()
+        self.tracker = PiscesLxEvolutionTracker()
         
         self._LOG = PiscesLxLogger(
             "PiscesLx.Evolution.Pipeline",
@@ -256,7 +256,7 @@ class _EvolutionPipelineImpl(PiscesLxOperatorInterface):
         )
         
         # Operators
-        self._growth_operator = POPSSModelGrowthOperator()
+        self._growth_operator = PiscesLxModelGrowthOperator()
         self._w2s_operator = None
         self._distill_operator = None
     
@@ -290,7 +290,7 @@ class _EvolutionPipelineImpl(PiscesLxOperatorInterface):
             # Stage 1: Distillation
             if teacher_model is not None and current_model is None:
                 self._LOG.info("Stage 1: Distillation")
-                self.tracker.set_stage(POPSSEvolutionStage.DISTILL)
+                self.tracker.set_stage(PiscesLxEvolutionStage.DISTILL)
                 current_model = self._run_distillation(teacher_model, dataloader)
             
             if current_model is None:
@@ -301,20 +301,20 @@ class _EvolutionPipelineImpl(PiscesLxOperatorInterface):
             
             # Stage 2: Growth
             self._LOG.info("Stage 2: Progressive Growth")
-            self.tracker.set_stage(POPSSEvolutionStage.GROW)
+            self.tracker.set_stage(PiscesLxEvolutionStage.GROW)
             current_model = self._run_growth(current_model, dataloader)
             
             # Stage 3: Self-Evolution
             self._LOG.info("Stage 3: Self-Evolution")
-            self.tracker.set_stage(POPSSEvolutionStage.EVOLVE)
+            self.tracker.set_stage(PiscesLxEvolutionStage.EVOLVE)
             current_model = self._run_self_evolution(current_model, dataloader)
             
             # Stage 4: Weak-to-Strong
             self._LOG.info("Stage 4: Weak-to-Strong Training")
-            self.tracker.set_stage(POPSSEvolutionStage.W2S)
+            self.tracker.set_stage(PiscesLxEvolutionStage.W2S)
             final_model = self._run_weak_to_strong(current_model, dataloader)
             
-            self.tracker.set_stage(POPSSEvolutionStage.COMPLETE)
+            self.tracker.set_stage(PiscesLxEvolutionStage.COMPLETE)
             
             return PiscesLxOperatorResult(
                 status=PiscesLxOperatorStatus.SUCCESS,
@@ -345,12 +345,12 @@ class _EvolutionPipelineImpl(PiscesLxOperatorInterface):
         student_model = YvModelForCausalLM(seed_config)
         
         # Setup distillation
-        distill_config = POPSSDistillationConfig(
+        distill_config = PiscesLxDistillationConfig(
             temperature=2.0,
             alpha=0.5,
         )
         
-        self._distill_operator = POPSSDistillationOperator(
+        self._distill_operator = PiscesLxDistillationOperator(
             teacher_model, student_model, distill_config
         )
         
@@ -597,13 +597,13 @@ class _EvolutionPipelineImpl(PiscesLxOperatorInterface):
         pl1_model = self._initialize_from_evolved(pl1_model, evolved_model)
         
         # Setup weak-to-strong training
-        w2s_config = POPSSWeakToStrongConfig(
+        w2s_config = PiscesLxWeakToStrongConfig(
             confidence_threshold=0.7,
             use_curriculum=True,
             use_self_correction=True,
         )
         
-        w2s_operator = POPSSWeakToStrongOperator(
+        w2s_operator = PiscesLxWeakToStrongOperator(
             evolved_model,  # weak model
             pl1_model,      # strong model
             w2s_config,
@@ -739,7 +739,7 @@ class _EvolutionPipelineImpl(PiscesLxOperatorInterface):
 
 
 # Paper: Original contribution by Dunimd Team (Yv Architecture)
-class POPSSEvolutionPipeline:
+class PiscesLxEvolutionPipeline:
     """Facade for evolution pipeline.
     
     Complete self-evolution training pipeline implementing:
@@ -749,7 +749,7 @@ class POPSSEvolutionPipeline:
         4. Weak-to-strong training for final PiscesLx
     
     Example:
-        >>> config = POPSSEvolutionConfig(
+        >>> config = PiscesLxEvolutionConfig(
         ...     seed_size="0.5B",
         ...     target_size="7B",
         ...     distill_steps=2000,
@@ -757,7 +757,7 @@ class POPSSEvolutionPipeline:
         ...     w2s_steps=2000,
         ... )
         >>> 
-        >>> pipeline = POPSSEvolutionPipeline(config)
+        >>> pipeline = PiscesLxEvolutionPipeline(config)
         >>> result = pipeline.run(
         ...     teacher_model=deepseek_model,
         ...     dataloader=train_dataloader,
@@ -767,9 +767,9 @@ class POPSSEvolutionPipeline:
         ...     pl1_model = result.data["model"]
     """
     
-    def __init__(self, config: Optional[POPSSEvolutionConfig] = None):
-        self.config = config or POPSSEvolutionConfig()
-        self._impl = _EvolutionPipelineImpl(self.config)
+    def __init__(self, config: Optional[PiscesLxEvolutionConfig] = None):
+        self.config = config or PiscesLxEvolutionConfig()
+        self._impl = _PiscesLxEvolutionPipelineImpl(self.config)
         self._LOG = PiscesLxLogger(
             "PiscesLx.Evolution.Facade",
             file_path=get_log_file("PiscesLx.Evolution.Facade"),
@@ -841,9 +841,9 @@ class POPSSEvolutionPipeline:
 
 
 __all__ = [
-    "POPSSEvolutionStage",
-    "POPSSGrowthStage",
-    "POPSSEvolutionConfig",
-    "POPSSEvolutionTracker",
-    "POPSSEvolutionPipeline",
+    "PiscesLxEvolutionStage",
+    "PiscesLxGrowthStage",
+    "PiscesLxEvolutionConfig",
+    "PiscesLxEvolutionTracker",
+    "PiscesLxEvolutionPipeline",
 ]

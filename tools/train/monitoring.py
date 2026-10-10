@@ -31,10 +31,10 @@ PiscesLx training framework. It tracks training metrics, system resources, and
 performance statistics in real-time, enabling detailed analysis and visualization.
 
 Components:
-    1. TrainingMonitorOperator: Real-time metrics tracking and logging
-    2. PerformanceProfilerOperator: Detailed performance bottleneck analysis
-    3. SystemResourceMonitor: GPU/CPU resource monitoring
-    4. TrainingVisualizer: Training curve generation and dashboard
+    1. PiscesLxTrainingMonitorOperator: Real-time metrics tracking and logging
+    2. PiscesLxPerformanceProfilerOperator: Detailed performance bottleneck analysis
+    3. PiscesLxSystemResourceMonitor: GPU/CPU resource monitoring
+    4. PiscesLxTrainingVisualizer: Training curve generation and dashboard
 
 Features:
     - Real-time metric tracking (loss, learning rate, throughput)
@@ -46,9 +46,9 @@ Features:
 
 Usage Examples:
     Basic Monitoring:
-        >>> from tools.train.monitoring import TrainingMonitorOperator
+        >>> from tools.train.monitoring import PiscesLxTrainingMonitorOperator
         >>> 
-        >>> monitor = TrainingMonitorOperator(log_dir="./logs")
+        >>> monitor = PiscesLxTrainingMonitorOperator(log_dir="./logs")
         >>> monitor.start_monitoring()
         >>> 
         >>> for step, metrics in enumerate(training_loop):
@@ -58,7 +58,7 @@ Usage Examples:
         >>> monitor.generate_report()
 
     Performance Profiling:
-        >>> profiler = PerformanceProfilerOperator()
+        >>> profiler = PiscesLxPerformanceProfilerOperator()
         >>> profiler.start_profiling()
         >>> 
         >>> # Training code here
@@ -94,7 +94,7 @@ _LOG = PiscesLxLogger("PiscesLx.Tools.Train", file_path=get_log_file("PiscesLx.T
 
 
 @PiscesLxOperatorRegistrar()
-class TrainingMonitorOperator(PiscesLxTransformOperator):
+class PiscesLxTrainingMonitorOperator(PiscesLxTransformOperator):
     """
     Training Monitor Operator
     
@@ -116,7 +116,7 @@ class TrainingMonitorOperator(PiscesLxTransformOperator):
         - CPU utilization
         
     Example:
-        >>> monitor = TrainingMonitorOperator(log_dir="./logs")
+        >>> monitor = PiscesLxTrainingMonitorOperator(log_dir="./logs")
         >>> monitor.start_monitoring()
         >>> 
         >>> for step in range(1000):
@@ -159,11 +159,11 @@ class TrainingMonitorOperator(PiscesLxTransformOperator):
         }
         
         # System resource monitor
-        self.system_monitor = SystemResourceMonitor()
+        self.system_monitor = PiscesLxSystemResourceMonitor()
         
         # Visualization component
         if self.enable_visualization:
-            self.visualizer = TrainingVisualizer(self.log_dir)
+            self.visualizer = PiscesLxTrainingVisualizer(self.log_dir)
         
         _LOG.info(f"TrainingMonitor initialized with log_dir: {self.log_dir}")
 
@@ -308,7 +308,7 @@ class TrainingMonitorOperator(PiscesLxTransformOperator):
         return anomalies
 
 
-class SystemResourceMonitor:
+class PiscesLxSystemResourceMonitor:
     """System resource monitor."""
     
     def __init__(self):
@@ -340,7 +340,7 @@ class SystemResourceMonitor:
         return metrics
 
 
-class TrainingVisualizer:
+class PiscesLxTrainingVisualizer:
     """Training visualizer."""
     
     def __init__(self, log_dir: Path):
@@ -376,7 +376,7 @@ class TrainingVisualizer:
 
 
 @PiscesLxOperatorRegistrar()
-class PerformanceProfilerOperator(PiscesLxTransformOperator):
+class PiscesLxPerformanceProfilerOperator(PiscesLxTransformOperator):
     """
     Performance profiler operator.
     Provides detailed analysis of training performance bottlenecks.

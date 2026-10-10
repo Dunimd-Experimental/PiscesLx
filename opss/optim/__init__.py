@@ -30,9 +30,9 @@ This module provides comprehensive optimizer operators implementing state-of-the
 optimization techniques for large language model training.
 
 Available Operators:
-    - POPSSGaLoreOperator: Gradient low-rank projection optimization
-    - POPSSROOTOperator: Robust orthogonalized optimizer (Adam stability + Muon speed)
-    - POPSSFP4Operator: Native FP4 training for extreme memory efficiency
+    - PiscesLxGaLoreOperator: Gradient low-rank projection optimization
+    - PiscesLxROOTOperator: Robust orthogonalized optimizer (Adam stability + Muon speed)
+    - PiscesLxFP4Operator: Native FP4 training for extreme memory efficiency
 
 Key Features:
     - Memory-efficient training with GaLore low-rank projection
@@ -48,17 +48,17 @@ Architecture:
 
 Usage Examples:
     GaLore Optimization:
-    >>> from opss.optim import POPSSGaLoreOperator, POPSSGaLoreConfig
-    >>> galore = POPSSGaLoreOperator()
+    >>> from opss.optim import PiscesLxGaLoreOperator, PiscesLxGaLoreConfig
+    >>> galore = PiscesLxGaLoreOperator()
     >>> result = galore.execute({"model": model, "gradients": grads})
     
     ROOT Optimizer:
-    >>> from opss.optim import POPSSROOTOptimizer, POPSSROOTConfig
-    >>> optimizer = POPSSROOTOptimizer(model.parameters(), lr=1e-3)
+    >>> from opss.optim import PiscesLxROOTOptimizer, PiscesLxROOTConfig
+    >>> optimizer = PiscesLxROOTOptimizer(model.parameters(), lr=1e-3)
     
     FP4 Training:
-    >>> from opss.optim import POPSSFP4Trainer, POPSSFP4Config
-    >>> trainer = POPSSFP4Trainer(model, config)
+    >>> from opss.optim import PiscesLxFP4Trainer, PiscesLxFP4Config
+    >>> trainer = PiscesLxFP4Trainer(model, config)
     >>> trainer.train(dataloader, num_epochs=10)
 
 See Also:
@@ -72,61 +72,61 @@ from pathlib import Path
 from configs.version import VERSION, AUTHOR
 
 from .galore import (
-    POPSSGaLoreOperator,
-    POPSSGaLoreConfig,
-    POPSSGaLoreOptimizerAdapter,
+    PiscesLxGaLoreOperator,
+    PiscesLxGaLoreConfig,
+    PiscesLxGaLoreOptimizerAdapter,
 )
 
 from .root import (
-    POPSSROOTOperator,
-    POPSSROOTConfig,
-    POPSSROOTOptimizer,
-    POPSSROOTScheduler,
+    PiscesLxROOTOperator,
+    PiscesLxROOTConfig,
+    PiscesLxROOTOptimizer,
+    PiscesLxROOTScheduler,
 )
 
 from .fp4 import (
-    POPSSFP4Operator,
-    POPSSFP4Config,
-    POPSSFP4Trainer,
-    POPSSFP4Quantizer,
-    POPSSFP4Linear,
+    PiscesLxFP4Operator,
+    PiscesLxFP4Config,
+    PiscesLxFP4Trainer,
+    PiscesLxFP4Quantizer,
+    PiscesLxFP4Linear,
     FP4_E2M1_VALUES,
     FP4_E2M1_MAX,
     FP4_E2M1_MIN,
 )
 
 from .ink import (
-    POPSSInkConfig,
-    POPSSInkBlockQuantizer,
-    POPSSInkSparseSelector,
-    POPSSInkIntegrator,
-    POPSSInkOperator,
-    POPSSInkOptimizer,
+    PiscesLxInkConfig,
+    PiscesLxInkBlockQuantizer,
+    PiscesLxInkSparseSelector,
+    PiscesLxInkIntegrator,
+    PiscesLxInkOperator,
+    PiscesLxInkOptimizer,
 )
 
 __version__ = VERSION
 __author__ = AUTHOR
 
 __all__ = [
-    "POPSSGaLoreOperator",
-    "POPSSGaLoreConfig",
-    "POPSSGaLoreOptimizerAdapter",
-    "POPSSROOTOperator",
-    "POPSSROOTConfig",
-    "POPSSROOTOptimizer",
-    "POPSSROOTScheduler",
-    "POPSSFP4Operator",
-    "POPSSFP4Config",
-    "POPSSFP4Trainer",
-    "POPSSFP4Quantizer",
-    "POPSSFP4Linear",
+    "PiscesLxGaLoreOperator",
+    "PiscesLxGaLoreConfig",
+    "PiscesLxGaLoreOptimizerAdapter",
+    "PiscesLxROOTOperator",
+    "PiscesLxROOTConfig",
+    "PiscesLxROOTOptimizer",
+    "PiscesLxROOTScheduler",
+    "PiscesLxFP4Operator",
+    "PiscesLxFP4Config",
+    "PiscesLxFP4Trainer",
+    "PiscesLxFP4Quantizer",
+    "PiscesLxFP4Linear",
     "FP4_E2M1_VALUES",
     "FP4_E2M1_MAX",
     "FP4_E2M1_MIN",
-    "POPSSInkConfig",
-    "POPSSInkBlockQuantizer",
-    "POPSSInkSparseSelector",
-    "POPSSInkIntegrator",
-    "POPSSInkOperator",
-    "POPSSInkOptimizer",
+    "PiscesLxInkConfig",
+    "PiscesLxInkBlockQuantizer",
+    "PiscesLxInkSparseSelector",
+    "PiscesLxInkIntegrator",
+    "PiscesLxInkOperator",
+    "PiscesLxInkOptimizer",
 ]

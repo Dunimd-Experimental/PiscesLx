@@ -50,15 +50,15 @@ from utils.paths import get_log_file
 _LOG = PiscesLxLogger("Yv.SubconsciousTrainer", file_path=get_log_file("Yv.SubconsciousTrainer"), enable_file=True)
 
 
-class TrainingPhase(Enum):
+class PiscesLxTrainingPhase(Enum):
     ROUTER_PRETRAIN = "router_pretrain"
     JOINT_RL = "joint_rl"
     SELF_PLAY = "self_play"
 
 
 @dataclass
-class SubconsciousTrainingConfig:
-    phase: TrainingPhase = TrainingPhase.ROUTER_PRETRAIN
+class PiscesLxSubconsciousTrainingConfig:
+    phase: PiscesLxTrainingPhase = PiscesLxTrainingPhase.ROUTER_PRETRAIN
     router_learning_rate: float = 1e-5
     state_learning_rate: float = 3e-6
     film_learning_rate: float = 1e-6
@@ -78,7 +78,7 @@ class SubconsciousTrainingConfig:
     gae_lambda: float = 0.95
 
 
-class RewardNormalizer:
+class PiscesLxRewardNormalizer:
     def __init__(self, momentum: float = 0.99, eps: float = 1e-8):
         self.momentum = momentum
         self.eps = eps
@@ -102,19 +102,19 @@ class RewardNormalizer:
         return (reward - self.mean) / (math.sqrt(self.var) + self.eps)
 
 
-class SubconsciousTrainer:
+class PiscesLxSubconsciousTrainer:
     def __init__(
         self,
         subconscious_system: nn.Module,
-        config: SubconsciousTrainingConfig = None,
+        config: PiscesLxSubconsciousTrainingConfig = None,
         device: torch.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu'),
     ):
         self.subconscious = subconscious_system
-        self.cfg = config or SubconsciousTrainingConfig()
+        self.cfg = config or PiscesLxSubconsciousTrainingConfig()
         self.device = device
         self.training_step = 0
         self.phase = self.cfg.phase
-        self.reward_normalizer = RewardNormalizer()
+        self.reward_normalizer = PiscesLxRewardNormalizer()
 
         router_params = list(self.subconscious.router.parameters())
         state_params = list(self.subconscious.state_evolver.parameters())
@@ -133,7 +133,7 @@ class SubconsciousTrainer:
         self._old_log_probs: Optional[torch.Tensor] = None
 
         _LOG.info(
-            f"SubconsciousTrainer initialized. "
+            f"PiscesLxSubconsciousTrainer initialized. "
             f"Phase: {self.phase.value}. "
             f"Params: {sum(p.numel() for p in self._all_params)/1e6:.1f}M"
         )
@@ -171,13 +171,13 @@ class SubconsciousTrainer:
         task_metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, float]:
         self.training_step += 1
-        if self.phase == TrainingPhase.ROUTER_PRETRAIN:
+        if self.phase == PiscesLxTrainingPhase.ROUTER_PRETRAIN:
             return self._router_pretrain_step(hidden_states, quality_score, task_metadata)
-        elif self.phase == TrainingPhase.JOINT_RL:
+        elif self.phase == PiscesLxTrainingPhase.JOINT_RL:
             if self.cfg.use_ppo:
                 return self._ppo_step(hidden_states, quality_score, task_metadata)
             return self._rl_step(hidden_states, quality_score, task_metadata)
-        elif self.phase == TrainingPhase.SELF_PLAY:
+        elif self.phase == PiscesLxTrainingPhase.SELF_PLAY:
             return self._self_play_step(hidden_states, quality_score, task_metadata)
         return {"error": f"Unknown phase: {self.phase}"}
 
@@ -203,8 +203,8 @@ class SubconsciousTrainer:
             "routing_entropy": entropy.item(),
             "aux_loss": aux_loss.item(),
         }
-        if self.training_step >= 5000 and self.phase == TrainingPhase.ROUTER_PRETRAIN:
-            self.phase = TrainingPhase.JOINT_RL
+        if self.training_step >= 5000 and self.phase == PiscesLxTrainingPhase.ROUTER_PRETRAIN:
+            self.phase = PiscesLxTrainingPhase.JOINT_RL
             _LOG.info("Router pretrain complete -> switching to JOINT_RL phase")
             metrics["phase_switch"] = "router_pretrain -> joint_rl"
         return metrics
@@ -342,8 +342,8 @@ class SubconsciousTrainer:
             "reward_mean": rewards.mean().item(),
         }
         self._ppo_buffer = []
-        if self.training_step >= 20000 and self.phase == TrainingPhase.JOINT_RL:
-            self.phase = TrainingPhase.SELF_PLAY
+        if self.training_step >= 20000 and self.phase == PiscesLxTrainingPhase.JOINT_RL:
+            self.phase = PiscesLxTrainingPhase.SELF_PLAY
             _LOG.info("JOINT_RL converged -> switching to SELF_PLAY phase")
             metrics["phase_switch"] = "joint_rl -> self_play"
         return metrics
@@ -362,7 +362,7 @@ class SubconsciousTrainer:
             metrics["exploration_bonus"] = exploration_bonus.item()
         return metrics
 
-    def set_phase(self, phase: TrainingPhase):
+    def set_phase(self, phase: PiscesLxTrainingPhase):
         old_phase = self.phase
         self.phase = phase
         _LOG.info(f"Training phase: {old_phase.value} -> {phase.value}")
@@ -380,7 +380,7 @@ class SubconsciousTrainer:
 
     def load_state_dict(self, state_dict: Dict[str, Any]):
         self.training_step = state_dict.get("training_step", 0)
-        self.phase = TrainingPhase(state_dict.get("phase", "router_pretrain"))
+        self.phase = PiscesLxTrainingPhase(state_dict.get("phase", "router_pretrain"))
         self.router_optimizer.load_state_dict(state_dict["router_optimizer"])
         self.state_optimizer.load_state_dict(state_dict["state_optimizer"])
         self.film_optimizer.load_state_dict(state_dict["film_optimizer"])
@@ -388,4 +388,4 @@ class SubconsciousTrainer:
         self.reward_normalizer.var = state_dict.get("reward_normalizer_var", 1.0)
 
 
-YvSubconsciousTrainer = SubconsciousTrainer
+YvSubconsciousTrainer = PiscesLxSubconsciousTrainer

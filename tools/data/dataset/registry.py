@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from typing import Callable, Dict, Optional, Any
 
-class DatasetRegistry:
+class PiscesLxDatasetRegistry:
     """Manages a registry of dataset builders.
 
     This class implements a simple key-value store that allows users to register
@@ -33,7 +33,7 @@ class DatasetRegistry:
     """
 
     def __init__(self):
-        """Initialize the DatasetRegistry instance.
+        """Initialize the PiscesLxDatasetRegistry instance.
 
         Creates an empty dictionary to store dataset builders, 
         where keys are builder names and values are callable builders.
@@ -75,7 +75,7 @@ class DatasetRegistry:
         """
         builder = self.get(name)
         if not builder:
-            raise KeyError(f"Dataset builder not found: {name}")
+            raise KeyError(f"PiscesLxDataset builder not found: {name}")
         return builder(**kwargs)
 
-REGISTRY = DatasetRegistry()
+REGISTRY = PiscesLxDatasetRegistry()

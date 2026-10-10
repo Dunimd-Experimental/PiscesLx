@@ -50,7 +50,7 @@ from itertools import chain
 
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import PiscesLxDataset, DataLoader
 
 import transformer_engine.pytorch as te
 from transformer_engine.common.recipe import Format, DelayedScaling, _Format
@@ -64,7 +64,7 @@ from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResu
 
 
 @dataclass
-class FP8TrainingConfig:
+class PiscesLxFP8TrainingConfig:
     """
     FP8 Training Configuration.
     
@@ -149,7 +149,7 @@ class FP8TrainingConfig:
     resume_from: Optional[str] = None
 
 
-class TextDataset(Dataset):
+class PiscesLxTextDataset(PiscesLxDataset):
     """
     Standard text dataset for language modeling.
     
@@ -218,7 +218,7 @@ class TextDataset(Dataset):
         }
 
 
-class FP8TrainingOperator(PiscesLxOperatorInterface):
+class PiscesLxFP8TrainingOperator(PiscesLxOperatorInterface):
     """
     Complete FP8 Training Operator.
     
@@ -269,7 +269,7 @@ class FP8TrainingOperator(PiscesLxOperatorInterface):
             "model": {"type": "torch.nn.Module", "required": True, "description": "Model to train with FP8"},
             "tokenizer": {"type": "object", "required": True, "description": "Model tokenizer"},
             "train_data_path": {"type": "str", "required": True, "description": "Path to training data (JSONL or text)"},
-            "config": {"type": "FP8TrainingConfig", "required": False, "description": "FP8 training configuration"},
+            "config": {"type": "PiscesLxFP8TrainingConfig", "required": False, "description": "FP8 training configuration"},
             "optimizer": {"type": "torch.optim.Optimizer", "required": False, "description": "Custom optimizer (auto-created if None)"}
         }
         
@@ -308,7 +308,7 @@ class FP8TrainingOperator(PiscesLxOperatorInterface):
             model = inputs['model']
             tokenizer = inputs['tokenizer']
             train_data_path = inputs['train_data_path']
-            config = inputs.get('config') or FP8TrainingConfig(train_data=train_data_path)
+            config = inputs.get('config') or PiscesLxFP8TrainingConfig(train_data=train_data_path)
             custom_optimizer = inputs.get('optimizer')
             
             self._LOG.info(f"Starting FP8 training: max_steps={config.max_steps}, batch_size={config.batch_size}")
@@ -340,7 +340,7 @@ class FP8TrainingOperator(PiscesLxOperatorInterface):
                 optimizer = custom_optimizer or self._create_optimizer(model, config)
                 scaler = torch.cuda.amp.GradScaler(enabled=False)
             
-            dataset = TextDataset(train_data_path, tokenizer)
+            dataset = PiscesLxTextDataset(train_data_path, tokenizer)
             dataloader = DataLoader(
                 dataset,
                 batch_size=config.micro_batch_size,
@@ -487,7 +487,7 @@ class FP8TrainingOperator(PiscesLxOperatorInterface):
                 execution_time=time.time() - start_time
             )
     
-    def _create_fp8_recipe(self, config: FP8TrainingConfig):
+    def _create_fp8_recipe(self, config: PiscesLxFP8TrainingConfig):
         """Create FP8 scaling recipe."""
         try:
             format_type = Format[config.fp8_format] if hasattr(Format, config.fp8_format) else Format.HYBRID
@@ -503,7 +503,7 @@ class FP8TrainingOperator(PiscesLxOperatorInterface):
             stochastic_rounding=config.fp8_stochastic_rounding
         )
     
-    def _create_optimizer(self, model: nn.Module, config: FP8TrainingConfig) -> torch.optim.Optimizer:
+    def _create_optimizer(self, model: nn.Module, config: PiscesLxFP8TrainingConfig) -> torch.optim.Optimizer:
         """Create AdamW optimizer with layer-wise learning rates."""
         no_decay = ['bias', 'LayerNorm.weight', 'layernorm.weight', 'norm.weight']
         optimizer_grouped_parameters = [
@@ -520,8 +520,8 @@ class FP8TrainingOperator(PiscesLxOperatorInterface):
         ]
         
         if config.use_fused_adamw:
-            from opss.kernels.fused_adamw import FusedAdamW
-            return FusedAdamW(
+            from opss.kernels.fused_adamw import PiscesLxFusedAdamW
+            return PiscesLxFusedAdamW(
                 optimizer_grouped_parameters,
                 lr=config.learning_rate,
                 betas=config.adam_beta,
@@ -535,7 +535,7 @@ class FP8TrainingOperator(PiscesLxOperatorInterface):
         )
     
     def _save_checkpoint(self, path: Path, model: nn.Module, optimizer: torch.optim.Optimizer, 
-                         scaler: torch.cuda.amp.GradScaler, step: int, config: FP8TrainingConfig) -> None:
+                         scaler: torch.cuda.amp.GradScaler, step: int, config: PiscesLxFP8TrainingConfig) -> None:
         """Save training checkpoint."""
         checkpoint = {
             'step': step,
@@ -564,7 +564,7 @@ class FP8TrainingOperator(PiscesLxOperatorInterface):
         
         return checkpoint['step'], model, optimizer or torch.optim.AdamW(model.parameters()), scaler
     
-    def _apply_coat_scaling(self, model: nn.Module, config: FP8TrainingConfig) -> nn.Module:
+    def _apply_coat_scaling(self, model: nn.Module, config: PiscesLxFP8TrainingConfig) -> nn.Module:
         """Apply COAT dynamic range scaling to align optimizer state distributions to FP8 representation range.
         
         This technique expands the dynamic range of FP8 training by scaling parameters
@@ -586,7 +586,7 @@ class FP8TrainingOperator(PiscesLxOperatorInterface):
         
         return model
     
-    def _apply_mixed_grain_quantization(self, model: nn.Module, config: FP8TrainingConfig) -> nn.Module:
+    def _apply_mixed_grain_quantization(self, model: nn.Module, config: PiscesLxFP8TrainingConfig) -> nn.Module:
         """Apply mixed-granularity activation quantization combining per-tensor and per-group strategies.
         
         Large tensors use per-group quantization for better precision,
@@ -612,7 +612,7 @@ class FP8TrainingOperator(PiscesLxOperatorInterface):
         return model
 
 
-class _NullContext:
+class _PiscesLxNullContext:
     """Null context manager for CPU training."""
     def __enter__(self):
         return self
@@ -622,9 +622,9 @@ class _NullContext:
 
 def nullcontext():
     """Return null context manager."""
-    return _NullContext()
+    return _PiscesLxNullContext()
 
 
-class FP8Operator(FP8TrainingOperator):
+class PiscesLxFP8Operator(PiscesLxFP8TrainingOperator):
     """Alias for backward compatibility."""
     pass

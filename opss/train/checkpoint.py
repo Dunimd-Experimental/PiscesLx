@@ -55,18 +55,18 @@ Checkpoint Contents:
 
 Usage:
     from ops.train.checkpoint import (
-        CheckpointConfig,
-        CheckpointOperator,
-        CheckpointType
+        PiscesLxCheckpointConfig,
+        PiscesLxCheckpointOperator,
+        PiscesLxCheckpointType
     )
 
-    config = CheckpointConfig(
-        type=CheckpointType.FULL,
+    config = PiscesLxCheckpointConfig(
+        type=PiscesLxCheckpointType.FULL,
         save_dir=".pisceslx/ckpt",
         interval=1000,
         max_to_keep=5
     )
-    operator = CheckpointOperator(config)
+    operator = PiscesLxCheckpointOperator(config)
     
     # Save checkpoint
     operator.save("model_step_1000", {
@@ -107,7 +107,7 @@ from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResu
 from configs.version import VERSION
 
 
-class CheckpointType(Enum):
+class PiscesLxCheckpointType(Enum):
     """Types of checkpoints to save."""
     FULL = "full"
     MODEL_ONLY = "model_only"
@@ -116,7 +116,7 @@ class CheckpointType(Enum):
     SHARDED = "sharded"
 
 
-class CompressionType(Enum):
+class PiscesLxCompressionType(Enum):
     """Checkpoint compression types."""
     NONE = "none"
     ZSTD = "zstd"
@@ -124,7 +124,7 @@ class CompressionType(Enum):
 
 
 @dataclass
-class CheckpointConfig:
+class PiscesLxCheckpointConfig:
     """
     Configuration for checkpoint operations.
     
@@ -146,12 +146,12 @@ class CheckpointConfig:
         include_cuda: Include CUDA states
         safe_saving: Use atomic save operations
     """
-    type: CheckpointType = CheckpointType.FULL
+    type: PiscesLxCheckpointType = PiscesLxCheckpointType.FULL
     save_dir: str = ".pisceslx/ckpt"
     prefix: str = "checkpoint"
     interval: int = 5000
     max_to_keep: int = 3
-    compression: CompressionType = CompressionType.NONE
+    compression: PiscesLxCompressionType = PiscesLxCompressionType.NONE
     save_async: bool = False
     shard_size: int = 2 * 1024 * 1024 * 1024  # 2GB
     save_last: bool = True
@@ -168,7 +168,7 @@ class CheckpointConfig:
 
 
 @dataclass
-class CheckpointMetadata:
+class PiscesLxCheckpointMetadata:
     """Metadata for a saved checkpoint."""
     path: str
     type: str
@@ -182,7 +182,7 @@ class CheckpointMetadata:
     is_last: bool
 
 
-class CheckpointOperator(PiscesLxOperatorInterface):
+class PiscesLxCheckpointOperator(PiscesLxOperatorInterface):
     """
     Model Checkpoint Operator.
     
@@ -200,19 +200,19 @@ class CheckpointOperator(PiscesLxOperatorInterface):
         - Mixed precision checkpoint support
     
     Attributes:
-        config: CheckpointConfig instance
+        config: PiscesLxCheckpointConfig instance
         metadata: Metadata for all saved checkpoints
         logger: Logger instance
         _save_lock: Lock for thread-safe saving
     """
     
-    def __init__(self, config: Optional[CheckpointConfig] = None):
+    def __init__(self, config: Optional[PiscesLxCheckpointConfig] = None):
         """Initialize checkpoint operator."""
         super().__init__()
         self.name = "checkpoint"
         self.version = VERSION
-        self.config = config or CheckpointConfig()
-        self.metadata: Dict[str, CheckpointMetadata] = {}
+        self.config = config or PiscesLxCheckpointConfig()
+        self.metadata: Dict[str, PiscesLxCheckpointMetadata] = {}
         self._LOG = PiscesLxLogger("PiscesLx.Opss.Train",file_path=get_log_file("PiscesLx.Opss.Train"), enable_file=True)
         self._save_lock = threading.Lock()
         self._async_queue: List[Dict] = []
@@ -346,19 +346,19 @@ class CheckpointOperator(PiscesLxOperatorInterface):
             'config_type': self.config.type.value
         }
         
-        if self.config.type in [CheckpointType.FULL, CheckpointType.MODEL_ONLY]:
+        if self.config.type in [PiscesLxCheckpointType.FULL, PiscesLxCheckpointType.MODEL_ONLY]:
             if model is not None:
                 state['model_state_dict'] = deepcopy(model.state_dict())
         
-        if self.config.type in [CheckpointType.FULL, CheckpointType.WEIGHTS_ONLY]:
+        if self.config.type in [PiscesLxCheckpointType.FULL, PiscesLxCheckpointType.WEIGHTS_ONLY]:
             if model is not None:
                 state['model_state_dict'] = deepcopy(model.state_dict())
         
-        if self.config.type in [CheckpointType.FULL, CheckpointType.OPTIMIZER_ONLY]:
+        if self.config.type in [PiscesLxCheckpointType.FULL, PiscesLxCheckpointType.OPTIMIZER_ONLY]:
             if optimizer is not None:
                 state['optimizer_state_dict'] = deepcopy(optimizer.state_dict())
         
-        if self.config.type == CheckpointType.FULL:
+        if self.config.type == PiscesLxCheckpointType.FULL:
             if scheduler is not None and hasattr(scheduler, 'state_dict'):
                 state['scheduler_state_dict'] = scheduler.state_dict()
             if scaler is not None:
@@ -389,7 +389,7 @@ class CheckpointOperator(PiscesLxOperatorInterface):
     ) -> PiscesLxOperatorResult:
         """Save checkpoint synchronously."""
         with self._save_lock:
-            if self.config.type == CheckpointType.SHARDED:
+            if self.config.type == PiscesLxCheckpointType.SHARDED:
                 success = self._save_sharded(checkpoint_path, state_dict)
             else:
                 success = self._save_regular(checkpoint_path, state_dict)
@@ -538,7 +538,7 @@ class CheckpointOperator(PiscesLxOperatorInterface):
             )
         
         try:
-            if self.config.type == CheckpointType.SHARDED:
+            if self.config.type == PiscesLxCheckpointType.SHARDED:
                 state = self._load_sharded(checkpoint_path)
             else:
                 state = torch.load(checkpoint_path, map_location='cpu')
@@ -678,7 +678,7 @@ class CheckpointOperator(PiscesLxOperatorInterface):
     
     def _get_checkpoint_path(self, tag: str) -> Path:
         """Get checkpoint path for a tag."""
-        if self.config.type == CheckpointType.SHARDED:
+        if self.config.type == PiscesLxCheckpointType.SHARDED:
             return Path(self.save_dir) / f"{self.config.prefix}_{tag}"
         else:
             return Path(self.save_dir) / f"{self.config.prefix}_{tag}.pt"
@@ -698,7 +698,7 @@ class CheckpointOperator(PiscesLxOperatorInterface):
         if self.config.save_best and self.best_metric in metrics:
             is_best = self._is_best(metrics[self.best_metric])
         
-        self.metadata[tag] = CheckpointMetadata(
+        self.metadata[tag] = PiscesLxCheckpointMetadata(
             path=path,
             type=self.config.type.value,
             size_bytes=size_bytes,
@@ -713,7 +713,7 @@ class CheckpointOperator(PiscesLxOperatorInterface):
         
         for tag, meta in self.metadata.items():
             if tag != tag:
-                self.metadata[tag] = CheckpointMetadata(
+                self.metadata[tag] = PiscesLxCheckpointMetadata(
                     **dict(meta.__dict__, is_last=False)
                 )
         
@@ -747,7 +747,7 @@ class CheckpointOperator(PiscesLxOperatorInterface):
                 with open(metadata_path, 'r') as f:
                     data = json.load(f)
                     self.metadata = {
-                        k: CheckpointMetadata(**v) for k, v in data.items()
+                        k: PiscesLxCheckpointMetadata(**v) for k, v in data.items()
                     }
             except Exception as e:
                 self._LOG.warning(f"Failed to load metadata: {e}")

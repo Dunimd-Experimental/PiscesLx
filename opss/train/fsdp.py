@@ -56,7 +56,7 @@ from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResu
 
 
 @dataclass
-class FSDPTrainingConfig:
+class PiscesLxFSDPTrainingConfig:
     """FSDP training configuration."""
     
     # Model and data settings
@@ -122,8 +122,8 @@ class FSDPTrainingConfig:
         return prefetches.get(self.backward_prefetch, BackwardPrefetch.BACKWARD_PRE)
 
 
-class FSDPDataset(torch.utils.data.Dataset):
-    """Dataset for FSDP training."""
+class PiscesLxFSDPDataset(torch.utils.data.Dataset):
+    """PiscesLxDataset for FSDP training."""
     
     def __init__(self, data_path: str, tokenizer: Any, max_length: int = 4096):
         self.tokenizer = tokenizer
@@ -167,7 +167,7 @@ class FSDPDataset(torch.utils.data.Dataset):
         }
 
 
-class POPSSFSDPTrainingOperator(PiscesLxOperatorInterface):
+class PiscesLxFSDPTrainingOperator(PiscesLxOperatorInterface):
     """Complete FSDP training operator implementation."""
     
     def __init__(self):
@@ -188,7 +188,7 @@ class POPSSFSDPTrainingOperator(PiscesLxOperatorInterface):
             "tokenizer": {"type": "object", "required": True, "description": "Model tokenizer"},
             "train_data_path": {"type": "str", "required": True, "description": "Training data path"},
             "val_data_path": {"type": "str", "required": False, "description": "Validation data path"},
-            "config": {"type": "FSDPTrainingConfig", "required": False, "description": "FSDP configuration"},
+            "config": {"type": "PiscesLxFSDPTrainingConfig", "required": False, "description": "FSDP configuration"},
             "optimizer": {"type": "torch.optim.Optimizer", "required": False, "description": "Custom optimizer"}
         }
         
@@ -242,7 +242,7 @@ class POPSSFSDPTrainingOperator(PiscesLxOperatorInterface):
             if custom_config:
                 config = custom_config
             else:
-                config = FSDPTrainingConfig(
+                config = PiscesLxFSDPTrainingConfig(
                     train_data=train_data_path,
                     val_data=val_data_path or "",
                     world_size=dist.get_world_size() if dist.is_initialized() else 1,
@@ -282,8 +282,8 @@ class POPSSFSDPTrainingOperator(PiscesLxOperatorInterface):
                 optimizer = custom_optimizer
             
             # Setup datasets
-            train_dataset = FSDPDataset(train_data_path, tokenizer)
-            val_dataset = FSDPDataset(val_data_path, tokenizer) if val_data_path else None
+            train_dataset = PiscesLxFSDPDataset(train_data_path, tokenizer)
+            val_dataset = PiscesLxFSDPDataset(val_data_path, tokenizer) if val_data_path else None
             
             # Execute training
             metrics = self._run_fsdp_training(

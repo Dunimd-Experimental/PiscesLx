@@ -166,7 +166,7 @@ from enum import Enum
 
 from .norms import _arctic_init_weights, YvRMSNorm, YvYaRNRotaryEmbedding, YvDynamicYaRNRotaryEmbedding
 from utils.dc import PiscesLxLogger
-from opss.infer.fused_mla import FusedMLAProjector
+from opss.infer.fused_mla import PiscesLxFusedMLAProjector
 
 from utils.paths import get_log_file
 
@@ -5292,7 +5292,7 @@ class YvAttention(nn.Module):
 
         self.use_fused_mla = bool(getattr(cfg, 'use_fused_mla', False))
         if self.use_fused_mla:
-            self.fused_mla = FusedMLAProjector(
+            self.fused_mla = PiscesLxFusedMLAProjector(
                 hidden_size=cfg.hidden_size,
                 n_head=cfg.n_head,
                 n_kv_head=self.n_kv_head,

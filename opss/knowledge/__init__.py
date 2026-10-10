@@ -30,10 +30,10 @@ Offline knowledge store construction for Engram-style
 Lookup-Computation Separation.
 
 Components:
-    - POPSSKnowledgeBuilder: Main builder pipeline
-    - POPSSKnowledgeBuilderConfig: Builder configuration
-    - _KnowledgeEncoder: Fixed 0.5B encoder (640-dim, 16 layers, 4 MoE)
-    - _NTXentLoss: Contrastive learning loss
+    - PiscesLxKnowledgeBuilder: Main builder pipeline
+    - PiscesLxKnowledgeBuilderConfig: Builder configuration
+    - _PiscesLxKnowledgeEncoder: Fixed 0.5B encoder (640-dim, 16 layers, 4 MoE)
+    - _PiscesLxNTXentLoss: Contrastive learning loss
 
 Pipeline:
     Text -> Chunking -> 0.5B Encoder -> 256-dim Projection
@@ -41,24 +41,24 @@ Pipeline:
     -> mmap Knowledge Store
 
 Usage:
-    from opss.knowledge import POPSSKnowledgeBuilder, POPSSKnowledgeBuilderConfig
+    from opss.knowledge import PiscesLxKnowledgeBuilder, PiscesLxKnowledgeBuilderConfig
 
-    config = POPSSKnowledgeBuilderConfig(
+    config = PiscesLxKnowledgeBuilderConfig(
         knowledge_slots=100_000_000,
         store_path="./knowledge_store/7B",
     )
-    builder = POPSSKnowledgeBuilder(config)
+    builder = PiscesLxKnowledgeBuilder(config)
     builder.build_from_texts(texts=["...", "..."])
 """
 
 from .builder import (
-    POPSSKnowledgeBuilder,
-    POPSSKnowledgeBuilderConfig,
+    PiscesLxKnowledgeBuilder,
+    PiscesLxKnowledgeBuilderConfig,
     create_knowledge_builder,
 )
 
 __all__ = [
-    "POPSSKnowledgeBuilder",
-    "POPSSKnowledgeBuilderConfig",
+    "PiscesLxKnowledgeBuilder",
+    "PiscesLxKnowledgeBuilderConfig",
     "create_knowledge_builder",
 ]

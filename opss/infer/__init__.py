@@ -72,24 +72,24 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 from configs.version import VERSION, AUTHOR
 
 from .moe_runtime import (
-    POPSSMoERuntimeOperator,
-    POPSSMoERuntimeConfig,
-    POPSSMoERoutingStrategy,
+    PiscesLxMoERuntimeOperator,
+    PiscesLxMoERuntimeConfig,
+    PiscesLxMoERoutingStrategy,
 )
 
 from .speculative import (
-    POPSSSpeculativeDecodingOperator,
-    POPSSSpeculativeConfig,
-    POPSSAssistedDecodingOperator,
+    PiscesLxSpeculativeDecodingOperator,
+    PiscesLxSpeculativeConfig,
+    PiscesLxAssistedDecodingOperator,
 )
 
 try:
     from .vllm import (
-        POPSSVLLMInferenceOperator,
-        POPSSVLLMConfig,
-        POPSSMultiLoRAOperator,
-        POPSSPrefixCachingOperator,
-        POPSSChunkedPrefillOperator,
+        PiscesLxVLLMInferenceOperator,
+        PiscesLxVLLMConfig,
+        PiscesLxMultiLoRAOperator,
+        PiscesLxPrefixCachingOperator,
+        PiscesLxChunkedPrefillOperator,
     )
     _HAS_VLLM = True
 except ModuleNotFoundError as exc:
@@ -98,93 +98,93 @@ except ModuleNotFoundError as exc:
     _HAS_VLLM = False
 
 from .sampling import (
-    POPSSSamplingOperator,
-    POPSSSamplingConfig,
-    POPSSBeamSearchOperator,
+    PiscesLxSamplingOperator,
+    PiscesLxSamplingConfig,
+    PiscesLxBeamSearchOperator,
 )
 
 from .check import (
-    POPSSGPUCheckOperator,
+    PiscesLxGPUCheckOperator,
 )
 
 from .native_ruchbah import (
-    POPSSNativeInferenceOperator,
+    PiscesLxNativeInferenceOperator,
 )
 
 from .ring_attention import (
-    POPSSRingTopology,
-    POPSSRingAttentionConfig,
-    POPSSRingAttentionOperator,
-    POPSSRingAttentionLayer,
+    PiscesLxRingTopology,
+    PiscesLxRingAttentionConfig,
+    PiscesLxRingAttentionOperator,
+    PiscesLxRingAttentionLayer,
 )
 
 from .flash_attention import (
-    POPSSFlashAttentionBackend,
-    POPSSPrecisionMode,
-    POPSSFlashAttention3Config,
-    POPSSFlashAttention3Operator,
-    POPSSFlashAttention3Layer,
+    PiscesLxFlashAttentionBackend,
+    PiscesLxPrecisionMode,
+    PiscesLxFlashAttention3Config,
+    PiscesLxFlashAttention3Operator,
+    PiscesLxFlashAttention3Layer,
 )
 
 from .mamba import (
-    POPSSSSMType,
-    POPSSMambaConfig,
-    POPSSMambaOperator,
-    POPSSMambaLayer,
-    POPSSMambaMixer,
-    POPSSMamba2Operator,
+    PiscesLxSSMType,
+    PiscesLxMambaConfig,
+    PiscesLxMambaOperator,
+    PiscesLxMambaLayer,
+    PiscesLxMambaMixer,
+    PiscesLxMamba2Operator,
 )
 
 from .tpo import (
-    POPSSTPOOperator,
-    POPSSTPOConfig,
-    POPSSTPOAligner,
-    POPSSTPOFeedbackType,
-    POPSSTPOPreferenceLibrary,
+    PiscesLxTPOOperator,
+    PiscesLxTPOConfig,
+    PiscesLxTPOAligner,
+    PiscesLxTPOFeedbackType,
+    PiscesLxTPOPreferenceLibrary,
 )
 
 __version__ = VERSION
 __author__ = AUTHOR
 
 __all__ = [
-    "POPSSMoERuntimeOperator",
-    "POPSSMoERuntimeConfig",
-    "POPSSMoERoutingStrategy",
-    "POPSSSpeculativeDecodingOperator",
-    "POPSSSpeculativeConfig",
-    "POPSSAssistedDecodingOperator",
-    "POPSSSamplingOperator",
-    "POPSSSamplingConfig",
-    "POPSSBeamSearchOperator",
-    "POPSSGPUCheckOperator",
-    "POPSSNativeInferenceOperator",
-    "POPSSRingTopology",
-    "POPSSRingAttentionConfig",
-    "POPSSRingAttentionOperator",
-    "POPSSRingAttentionLayer",
-    "POPSSFlashAttentionBackend",
-    "POPSSPrecisionMode",
-    "POPSSFlashAttention3Config",
-    "POPSSFlashAttention3Operator",
-    "POPSSFlashAttention3Layer",
-    "POPSSSSMType",
-    "POPSSMambaConfig",
-    "POPSSMambaOperator",
-    "POPSSMambaLayer",
-    "POPSSMambaMixer",
-    "POPSSMamba2Operator",
-    "POPSSTPOOperator",
-    "POPSSTPOConfig",
-    "POPSSTPOAligner",
-    "POPSSTPOFeedbackType",
-    "POPSSTPOPreferenceLibrary",
+    "PiscesLxMoERuntimeOperator",
+    "PiscesLxMoERuntimeConfig",
+    "PiscesLxMoERoutingStrategy",
+    "PiscesLxSpeculativeDecodingOperator",
+    "PiscesLxSpeculativeConfig",
+    "PiscesLxAssistedDecodingOperator",
+    "PiscesLxSamplingOperator",
+    "PiscesLxSamplingConfig",
+    "PiscesLxBeamSearchOperator",
+    "PiscesLxGPUCheckOperator",
+    "PiscesLxNativeInferenceOperator",
+    "PiscesLxRingTopology",
+    "PiscesLxRingAttentionConfig",
+    "PiscesLxRingAttentionOperator",
+    "PiscesLxRingAttentionLayer",
+    "PiscesLxFlashAttentionBackend",
+    "PiscesLxPrecisionMode",
+    "PiscesLxFlashAttention3Config",
+    "PiscesLxFlashAttention3Operator",
+    "PiscesLxFlashAttention3Layer",
+    "PiscesLxSSMType",
+    "PiscesLxMambaConfig",
+    "PiscesLxMambaOperator",
+    "PiscesLxMambaLayer",
+    "PiscesLxMambaMixer",
+    "PiscesLxMamba2Operator",
+    "PiscesLxTPOOperator",
+    "PiscesLxTPOConfig",
+    "PiscesLxTPOAligner",
+    "PiscesLxTPOFeedbackType",
+    "PiscesLxTPOPreferenceLibrary",
 ]
 
 if _HAS_VLLM:
     __all__.extend([
-        "POPSSVLLMInferenceOperator",
-        "POPSSVLLMConfig",
-        "POPSSMultiLoRAOperator",
-        "POPSSPrefixCachingOperator",
-        "POPSSChunkedPrefillOperator",
+        "PiscesLxVLLMInferenceOperator",
+        "PiscesLxVLLMConfig",
+        "PiscesLxMultiLoRAOperator",
+        "PiscesLxPrefixCachingOperator",
+        "PiscesLxChunkedPrefillOperator",
     ])

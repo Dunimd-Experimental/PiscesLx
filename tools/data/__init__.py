@@ -153,11 +153,11 @@ from .distributed.dask_loader import PiscesLxDataDaskDistributedLoader
 from .lineage.tracker import PiscesLxDataLineageTracker
 
 from .clean.pipeline import (
-    DatasetCleaner,
+    PiscesLxDatasetCleaner,
     PiscesLxDataCleaningConfig,
     PiscesLxDataIncrementalState,
     PiscesLxDataQualityAwareCleaner,
-    CleaningMode
+    PiscesLxCleaningMode
 )
 from .clean.quality import (
     PiscesLxToolsDataQualityController,
@@ -166,11 +166,11 @@ from .clean.quality import (
     PiscesLxDataDomainClassifier,
     PiscesLxDataPerplexityCalculator,
     PiscesLxDataReadabilityScorer,
-    LanguageType
+    PiscesLxLanguageType
 )
 
 from .dataset.core import (
-    Dataset,
+    PiscesLxDataset,
     PiscesLxDatasetConfig,
     PiscesLxDataPrefetcher,
     PiscesLxDataAugmentationPipeline,
@@ -206,19 +206,19 @@ __all__ = [
     "PiscesLxDataRayDistributedCleaner",
     "PiscesLxDataDaskDistributedLoader",
     "PiscesLxDataLineageTracker",
-    "DatasetCleaner",
+    "PiscesLxDatasetCleaner",
     "PiscesLxDataCleaningConfig",
     "PiscesLxDataIncrementalState",
     "PiscesLxDataQualityAwareCleaner",
-    "CleaningMode",
+    "PiscesLxCleaningMode",
     "PiscesLxToolsDataQualityController",
     "PiscesLxDataQualityMetrics",
     "PiscesLxDataLanguageDetector",
     "PiscesLxDataDomainClassifier",
     "PiscesLxDataPerplexityCalculator",
     "PiscesLxDataReadabilityScorer",
-    "LanguageType",
-    "Dataset",
+    "PiscesLxLanguageType",
+    "PiscesLxDataset",
     "PiscesLxDatasetConfig",
     "PiscesLxDataPrefetcher",
     "PiscesLxDataAugmentationPipeline",

@@ -49,7 +49,7 @@ class PiscesLxMonitorCache:
         self._kv[key] = value
 
 
-class _SimpleDeviceManager:
+class _PiscesLxSimpleDeviceManager:
     """Simple device manager for monitor."""
 
     def __init__(self):
@@ -98,7 +98,7 @@ class PiscesLxMonitorUtils:
         """Initialize utility components."""
         self.fs_manager = PiscesLxFilesystem()
         self.cache_manager = PiscesLxMonitorCache()
-        self.device_manager = _SimpleDeviceManager()
+        self.device_manager = _PiscesLxSimpleDeviceManager()
         self.logger = PiscesLxLogger("PiscesLx.Tools.Monitor", file_path=get_log_file("PiscesLx.Tools.Monitor"), enable_file=True)
 
     def get_cache_manager(self):

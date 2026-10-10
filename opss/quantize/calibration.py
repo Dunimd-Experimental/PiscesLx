@@ -31,17 +31,17 @@ This module provides calibration operators for model quantization, including
 data loading and activation collection for optimal quantization parameters.
 
 Key Components:
-    - CalibrationConfig: Configuration for calibration settings
-    - POPSSCalibrationDataLoaderOperator: Loads calibration datasets
-    - POPSSActivationCollectorOperator: Collects layer activations for analysis
+    - PiscesLxCalibrationConfig: Configuration for calibration settings
+    - PiscesLxCalibrationDataLoaderOperator: Loads calibration datasets
+    - PiscesLxActivationCollectorOperator: Collects layer activations for analysis
 
 The calibration process is essential for determining optimal quantization
 parameters (scale and zero-point) that minimize accuracy loss.
 
 Example:
-    >>> from opss.quantize.calibration import POPSSCalibrationDataLoaderOperator
-    >>> loader = POPSSCalibrationDataLoaderOperator()
-    >>> result = loader.execute({"config": CalibrationConfig()})
+    >>> from opss.quantize.calibration import PiscesLxCalibrationDataLoaderOperator
+    >>> loader = PiscesLxCalibrationDataLoaderOperator()
+    >>> result = loader.execute({"config": PiscesLxCalibrationConfig()})
     >>> calibration_batches = result.output["calibration_batches"]
 """
 
@@ -53,7 +53,7 @@ from configs.version import VERSION
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus, PiscesLxOperatorConfig
 
 
-class CalibrationConfig(PiscesLxOperatorConfig):
+class PiscesLxCalibrationConfig(PiscesLxOperatorConfig):
     """
     Configuration for quantization calibration.
     
@@ -82,7 +82,7 @@ class CalibrationConfig(PiscesLxOperatorConfig):
     percentile: float = 99.99
 
 
-class POPSSCalibrationDataLoaderOperator(PiscesLxOperatorInterface):
+class PiscesLxCalibrationDataLoaderOperator(PiscesLxOperatorInterface):
     """
     Calibration Data Loading Operator.
     
@@ -97,9 +97,9 @@ class POPSSCalibrationDataLoaderOperator(PiscesLxOperatorInterface):
         - custom: User-provided data files
     
     Example:
-        >>> loader = POPSSCalibrationDataLoaderOperator()
+        >>> loader = PiscesLxCalibrationDataLoaderOperator()
         >>> result = loader.execute({
-        ...     "config": CalibrationConfig(
+        ...     "config": PiscesLxCalibrationConfig(
         ...         dataset_name="wikitext",
         ...         num_calibration_samples=256
         ...     )
@@ -127,7 +127,7 @@ class POPSSCalibrationDataLoaderOperator(PiscesLxOperatorInterface):
         
         Args:
             inputs: Dictionary containing configuration
-                - config: Calibration configuration (CalibrationConfig)
+                - config: Calibration configuration (PiscesLxCalibrationConfig)
         
         Returns:
             PiscesLxOperatorResult: Result containing
@@ -135,7 +135,7 @@ class POPSSCalibrationDataLoaderOperator(PiscesLxOperatorInterface):
                 - dataset_info: Information about loaded dataset
         """
         try:
-            config = inputs.get("config", CalibrationConfig())
+            config = inputs.get("config", PiscesLxCalibrationConfig())
             
             # Load calibration data
             calibration_batches = self._load_calibration_data(config)
@@ -170,7 +170,7 @@ class POPSSCalibrationDataLoaderOperator(PiscesLxOperatorInterface):
                 execution_time=0.0,
             )
     
-    def _load_calibration_data(self, config: CalibrationConfig) -> List[Dict[str, torch.Tensor]]:
+    def _load_calibration_data(self, config: PiscesLxCalibrationConfig) -> List[Dict[str, torch.Tensor]]:
         """
         Load calibration data from dataset.
         
@@ -297,7 +297,7 @@ class POPSSCalibrationDataLoaderOperator(PiscesLxOperatorInterface):
             raise ValueError(f"Unsupported custom data format: {path.suffix}")
 
 
-class POPSSActivationCollectorOperator(PiscesLxOperatorInterface):
+class PiscesLxActivationCollectorOperator(PiscesLxOperatorInterface):
     """
     Activation Collection Operator.
     
@@ -312,7 +312,7 @@ class POPSSActivationCollectorOperator(PiscesLxOperatorInterface):
         - std: Standard deviation of activations
     
     Example:
-        >>> collector = POPSSActivationCollectorOperator()
+        >>> collector = PiscesLxActivationCollectorOperator()
         >>> result = collector.execute({
         ...     "model": model,
         ...     "calibration_data": calibration_batches

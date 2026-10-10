@@ -50,8 +50,8 @@ Performance Characteristics:
 
 Usage Examples:
     Basic inference:
-    >>> from tools.infer import InferenceConfig, PiscesLxInferenceEngine
-    >>> config = InferenceConfig(model_path="meta-llama/Llama-2-7b")
+    >>> from tools.infer import PiscesLxInferenceConfig, PiscesLxInferenceEngine
+    >>> config = PiscesLxInferenceConfig(model_path="meta-llama/Llama-2-7b")
     >>> engine = PiscesLxInferenceEngine(config)
     >>> result = engine.generate("Hello, world!")
 
@@ -86,14 +86,14 @@ from datetime import datetime
 
 from utils.dc import PiscesLxLogger, PiscesLxSystemMonitor
 
-from .config import InferenceConfig
+from .config import PiscesLxInferenceConfig
 from model import YvConfig, YvModelForCausalLM
 from model.tokenizer import YvTokenizer
 from model.multimodal.agentic import YvAgentic
-from opss.am import POPSSToolRegistry, POPSSToolType
-from opss.infer.moe_runtime import POPSSMoERuntimeOperator, POPSSMoERuntimeConfig
-from opss.infer.speculative import POPSSSpeculativeDecodingOperator
-from opss.infer.vllm import POPSSVLLMInferenceOperator
+from opss.am import PiscesLxToolRegistry, PiscesLxToolType
+from opss.infer.moe_runtime import PiscesLxMoERuntimeOperator, PiscesLxMoERuntimeConfig
+from opss.infer.speculative import PiscesLxSpeculativeDecodingOperator
+from opss.infer.vllm import PiscesLxVLLMInferenceOperator
 
 from utils.paths import get_log_file
 _LOG = PiscesLxLogger("PiscesLx.Tools.Infer", file_path=get_log_file("PiscesLx.Tools.Infer"), enable_file=True)
@@ -197,7 +197,7 @@ class PiscesLxInferenceEngine(object):
     optimal backend based on configuration and hardware availability.
 
     Attributes:
-        config (InferenceConfig): Inference configuration object
+        config (PiscesLxInferenceConfig): Inference configuration object
         model: The loaded model instance (PyTorch or VLLM)
         tokenizer: The tokenizer for text encoding/decoding
         engine: VLLM engine instance (if using VLLM backend)
@@ -209,20 +209,20 @@ class PiscesLxInferenceEngine(object):
         - PyTorch: Flexible inference with transformers integration
 
     Example:
-        >>> config = InferenceConfig(
+        >>> config = PiscesLxInferenceConfig(
         ...     model_path="meta-llama/Llama-2-7b",
-        ...     acceleration=AccelerationConfig(use_vllm=True)
+        ...     acceleration=PiscesLxAccelerationConfig(use_vllm=True)
         ... )
         >>> engine = PiscesLxInferenceEngine(config)
         >>> output = engine.generate("What is machine learning?")
     """
 
-    def __init__(self, config: InferenceConfig):
+    def __init__(self, config: PiscesLxInferenceConfig):
         """
         Initialize the inference engine.
 
         Args:
-            config: InferenceConfig instance containing all configuration parameters
+            config: PiscesLxInferenceConfig instance containing all configuration parameters
 
         Note:
             The constructor automatically initializes the appropriate inference
@@ -334,11 +334,11 @@ class PiscesLxInferenceEngine(object):
         
         self._agentic = YvAgentic(cfg, tokenizer=self.tokenizer, model=self.model) if YvAgentic is not None else None
         if self._agentic is not None:
-            self._tool_registry = POPSSToolRegistry.get_instance()
+            self._tool_registry = PiscesLxToolRegistry.get_instance()
         
         self._setup_moe_operator()
         
-        # Sync speculative decoding flag from YvConfig (model YAML) to InferenceConfig
+        # Sync speculative decoding flag from YvConfig (model YAML) to PiscesLxInferenceConfig
         if getattr(cfg, 'use_speculative_decoder', True) and getattr(cfg, 'enable_speculative_decoding', True):
             self.config.acceleration.use_speculative_decoding = True
             _LOG.info("Speculative decoding enabled (synced from YvConfig)")
@@ -347,8 +347,8 @@ class PiscesLxInferenceEngine(object):
         self._tri_route = None
         if getattr(cfg, 'flagship_level', 0.0) >= 0.5 and getattr(cfg, 'use_tri_route', True):
             try:
-                from opss.infer.moe_runtime import TriRouteDecision
-                self._tri_route = TriRouteDecision(
+                from opss.infer.moe_runtime import PiscesLxTriRouteDecision
+                self._tri_route = PiscesLxTriRouteDecision(
                     hidden_size=getattr(cfg, 'hidden_size', 4096),
                     num_attention_heads=getattr(cfg, 'n_head', 32),
                     num_experts=getattr(cfg, 'num_experts', 128),
@@ -361,8 +361,8 @@ class PiscesLxInferenceEngine(object):
         self._brownout_grouper = None
         if getattr(cfg, 'flagship_level', 0.0) >= 0.5 and getattr(cfg, 'use_brownout_moe', True):
             try:
-                from opss.infer.moe_runtime import BrownoutMoEGrouper
-                self._brownout_grouper = BrownoutMoEGrouper(
+                from opss.infer.moe_runtime import PiscesLxBrownoutMoEGrouper
+                self._brownout_grouper = PiscesLxBrownoutMoEGrouper(
                     num_experts=getattr(cfg, 'num_experts', 64),
                     group_size=max(2, getattr(cfg, 'num_experts', 64) // 8),
                 )
@@ -374,9 +374,9 @@ class PiscesLxInferenceEngine(object):
         self._moebius_switch = None
         if getattr(cfg, 'flagship_level', 0.0) >= 0.7:
             try:
-                from opss.infer.moe_runtime import MoebiusParallelismMode, MoebiusParallelismSwitch
+                from opss.infer.moe_runtime import PiscesLxMoebiusParallelismMode, PiscesLxMoebiusParallelismSwitch
                 world_size = getattr(cfg, 'world_size', getattr(cfg, 'tensor_parallel_size', 1))
-                self._moebius_switch = MoebiusParallelismSwitch(world_size=world_size)
+                self._moebius_switch = PiscesLxMoebiusParallelismSwitch(world_size=world_size)
                 _LOG.info(f"Moebius EP↔TP switch initialized (world_size={world_size})")
             except Exception as e:
                 _LOG.warning(f"Moebius init failed: {e}")
@@ -384,10 +384,10 @@ class PiscesLxInferenceEngine(object):
         # ── HyperQuant / TWLA / STAR-KV quantization ──
         if getattr(cfg, 'flagship_level', 0.0) >= 0.6:
             try:
-                from opss.quantize.methods import HyperQuantizer, TWLAQuantizer, STARKVCompression
-                self._hyperquant = HyperQuantizer(bits=4, lattice="e8")
-                self._twla = TWLAQuantizer(group_size=128)
-                self._starkv = STARKVCompression(
+                from opss.quantize.methods import PiscesLxHyperQuantizer, PiscesLxTWLAQuantizer, PiscesLxSTARKVCompression
+                self._hyperquant = PiscesLxHyperQuantizer(bits=4, lattice="e8")
+                self._twla = PiscesLxTWLAQuantizer(group_size=128)
+                self._starkv = PiscesLxSTARKVCompression(
                     kv_dim=getattr(cfg, 'head_dim', 128) * getattr(cfg, 'n_head', 32) // getattr(cfg, 'n_kv_head', 8),
                 )
                 _LOG.info("HyperQuant + TWLA + STAR-KV quantizers initialized")
@@ -468,7 +468,7 @@ class PiscesLxInferenceEngine(object):
     
     def _setup_moe_operator(self):
         try:
-            moe_runtime_config = POPSSMoERuntimeConfig(
+            moe_runtime_config = PiscesLxMoERuntimeConfig(
                 routing_temp=self.config.moe.routing_temp,
                 top_k=self.config.moe.top_k,
                 capacity_factor=self.config.moe.capacity_factor,
@@ -485,7 +485,7 @@ class PiscesLxInferenceEngine(object):
                 priority_routing=self.config.moe.priority_routing,
                 drop_tokens=self.config.moe.drop_tokens,
             )
-            self._moe_operator = POPSSMoERuntimeOperator(config=moe_runtime_config)
+            self._moe_operator = PiscesLxMoERuntimeOperator(config=moe_runtime_config)
             self._moe_operator.set_model(self.model)
             _LOG.info(f"MoE runtime operator initialized: top_k={self.config.moe.top_k}, temp={self.config.moe.routing_temp}")
         except Exception as e:
@@ -494,7 +494,7 @@ class PiscesLxInferenceEngine(object):
     
     def _setup_speculative_operator(self):
         try:
-            self._speculative_operator = POPSSSpeculativeDecodingOperator()
+            self._speculative_operator = PiscesLxSpeculativeDecodingOperator()
             self._speculative_operator.set_model(self.model)
             _LOG.info("Speculative decoding operator initialized")
         except Exception as e:
@@ -624,9 +624,9 @@ class PiscesLxInferenceEngine(object):
         memory footprint during inference while maintaining accuracy.
         """
         try:
-            from opss.optim.ink import POPSSInkBlockQuantizer
+            from opss.optim.ink import PiscesLxInkBlockQuantizer
             
-            quantizer = POPSSInkBlockQuantizer(
+            quantizer = PiscesLxInkBlockQuantizer(
                 momentum_bits=8,
                 variance_bits=4,
                 momentum_block_size=128,

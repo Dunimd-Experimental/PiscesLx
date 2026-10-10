@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import os
 from .rules import PiscesLxToolsDataStreamCleaner as StreamCleaner
-from .pipeline import DatasetCleaner
+from .pipeline import PiscesLxDatasetCleaner
 from .quality import PiscesLxToolsDataQualityController as DataQualityController
 from typing import Optional, Dict, Any, Tuple, List
 from utils.dc import PiscesLxLogger
@@ -34,7 +34,7 @@ from utils.paths import get_cache_dir
 from utils.paths import get_log_file
 _LOG = PiscesLxLogger("PiscesLx.Tools.Data", file_path=get_log_file("PiscesLx.Tools.Data"), enable_file=True)
 
-class DatasetClean:
+class PiscesLxDatasetClean:
     """
     A unified entry class for PiscesLx dataset cleaning tools.
     It encapsulates the original functional cleaning logic in an object-oriented manner
@@ -43,7 +43,7 @@ class DatasetClean:
 
     def __init__(self, cache_manager: Optional[Any] = None, data_cache_dir: Optional[str] = None):
         """
-        Initialize the DatasetClean instance.
+        Initialize the PiscesLxDatasetClean instance.
         Get the cache manager instance and set the data cache directory.
         """
         self.cache = cache_manager
@@ -113,7 +113,7 @@ class DatasetClean:
         input_dir = input_dir or self.data_cache_dir
         _LOG.debug("Fast clean start", input_dir=input_dir, output_dir=output_dir)
         try:
-            return DatasetCleaner.fast_clean(
+            return PiscesLxDatasetCleaner.fast_clean(
                 input_dir=input_dir,
                 output_dir=output_dir,
                 min_len=min_len,
@@ -149,7 +149,7 @@ class DatasetClean:
         output_dir = output_dir or os.path.join(self.data_cache_dir, "data_clean")
         _LOG.debug(f"Auto clean start | input_dir={input_dir} output_dir={output_dir}")
         os.makedirs(output_dir, exist_ok=True)
-        ok = DatasetCleaner.auto_clean(
+        ok = PiscesLxDatasetCleaner.auto_clean(
             input_dir=input_dir,
             output_dir=output_dir,
             media_fields=media_fields,
@@ -185,7 +185,7 @@ class DatasetClean:
             raise ValueError("process_one requires input_path and output_path")
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         _LOG.debug(f"Process dataset | input={input_path} output={output_path} text_field={text_field}")
-        retained, total = DatasetCleaner.process_dataset(
+        retained, total = PiscesLxDatasetCleaner.process_dataset(
             input_path=input_path,
             output_path=output_path,
             text_field=text_field,

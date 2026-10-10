@@ -63,7 +63,7 @@ from datetime import datetime
 from utils.dc import PiscesLxLogger
 from utils.paths import get_log_file
 
-from .config import PiscesLxPublishConfig, ExportAction
+from .config import PiscesLxPublishConfig, PiscesLxExportAction
 from .orchestrator import PiscesLxPublishOrchestrator
 
 _LOG = None

@@ -48,15 +48,15 @@ Training Pipeline:
 
 Usage:
     from opss.train.weak_to_strong import (
-        POPSSWeakToStrongConfig,
-        POPSSWeakToStrongOperator,
+        PiscesLxWeakToStrongConfig,
+        PiscesLxWeakToStrongOperator,
     )
     
-    config = POPSSWeakToStrongConfig(
+    config = PiscesLxWeakToStrongConfig(
         confidence_threshold=0.7,
         use_curriculum=True,
     )
-    w2s = POPSSWeakToStrongOperator(weak_model, strong_model, config)
+    w2s = PiscesLxWeakToStrongOperator(weak_model, strong_model, config)
     loss = w2s.train_step(batch)
 """
 
@@ -69,7 +69,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import PiscesLxDataset, DataLoader
 
 from utils.dc import PiscesLxLogger
 from utils.paths import get_log_file
@@ -77,7 +77,7 @@ from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResu
 from configs.version import VERSION
 
 
-class POPSSW2SMode(Enum):
+class PiscesLxW2SMode(Enum):
     """Weak-to-strong training mode."""
     STANDARD = "standard"
     CURRICULUM = "curriculum"
@@ -86,7 +86,7 @@ class POPSSW2SMode(Enum):
 
 
 @dataclass
-class POPSSWeakToStrongConfig:
+class PiscesLxWeakToStrongConfig:
     """Configuration for weak-to-strong training.
     
     Attributes:
@@ -120,14 +120,14 @@ class POPSSWeakToStrongConfig:
             self.loss_type = self.loss_type.lower()
 
 
-class POPSSWeakLabelGenerator:
+class PiscesLxWeakLabelGenerator:
     """Generates weak labels from weak model predictions.
     
     Handles confidence computation, filtering, and label generation
     for weak-to-strong training.
     """
     
-    def __init__(self, weak_model: nn.Module, config: POPSSWeakToStrongConfig):
+    def __init__(self, weak_model: nn.Module, config: PiscesLxWeakToStrongConfig):
         self.weak_model = weak_model
         self.config = config
         self._LOG = PiscesLxLogger(
@@ -214,14 +214,14 @@ class POPSSWeakLabelGenerator:
         }
 
 
-class POPSSCurriculumScheduler:
+class PiscesLxCurriculumScheduler:
     """Curriculum scheduler for weak-to-strong training.
     
     Gradually increases difficulty by adjusting confidence threshold
     and sample complexity over training steps.
     """
     
-    def __init__(self, config: POPSSWeakToStrongConfig):
+    def __init__(self, config: PiscesLxWeakToStrongConfig):
         self.config = config
         self.current_step = 0
         self.initial_threshold = config.confidence_threshold
@@ -259,14 +259,14 @@ class POPSSCurriculumScheduler:
         return 0.5 + 0.5 * progress
 
 
-class POPSSSelfCorrection:
+class PiscesLxSelfCorrection:
     """Self-correction mechanism for strong model.
     
     Allows strong model to identify and correct errors
     in weak labels, enabling super-weak performance.
     """
     
-    def __init__(self, config: POPSSWeakToStrongConfig):
+    def __init__(self, config: PiscesLxWeakToStrongConfig):
         self.config = config
         self._LOG = PiscesLxLogger(
             "PiscesLx.W2S.SelfCorrect",
@@ -321,14 +321,14 @@ class POPSSSelfCorrection:
         return loss
 
 
-class _WeakToStrongOperatorImpl(PiscesLxOperatorInterface):
+class _PiscesLxWeakToStrongOperatorImpl(PiscesLxOperatorInterface):
     """Weak-to-strong training operator implementation."""
     
     def __init__(
         self,
         weak_model: nn.Module,
         strong_model: nn.Module,
-        config: POPSSWeakToStrongConfig,
+        config: PiscesLxWeakToStrongConfig,
     ):
         super().__init__()
         self._name = "training.weak_to_strong"
@@ -339,9 +339,9 @@ class _WeakToStrongOperatorImpl(PiscesLxOperatorInterface):
         self.strong_model = strong_model
         self.config = config
         
-        self.label_generator = POPSSWeakLabelGenerator(weak_model, config)
-        self.curriculum = POPSSCurriculumScheduler(config) if config.use_curriculum else None
-        self.self_correction = POPSSSelfCorrection(config) if config.use_self_correction else None
+        self.label_generator = PiscesLxWeakLabelGenerator(weak_model, config)
+        self.curriculum = PiscesLxCurriculumScheduler(config) if config.use_curriculum else None
+        self.self_correction = PiscesLxSelfCorrection(config) if config.use_self_correction else None
         
         self._LOG = PiscesLxLogger(
             "PiscesLx.W2S.Operator",
@@ -500,18 +500,18 @@ class _WeakToStrongOperatorImpl(PiscesLxOperatorInterface):
         return self._stats.copy()
 
 
-class POPSSWeakToStrongOperator:
+class PiscesLxWeakToStrongOperator:
     """Facade for weak-to-strong training operator.
     
     Enables training a strong model using weak model supervision,
     achieving performance beyond the weak model's capabilities.
     
     Example:
-        >>> config = POPSSWeakToStrongConfig(
+        >>> config = PiscesLxWeakToStrongConfig(
         ...     confidence_threshold=0.7,
         ...     use_curriculum=True,
         ... )
-        >>> w2s = POPSSWeakToStrongOperator(weak_model, strong_model, config)
+        >>> w2s = PiscesLxWeakToStrongOperator(weak_model, strong_model, config)
         >>> 
         >>> for batch in dataloader:
         ...     result = w2s.train_step(batch)
@@ -523,10 +523,10 @@ class POPSSWeakToStrongOperator:
         self,
         weak_model: nn.Module,
         strong_model: nn.Module,
-        config: Optional[POPSSWeakToStrongConfig] = None,
+        config: Optional[PiscesLxWeakToStrongConfig] = None,
     ):
-        self.config = config or POPSSWeakToStrongConfig()
-        self._impl = _WeakToStrongOperatorImpl(weak_model, strong_model, self.config)
+        self.config = config or PiscesLxWeakToStrongConfig()
+        self._impl = _PiscesLxWeakToStrongOperatorImpl(weak_model, strong_model, self.config)
         self._LOG = PiscesLxLogger(
             "PiscesLx.W2S.Facade",
             file_path=get_log_file("PiscesLx.W2S.Facade"),
@@ -556,7 +556,7 @@ class POPSSWeakToStrongOperator:
         return self._impl.get_statistics()
 
 
-class POPSSIterativeAmplification:
+class PiscesLxIterativeAmplification:
     """Iterative amplification for continuous improvement.
     
     Implements iterative weak-to-strong training where the
@@ -569,7 +569,7 @@ class POPSSIterativeAmplification:
     def __init__(
         self,
         base_model: nn.Module,
-        config: POPSSWeakToStrongConfig,
+        config: PiscesLxWeakToStrongConfig,
         num_iterations: int = 3,
     ):
         self.base_model = base_model
@@ -605,7 +605,7 @@ class POPSSIterativeAmplification:
             param.data += torch.randn_like(param) * 0.01
         
         # Train with weak-to-strong
-        w2s = POPSSWeakToStrongOperator(
+        w2s = PiscesLxWeakToStrongOperator(
             self.current_model,  # weak model
             strong_model,        # strong model
             self.config,
@@ -637,11 +637,11 @@ import copy
 
 
 __all__ = [
-    "POPSSW2SMode",
-    "POPSSWeakToStrongConfig",
-    "POPSSWeakLabelGenerator",
-    "POPSSCurriculumScheduler",
-    "POPSSSelfCorrection",
-    "POPSSWeakToStrongOperator",
-    "POPSSIterativeAmplification",
+    "PiscesLxW2SMode",
+    "PiscesLxWeakToStrongConfig",
+    "PiscesLxWeakLabelGenerator",
+    "PiscesLxCurriculumScheduler",
+    "PiscesLxSelfCorrection",
+    "PiscesLxWeakToStrongOperator",
+    "PiscesLxIterativeAmplification",
 ]

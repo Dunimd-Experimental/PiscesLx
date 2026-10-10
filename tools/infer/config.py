@@ -31,12 +31,12 @@ pipeline. It uses Python dataclasses to define type-safe, hierarchical
 configuration structures that can be easily serialized and deserialized.
 
 Configuration Hierarchy:
-    InferenceConfig (root)
-    ├── ModelConfig: Model loading and tokenizer settings
-    ├── GenerationConfig: Text generation parameters
-    ├── AccelerationConfig: Inference acceleration options
-    ├── QuantizationConfig: Model quantization settings
-    └── SamplingConfig: Advanced sampling strategies
+    PiscesLxInferenceConfig (root)
+    ├── PiscesLxModelConfig: Model loading and tokenizer settings
+    ├── PiscesLxGenerationConfig: Text generation parameters
+    ├── PiscesLxAccelerationConfig: Inference acceleration options
+    ├── PiscesLxQuantizationConfig: Model quantization settings
+    └── PiscesLxSamplingConfig: Advanced sampling strategies
 
 Features:
     - Type-safe configuration with automatic validation
@@ -46,14 +46,14 @@ Features:
 
 Usage Examples:
     Creating configuration programmatically:
-    >>> config = InferenceConfig(
-    ...     model=ModelConfig(model_path="meta-llama/Llama-2-7b"),
-    ...     generation=GenerationConfig(temperature=0.8, max_new_tokens=512),
-    ...     acceleration=AccelerationConfig(use_vllm=True, tensor_parallel_size=2)
+    >>> config = PiscesLxInferenceConfig(
+    ...     model=PiscesLxModelConfig(model_path="meta-llama/Llama-2-7b"),
+    ...     generation=PiscesLxGenerationConfig(temperature=0.8, max_new_tokens=512),
+    ...     acceleration=PiscesLxAccelerationConfig(use_vllm=True, tensor_parallel_size=2)
     ... )
     
     Loading from JSON:
-    >>> config = InferenceConfig.load_from_json("config.json")
+    >>> config = PiscesLxInferenceConfig.load_from_json("config.json")
     
     Converting to dictionary:
     >>> config_dict = config.to_dict()
@@ -70,7 +70,7 @@ import yaml
 
 
 @dataclass
-class ModelConfig:
+class PiscesLxModelConfig:
     """
     Model Configuration
     
@@ -84,7 +84,7 @@ class ModelConfig:
         trust_remote_code: Whether to trust and execute remote code from model.
     
     Example:
-        >>> model_config = ModelConfig(
+        >>> model_config = PiscesLxModelConfig(
         ...     model_path="meta-llama/Llama-2-7b-hf",
         ...     model_type="llama",
         ...     trust_remote_code=False
@@ -97,7 +97,7 @@ class ModelConfig:
 
 
 @dataclass
-class GenerationConfig:
+class PiscesLxGenerationConfig:
     """
     Text Generation Configuration
     
@@ -115,7 +115,7 @@ class GenerationConfig:
         early_stopping: Whether to stop when all beams reach EOS.
     
     Example:
-        >>> gen_config = GenerationConfig(
+        >>> gen_config = PiscesLxGenerationConfig(
         ...     max_new_tokens=512,
         ...     temperature=0.7,
         ...     top_p=0.9,
@@ -133,7 +133,7 @@ class GenerationConfig:
 
 
 @dataclass
-class AccelerationConfig:
+class PiscesLxAccelerationConfig:
     """
     Inference Acceleration Configuration
     
@@ -157,7 +157,7 @@ class AccelerationConfig:
         use_mamba: Whether to enable Mamba/SSM for linear complexity.
     
     Example:
-        >>> accel_config = AccelerationConfig(
+        >>> accel_config = PiscesLxAccelerationConfig(
         ...     use_vllm=True,
         ...     tensor_parallel_size=2,
         ...     gpu_memory_utilization=0.9,
@@ -184,7 +184,7 @@ class AccelerationConfig:
 
 
 @dataclass
-class QuantizationConfig:
+class PiscesLxQuantizationConfig:
     """
     Model Quantization Configuration
     
@@ -200,7 +200,7 @@ class QuantizationConfig:
         zero_point: Whether to use zero-point quantization.
     
     Example:
-        >>> quant_config = QuantizationConfig(
+        >>> quant_config = PiscesLxQuantizationConfig(
         ...     enable_quantization=True,
         ...     quant_method="awq",
         ...     bits=4,
@@ -216,7 +216,7 @@ class QuantizationConfig:
 
 
 @dataclass
-class SamplingConfig:
+class PiscesLxSamplingConfig:
     """
     Advanced Sampling Configuration
     
@@ -241,7 +241,7 @@ class SamplingConfig:
 
 
 @dataclass
-class MoEConfig:
+class PiscesLxMoEConfig:
     """
     MoE Runtime Configuration
     
@@ -267,7 +267,7 @@ class MoEConfig:
         drop_tokens: Whether to drop tokens when exceeding capacity.
     
     Example:
-        >>> moe_config = MoEConfig(
+        >>> moe_config = PiscesLxMoEConfig(
         ...     enable_moe=True,
         ...     routing_temp=1.12,
         ...     top_k=2,
@@ -293,7 +293,7 @@ class MoEConfig:
 
 
 @dataclass
-class InferenceConfig:
+class PiscesLxInferenceConfig:
     """
     Complete Inference Configuration
     
@@ -319,16 +319,16 @@ class InferenceConfig:
         metrics_export_interval: Interval for metrics export.
     
     Example:
-        >>> config = InferenceConfig(
-        ...     model=ModelConfig(model_path="meta-llama/Llama-2-7b"),
-        ...     generation=GenerationConfig(temperature=0.7),
-        ...     acceleration=AccelerationConfig(use_vllm=True)
+        >>> config = PiscesLxInferenceConfig(
+        ...     model=PiscesLxModelConfig(model_path="meta-llama/Llama-2-7b"),
+        ...     generation=PiscesLxGenerationConfig(temperature=0.7),
+        ...     acceleration=PiscesLxAccelerationConfig(use_vllm=True)
         ... )
         >>> config.save_to_json("inference_config.json")
     """
     # Base configuration
-    model: ModelConfig = field(default_factory=ModelConfig)
-    generation: GenerationConfig = field(default_factory=GenerationConfig)
+    model: PiscesLxModelConfig = field(default_factory=PiscesLxModelConfig)
+    generation: PiscesLxGenerationConfig = field(default_factory=PiscesLxGenerationConfig)
     
     # Hardware configuration
     device: str = "cuda"
@@ -336,16 +336,16 @@ class InferenceConfig:
     memory_limit: Optional[int] = None  # MB
     
     # Acceleration configuration
-    acceleration: AccelerationConfig = field(default_factory=AccelerationConfig)
+    acceleration: PiscesLxAccelerationConfig = field(default_factory=PiscesLxAccelerationConfig)
     
     # Quantization configuration
-    quantization: QuantizationConfig = field(default_factory=QuantizationConfig)
+    quantization: PiscesLxQuantizationConfig = field(default_factory=PiscesLxQuantizationConfig)
     
     # Sampling configuration
-    sampling: SamplingConfig = field(default_factory=SamplingConfig)
+    sampling: PiscesLxSamplingConfig = field(default_factory=PiscesLxSamplingConfig)
     
     # MoE configuration
-    moe: MoEConfig = field(default_factory=MoEConfig)
+    moe: PiscesLxMoEConfig = field(default_factory=PiscesLxMoEConfig)
     
     # Batching configuration
     batch_size: int = 1
@@ -443,7 +443,7 @@ class InferenceConfig:
         }
     
     @classmethod
-    def from_dict(cls, config_dict: Dict[str, Any]) -> 'InferenceConfig':
+    def from_dict(cls, config_dict: Dict[str, Any]) -> 'PiscesLxInferenceConfig':
         """
         Create configuration from dictionary.
         
@@ -451,7 +451,7 @@ class InferenceConfig:
             config_dict: Dictionary containing configuration values.
         
         Returns:
-            InferenceConfig instance.
+            PiscesLxInferenceConfig instance.
         """
         config = cls()
         
@@ -560,7 +560,7 @@ class InferenceConfig:
             json.dump(self.to_dict(), f, indent=2, ensure_ascii=False)
     
     @classmethod
-    def load_from_json(cls, filepath: str) -> 'InferenceConfig':
+    def load_from_json(cls, filepath: str) -> 'PiscesLxInferenceConfig':
         """
         Load configuration from JSON file.
         
@@ -568,14 +568,14 @@ class InferenceConfig:
             filepath: Path to input JSON file.
         
         Returns:
-            InferenceConfig instance.
+            PiscesLxInferenceConfig instance.
         """
         with open(filepath, 'r', encoding='utf-8') as f:
             config_dict = json.load(f)
         return cls.from_dict(config_dict)
 
     @classmethod
-    def load_from_yaml(cls, filepath: str) -> 'InferenceConfig':
+    def load_from_yaml(cls, filepath: str) -> 'PiscesLxInferenceConfig':
         with open(filepath, 'r', encoding='utf-8') as f:
             config_dict = yaml.safe_load(f) or {}
         if not isinstance(config_dict, dict):
@@ -623,7 +623,7 @@ class InferenceConfig:
 
 
 @dataclass
-class ModelSpec:
+class PiscesLxModelSpec:
     """
     Model Specification for Different Sizes
     
@@ -666,8 +666,8 @@ class ModelSpec:
             self.max_position_embeddings = self.context_length
 
 
-MODEL_SPECS: Dict[str, ModelSpec] = {
-    "0.5B": ModelSpec(
+MODEL_SPECS: Dict[str, PiscesLxModelSpec] = {
+    "0.5B": PiscesLxModelSpec(
         name="0.5B",
         hidden_size=640,
         num_layers=16,
@@ -678,7 +678,7 @@ MODEL_SPECS: Dict[str, ModelSpec] = {
         moe_active=2,
         num_kv_heads=5,
     ),
-    "1.5B": ModelSpec(
+    "1.5B": PiscesLxModelSpec(
         name="1.5B",
         hidden_size=896,
         num_layers=16,
@@ -689,7 +689,7 @@ MODEL_SPECS: Dict[str, ModelSpec] = {
         moe_active=2,
         num_kv_heads=7,
     ),
-    "7B": ModelSpec(
+    "7B": PiscesLxModelSpec(
         name="7B",
         hidden_size=3584,
         num_layers=28,
@@ -700,7 +700,7 @@ MODEL_SPECS: Dict[str, ModelSpec] = {
         moe_active=2,
         num_kv_heads=8,
     ),
-    "32B": ModelSpec(
+    "32B": PiscesLxModelSpec(
         name="32B",
         hidden_size=5120,
         num_layers=64,
@@ -711,7 +711,7 @@ MODEL_SPECS: Dict[str, ModelSpec] = {
         moe_active=2,
         num_kv_heads=8,
     ),
-    "64B": ModelSpec(
+    "64B": PiscesLxModelSpec(
         name="64B",
         hidden_size=6656,
         num_layers=80,
@@ -722,7 +722,7 @@ MODEL_SPECS: Dict[str, ModelSpec] = {
         moe_active=2,
         num_kv_heads=8,
     ),
-    "70B": ModelSpec(
+    "70B": PiscesLxModelSpec(
         name="70B",
         hidden_size=8192,
         num_layers=80,
@@ -733,7 +733,7 @@ MODEL_SPECS: Dict[str, ModelSpec] = {
         moe_active=2,
         num_kv_heads=8,
     ),
-    "128B": ModelSpec(
+    "128B": PiscesLxModelSpec(
         name="128B",
         hidden_size=10240,
         num_layers=120,
@@ -744,7 +744,7 @@ MODEL_SPECS: Dict[str, ModelSpec] = {
         moe_active=2,
         num_kv_heads=8,
     ),
-    "314B": ModelSpec(
+    "314B": PiscesLxModelSpec(
         name="314B",
         hidden_size=12288,
         num_layers=160,
@@ -755,7 +755,7 @@ MODEL_SPECS: Dict[str, ModelSpec] = {
         moe_active=4,
         num_kv_heads=12,
     ),
-    "671B": ModelSpec(
+    "671B": PiscesLxModelSpec(
         name="671B",
         hidden_size=16384,
         num_layers=200,
@@ -766,7 +766,7 @@ MODEL_SPECS: Dict[str, ModelSpec] = {
         moe_active=6,
         num_kv_heads=16,
     ),
-    "1T": ModelSpec(
+    "1T": PiscesLxModelSpec(
         name="1T",
         hidden_size=20480,
         num_layers=240,
@@ -781,7 +781,7 @@ MODEL_SPECS: Dict[str, ModelSpec] = {
 
 
 @dataclass
-class OPSSConfig:
+class PiscesLxOPSSConfig:
     """
     OPSS Integration Configuration
     
@@ -821,7 +821,7 @@ class OPSSConfig:
 
 
 @dataclass
-class RunConfig:
+class PiscesLxRunConfig:
     """
     Runtime Configuration for Service Management
     
@@ -853,7 +853,7 @@ class RunConfig:
 
 
 @dataclass
-class ServiceConfig:
+class PiscesLxServiceConfig:
     """
     Complete Service Configuration
     
@@ -872,10 +872,10 @@ class ServiceConfig:
         cors_origins: Allowed CORS origins
     """
     model_size: str = "7B"
-    model_spec: Optional[ModelSpec] = None
-    inference: InferenceConfig = field(default_factory=InferenceConfig)
-    opss: OPSSConfig = field(default_factory=OPSSConfig)
-    run: RunConfig = field(default_factory=RunConfig)
+    model_spec: Optional[PiscesLxModelSpec] = None
+    inference: PiscesLxInferenceConfig = field(default_factory=PiscesLxInferenceConfig)
+    opss: PiscesLxOPSSConfig = field(default_factory=PiscesLxOPSSConfig)
+    run: PiscesLxRunConfig = field(default_factory=PiscesLxRunConfig)
     host: str = "127.0.0.1"
     port: int = 8000
     api_key: Optional[str] = None
@@ -918,18 +918,18 @@ class ServiceConfig:
         }
     
     @classmethod
-    def from_dict(cls, config_dict: Dict[str, Any]) -> 'ServiceConfig':
+    def from_dict(cls, config_dict: Dict[str, Any]) -> 'PiscesLxServiceConfig':
         """Create from dictionary representation."""
         model_size = config_dict.get("model_size", "7B")
         
         config = cls(model_size=model_size)
         
         if "inference" in config_dict:
-            config.inference = InferenceConfig.from_dict(config_dict["inference"])
+            config.inference = PiscesLxInferenceConfig.from_dict(config_dict["inference"])
         
         if "opss" in config_dict:
             opss_dict = config_dict["opss"]
-            config.opss = OPSSConfig(
+            config.opss = PiscesLxOPSSConfig(
                 enable_mcp_plaza=opss_dict.get("enable_mcp_plaza", True),
                 enable_swarm_coordinator=opss_dict.get("enable_swarm_coordinator", True),
                 enable_orchestrator=opss_dict.get("enable_orchestrator", True),
@@ -941,7 +941,7 @@ class ServiceConfig:
         
         if "run" in config_dict:
             run_dict = config_dict["run"]
-            config.run = RunConfig(
+            config.run = PiscesLxRunConfig(
                 run_id=run_dict.get("run_id"),
                 max_concurrency=run_dict.get("max_concurrency", 8),
                 request_timeout_s=run_dict.get("request_timeout_s", 120.0),
@@ -954,7 +954,7 @@ class ServiceConfig:
         return config
 
 
-def get_model_spec(model_size: str) -> ModelSpec:
+def get_model_spec(model_size: str) -> PiscesLxModelSpec:
     """
     Get model specification by size identifier.
     
@@ -962,7 +962,7 @@ def get_model_spec(model_size: str) -> ModelSpec:
         model_size: Model size string (e.g., "7B", "671B")
     
     Returns:
-        ModelSpec for the requested size
+        PiscesLxModelSpec for the requested size
     
     Raises:
         ValueError: If model size is not found

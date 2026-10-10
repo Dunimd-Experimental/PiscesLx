@@ -72,7 +72,7 @@ _LOG = PiscesLxLogger(
 # Phase Definition
 # ============================================================
 
-class MemSepPhase(Enum):
+class PiscesLxMemSepPhase(Enum):
     """Memory separation training phases."""
     CORE_REASONING = "core_reasoning"
     MEMORY_ROUTER_TRAINING = "memory_router_training"
@@ -84,7 +84,7 @@ class MemSepPhase(Enum):
 # ============================================================
 
 @dataclass
-class POPSSMemSepTrainingConfig:
+class PiscesLxMemSepTrainingConfig:
     """Configuration for memory separation training pipeline.
 
     Attributes:
@@ -156,7 +156,7 @@ class POPSSMemSepTrainingConfig:
 # Gate Schedule
 # ============================================================
 
-class MemSepGateScheduler:
+class PiscesLxMemSepGateScheduler:
     """Manages the knowledge injection gate schedule across training phases.
 
     Phase 1: gate = 0 (no injection, model learns reasoning)
@@ -164,9 +164,9 @@ class MemSepGateScheduler:
     Phase 3: gate = gate_target (inference mode)
     """
 
-    def __init__(self, config: POPSSMemSepTrainingConfig):
+    def __init__(self, config: PiscesLxMemSepTrainingConfig):
         self.config = config
-        self.phase = MemSepPhase.CORE_REASONING
+        self.phase = PiscesLxMemSepPhase.CORE_REASONING
         self.phase_step = 0
         self.current_gate = 0.0
 
@@ -176,10 +176,10 @@ class MemSepGateScheduler:
         Returns:
             Gate value in [0, 1].
         """
-        if self.phase == MemSepPhase.CORE_REASONING:
+        if self.phase == PiscesLxMemSepPhase.CORE_REASONING:
             return 0.0
 
-        if self.phase == MemSepPhase.KNOWLEDGE_STORE_BUILD:
+        if self.phase == PiscesLxMemSepPhase.KNOWLEDGE_STORE_BUILD:
             return self.config.gate_target
 
         # Phase 2: gate schedule
@@ -208,7 +208,7 @@ class MemSepGateScheduler:
 
         return float(gate)
 
-    def advance_phase(self, next_phase: MemSepPhase):
+    def advance_phase(self, next_phase: PiscesLxMemSepPhase):
         """Advance to next training phase.
 
         Args:
@@ -234,7 +234,7 @@ class MemSepGateScheduler:
 # Parameter Group Manager
 # ============================================================
 
-class MemSepParamManager:
+class PiscesLxMemSepParamManager:
     """Manages parameter groups for memory separation training.
 
     Handles freeze/unfreeze of backbone, router, cross-attention,
@@ -251,7 +251,7 @@ class MemSepParamManager:
     def __init__(
         self,
         model: nn.Module,
-        config: POPSSMemSepTrainingConfig,
+        config: PiscesLxMemSepTrainingConfig,
         base_lr: float,
     ):
         """Initialize parameter manager.
@@ -312,7 +312,7 @@ class MemSepParamManager:
             f"gate={total_gate:,}"
         )
 
-    def set_phase(self, phase: MemSepPhase):
+    def set_phase(self, phase: PiscesLxMemSepPhase):
         """Set parameter requires_grad based on training phase.
 
         Phase 1: Train backbone only, freeze router/cross_attn/gate
@@ -322,7 +322,7 @@ class MemSepParamManager:
         Args:
             phase: Current training phase.
         """
-        if phase == MemSepPhase.CORE_REASONING:
+        if phase == PiscesLxMemSepPhase.CORE_REASONING:
             # Train backbone, freeze memory components
             for p in self.backbone_params:
                 p.requires_grad = True
@@ -334,7 +334,7 @@ class MemSepParamManager:
                 for p in self.gate_params:
                     p.requires_grad = False
 
-        elif phase == MemSepPhase.MEMORY_ROUTER_TRAINING:
+        elif phase == PiscesLxMemSepPhase.MEMORY_ROUTER_TRAINING:
             if self.config.freeze_backbone_phase2:
                 for p in self.backbone_params:
                     p.requires_grad = False
@@ -345,7 +345,7 @@ class MemSepParamManager:
             for p in self.gate_params:
                 p.requires_grad = True
 
-        elif phase == MemSepPhase.KNOWLEDGE_STORE_BUILD:
+        elif phase == PiscesLxMemSepPhase.KNOWLEDGE_STORE_BUILD:
             for p in self.model.parameters():
                 p.requires_grad = False
 
@@ -430,7 +430,7 @@ class MemSepParamManager:
 # Memory Alignment Loss
 # ============================================================
 
-class POPSSMemoryAlignmentLoss(nn.Module):
+class PiscesLxMemoryAlignmentLoss(nn.Module):
     """Alignment loss between router output and target knowledge.
 
     Encourages the memory router to retrieve knowledge embeddings
@@ -496,7 +496,7 @@ class POPSSMemoryAlignmentLoss(nn.Module):
 # ============================================================
 
 # Paper: Original contribution by Dunimd Team (Yv Architecture)
-class POPSSMemSepTrainer:
+class PiscesLxMemSepTrainer:
     """Memory separation training orchestrator.
 
     Manages the three-phase training pipeline:
@@ -508,9 +508,9 @@ class POPSSMemSepTrainer:
     hooks for gate scheduling, parameter freezing, and loss computation.
 
     Usage:
-        config = POPSSMemSepTrainingConfig(enabled=True, phase_1_steps=5000)
-        memsep = POPSSMemSepTrainer(model, config)
-        memsep.start_phase(MemSepPhase.CORE_REASONING)
+        config = PiscesLxMemSepTrainingConfig(enabled=True, phase_1_steps=5000)
+        memsep = PiscesLxMemSepTrainer(model, config)
+        memsep.start_phase(PiscesLxMemSepPhase.CORE_REASONING)
 
         # In training loop:
         for step in range(total_steps):
@@ -525,7 +525,7 @@ class POPSSMemSepTrainer:
     def __init__(
         self,
         model: nn.Module,
-        config: POPSSMemSepTrainingConfig,
+        config: PiscesLxMemSepTrainingConfig,
         base_lr: float = 1e-5,
     ):
         """Initialize memory separation trainer.
@@ -546,13 +546,13 @@ class POPSSMemSepTrainer:
             self.alignment_loss = None
             return
 
-        self.gate_scheduler = MemSepGateScheduler(config)
-        self.param_manager = MemSepParamManager(model, config, base_lr)
-        self.alignment_loss = POPSSMemoryAlignmentLoss(
+        self.gate_scheduler = PiscesLxMemSepGateScheduler(config)
+        self.param_manager = PiscesLxMemSepParamManager(model, config, base_lr)
+        self.alignment_loss = PiscesLxMemoryAlignmentLoss(
             margin=config.mem_alignment_margin,
         )
 
-        self.current_phase = MemSepPhase.CORE_REASONING
+        self.current_phase = PiscesLxMemSepPhase.CORE_REASONING
         self.phase_step = 0
         self.total_steps = config.phase_1_steps + config.phase_2_steps
 
@@ -563,7 +563,7 @@ class POPSSMemSepTrainer:
             f"phase2={config.phase_2_steps}, gate_schedule={config.gate_schedule}"
         )
 
-    def start_phase(self, phase: MemSepPhase):
+    def start_phase(self, phase: PiscesLxMemSepPhase):
         """Start a training phase.
 
         Sets up parameter requirements, gate schedule, and logs phase start.
@@ -595,8 +595,8 @@ class POPSSMemSepTrainer:
             return
 
         # Check phase transitions
-        if step_idx >= self.config.phase_1_steps and self.current_phase == MemSepPhase.CORE_REASONING:
-            self.start_phase(MemSepPhase.MEMORY_ROUTER_TRAINING)
+        if step_idx >= self.config.phase_1_steps and self.current_phase == PiscesLxMemSepPhase.CORE_REASONING:
+            self.start_phase(PiscesLxMemSepPhase.MEMORY_ROUTER_TRAINING)
 
         self.phase_step = step_idx
         if self.gate_scheduler:
@@ -703,7 +703,7 @@ def create_memsep_trainer(
     freeze_backbone_phase2: bool = True,
     base_lr: float = 1e-5,
     **kwargs,
-) -> POPSSMemSepTrainer:
+) -> PiscesLxMemSepTrainer:
     """Factory function for memory separation trainer.
 
     Args:
@@ -716,9 +716,9 @@ def create_memsep_trainer(
         **kwargs: Additional config overrides.
 
     Returns:
-        Configured POPSSMemSepTrainer.
+        Configured PiscesLxMemSepTrainer.
     """
-    config = POPSSMemSepTrainingConfig(
+    config = PiscesLxMemSepTrainingConfig(
         enabled=True,
         phase_1_steps=phase_1_steps,
         phase_2_steps=phase_2_steps,
@@ -726,4 +726,4 @@ def create_memsep_trainer(
         freeze_backbone_phase2=freeze_backbone_phase2,
         **kwargs,
     )
-    return POPSSMemSepTrainer(model, config, base_lr=base_lr)
+    return PiscesLxMemSepTrainer(model, config, base_lr=base_lr)

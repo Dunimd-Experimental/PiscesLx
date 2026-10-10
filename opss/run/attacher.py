@@ -27,11 +27,11 @@ import json
 import time
 from typing import Optional
 
-from .store import POPSSRunStore
+from .store import PiscesLxRunStore
 
 
-class POPSSRunAttacher:
-    def __init__(self, store: POPSSRunStore):
+class PiscesLxRunAttacher:
+    def __init__(self, store: PiscesLxRunStore):
         self._store = store
         self._events_off = 0
         self._metrics_off = 0

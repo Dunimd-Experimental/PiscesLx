@@ -50,7 +50,7 @@ _LOG = PiscesLxLogger("PiscesLx.Opss.Scaling", file_path=get_log_file("PiscesLx.
 
 
 @dataclass
-class POPSSScalingConfig:
+class PiscesLxScalingConfig:
     """Configuration for scaling law calculations."""
     compute_budget: float = 1e21
     budget_unit: str = "flops"
@@ -59,7 +59,7 @@ class POPSSScalingConfig:
 
 
 @dataclass
-class POPSSScalingResult:
+class PiscesLxScalingResult:
     """Result of scaling law calculations."""
     optimal_parameters: float
     optimal_tokens: float
@@ -68,7 +68,7 @@ class POPSSScalingResult:
     memory_correction: Optional[float] = None
 
 
-class POPSSChinchillaScaler:
+class PiscesLxChinchillaScaler:
     """
     Chinchilla scaling laws implementation for optimal model parameter and token allocation.
     
@@ -105,7 +105,7 @@ class POPSSChinchillaScaler:
             Tuple[float, float]: (optimal_parameters, optimal_tokens)
         """
         if unit == "gpu_hours":
-            flops_budget = c_budget * POPSSChinchillaScaler.A100_FLOPS_PER_SECOND
+            flops_budget = c_budget * PiscesLxChinchillaScaler.A100_FLOPS_PER_SECOND
         else:
             flops_budget = c_budget
         
@@ -155,11 +155,11 @@ class POPSSChinchillaScaler:
         Returns:
             Tuple[int, int, str]: (layers, hidden_size, name)
         """
-        best_config = POPSSChinchillaScaler.RUCHBAH_CONFIGS[0]
+        best_config = PiscesLxChinchillaScaler.RUCHBAH_CONFIGS[0]
         best_diff = float('inf')
         
-        for layers, hidden_size, name in POPSSChinchillaScaler.RUCHBAH_CONFIGS:
-            params = POPSSChinchillaScaler.estimate_params(layers, hidden_size)
+        for layers, hidden_size, name in PiscesLxChinchillaScaler.RUCHBAH_CONFIGS:
+            params = PiscesLxChinchillaScaler.estimate_params(layers, hidden_size)
             diff = abs(params - target_params)
             if diff < best_diff:
                 best_diff = diff
@@ -196,7 +196,7 @@ class POPSSChinchillaScaler:
         return base_memory * memory_reduction
 
 
-class POPSSScalingOperator(PiscesLxOperatorInterface):
+class PiscesLxScalingOperator(PiscesLxOperatorInterface):
     """
     Scaling Law Operator.
     
@@ -209,17 +209,17 @@ class POPSSScalingOperator(PiscesLxOperatorInterface):
         - Cost analysis and planning
     
     Input:
-        config: POPSSScalingConfig with budget and constraints
+        config: PiscesLxScalingConfig with budget and constraints
     
     Output:
-        POPSSScalingResult with optimal parameters, tokens, and recommendations
+        PiscesLxScalingResult with optimal parameters, tokens, and recommendations
     """
     
-    def __init__(self, config: Optional[POPSSScalingConfig] = None):
+    def __init__(self, config: Optional[PiscesLxScalingConfig] = None):
         super().__init__()
         self.name = "scaling"
         self.version = VERSION
-        self.config = config or POPSSScalingConfig()
+        self.config = config or PiscesLxScalingConfig()
         self._LOG = PiscesLxLogger("pisceslx.ops.scaling")
     
     @property
@@ -279,11 +279,11 @@ class POPSSScalingOperator(PiscesLxOperatorInterface):
         budget = inputs.get("compute_budget", self.config.compute_budget)
         unit = inputs.get("budget_unit", self.config.budget_unit)
         
-        params, tokens = POPSSChinchillaScaler.optimal_nd(budget, unit)
+        params, tokens = PiscesLxChinchillaScaler.optimal_nd(budget, unit)
         
-        layers, hidden_size, name = POPSSChinchillaScaler.get_config_for_params(params)
+        layers, hidden_size, name = PiscesLxChinchillaScaler.get_config_for_params(params)
         
-        efficiency = min(1.0, params / POPSSChinchillaScaler.estimate_params(layers, hidden_size))
+        efficiency = min(1.0, params / PiscesLxChinchillaScaler.estimate_params(layers, hidden_size))
         
         return PiscesLxOperatorResult(
             status=PiscesLxOperatorStatus.SUCCESS,
@@ -295,7 +295,7 @@ class POPSSScalingOperator(PiscesLxOperatorInterface):
                     "layers": layers,
                     "hidden_size": hidden_size,
                     "config_name": name,
-                    "estimated_params": POPSSChinchillaScaler.estimate_params(layers, hidden_size)
+                    "estimated_params": PiscesLxChinchillaScaler.estimate_params(layers, hidden_size)
                 }
             }
         )
@@ -306,7 +306,7 @@ class POPSSScalingOperator(PiscesLxOperatorInterface):
         hidden_size = inputs.get("hidden_size", 2560)
         vocab_size = inputs.get("vocab_size", 151646)
         
-        params = POPSSChinchillaScaler.estimate_params(layers, hidden_size, vocab_size)
+        params = PiscesLxChinchillaScaler.estimate_params(layers, hidden_size, vocab_size)
         
         return PiscesLxOperatorResult(
             status=PiscesLxOperatorStatus.SUCCESS,
@@ -320,7 +320,7 @@ class POPSSScalingOperator(PiscesLxOperatorInterface):
         optimal_params = inputs.get("optimal_params", 0.0)
         original_params = inputs.get("original_params", 0.0)
         
-        corrected = POPSSChinchillaScaler.chinchilla_memory_correction(
+        corrected = PiscesLxChinchillaScaler.chinchilla_memory_correction(
             base_memory, chinchilla_enabled, optimal_params, original_params
         )
         
@@ -334,8 +334,8 @@ class POPSSScalingOperator(PiscesLxOperatorInterface):
 
 
 __all__ = [
-    "POPSSScalingConfig",
-    "POPSSScalingResult",
-    "POPSSChinchillaScaler",
-    "POPSSScalingOperator",
+    "PiscesLxScalingConfig",
+    "PiscesLxScalingResult",
+    "PiscesLxChinchillaScaler",
+    "PiscesLxScalingOperator",
 ]

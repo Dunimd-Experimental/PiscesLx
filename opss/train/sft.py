@@ -40,7 +40,7 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import PiscesLxDataset, DataLoader
 from torch.cuda.amp import GradScaler, autocast
 
 try:
@@ -64,7 +64,7 @@ from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResu
 
 
 @dataclass
-class POPSSSFTTrainingConfig:
+class PiscesLxSFTTrainingConfig:
     """SFT training configuration."""
     
     model_path: str = ".pisceslx/ckpt"
@@ -125,8 +125,8 @@ class POPSSSFTTrainingConfig:
             self.use_bf16 = False
 
 
-class POPSSSFTDataset(Dataset):
-    """Dataset for SFT training."""
+class PiscesLxSFTDataset(PiscesLxDataset):
+    """PiscesLxDataset for SFT training."""
     
     def __init__(
         self,
@@ -285,7 +285,7 @@ class POPSSSFTDataset(Dataset):
         }
 
 
-class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
+class _PiscesLxSFTTrainingOperatorImpl(PiscesLxOperatorInterface):
     """Complete SFT training operator implementation."""
     
     def __init__(self):
@@ -314,7 +314,7 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
             "tokenizer": {"type": "object", "required": True, "description": "Model tokenizer"},
             "train_data_path": {"type": "str", "required": True, "description": "Path to training data (JSONL)"},
             "val_data_path": {"type": "str", "required": False, "description": "Path to validation data"},
-            "config": {"type": "POPSSSFTTrainingConfig", "required": False, "description": "Training configuration"},
+            "config": {"type": "PiscesLxSFTTrainingConfig", "required": False, "description": "Training configuration"},
             "optimizer": {"type": "torch.optim.Optimizer", "required": False, "description": "Custom optimizer"},
             "scheduler": {"type": "torch.optim.lr_scheduler.LRScheduler", "required": False, "description": "Custom scheduler"},
 
@@ -361,7 +361,7 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
             if custom_config:
                 config = custom_config
             else:
-                config = POPSSSFTTrainingConfig(
+                config = PiscesLxSFTTrainingConfig(
                     train_data=inputs.get('train_data_path', ''),
                     val_data=inputs.get('val_data_path') or "",
                     output_dir=get_work_dir("ckpt")
@@ -386,11 +386,11 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
             memsep_trainer = None
             if config.use_memsep_training:
                 from opss.train.memsep import (
-                    POPSSMemSepTrainingConfig,
-                    POPSSMemSepTrainer,
-                    MemSepPhase,
+                    PiscesLxMemSepTrainingConfig,
+                    PiscesLxMemSepTrainer,
+                    PiscesLxMemSepPhase,
                 )
-                memsep_config = POPSSMemSepTrainingConfig(
+                memsep_config = PiscesLxMemSepTrainingConfig(
                     enabled=True,
                     phase_1_steps=config.memsep_phase_1_steps,
                     phase_2_steps=config.memsep_phase_2_steps,
@@ -403,7 +403,7 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
                     gate_schedule=config.memsep_gate_schedule,
                     gate_warmup_steps=config.memsep_gate_warmup_steps,
                 )
-                memsep_trainer = POPSSMemSepTrainer(
+                memsep_trainer = PiscesLxMemSepTrainer(
                     model, memsep_config, base_lr=config.learning_rate
                 )
                 # Override max_steps for 3-phase pipeline
@@ -436,7 +436,7 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
                 except Exception as e:
                     self._LOG.warning(f"Failed to enable torch.compile: {e}")
             
-            train_dataset = POPSSSFTDataset(
+            train_dataset = PiscesLxSFTDataset(
                 data_path=config.train_data,
                 tokenizer=tokenizer,
                 max_seq_length=config.max_seq_length,
@@ -445,7 +445,7 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
             
             val_dataset = None
             if config.val_data and os.path.exists(config.val_data):
-                val_dataset = POPSSSFTDataset(
+                val_dataset = PiscesLxSFTDataset(
                     data_path=config.val_data,
                     tokenizer=tokenizer,
                     max_seq_length=config.max_seq_length,
@@ -494,7 +494,7 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
     
     def _create_trainer(self, config, model, tokenizer, custom_optimizer=None, custom_scheduler=None, memsep_trainer=None):
         """Create SFT trainer with all components."""
-        class SFTTrainer:
+        class PiscesLxSFTTrainer:
             def __init__(self, config, model, tokenizer, custom_optimizer=None, custom_scheduler=None, memsep_trainer=None):
                 self.config = config
                 self.model = model
@@ -515,7 +515,7 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
                     self.optimizer = self._create_optimizer()
                 
                 self.checkpoint_manager = None
-                self._LOG.info("SFTTrainer initialized")
+                self._LOG.info("PiscesLxSFTTrainer initialized")
             
             def _create_optimizer(self):
                 """Create AdamW optimizer with weight decay and extreme memory optimizations."""
@@ -561,9 +561,9 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
                 
                 if model_config and getattr(model_config, 'use_int4_projection', False):
                     try:
-                        from opss.optim.galore import POPSSGaLoreConfig
+                        from opss.optim.galore import PiscesLxGaLoreConfig
                         
-                        POPSSGaLoreConfig(
+                        PiscesLxGaLoreConfig(
                             rank=getattr(model_config, 'galore_rank', 128),
                             update_proj_gap=getattr(model_config, 'galore_update_proj_gap', 50),
                             scale=getattr(model_config, 'galore_scale', 1.0),
@@ -614,7 +614,7 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
                 
                 return scheduler
         
-        return SFTTrainer(config, model, tokenizer, custom_optimizer, custom_scheduler)
+        return PiscesLxSFTTrainer(config, model, tokenizer, custom_optimizer, custom_scheduler)
     
     def _create_fp8_recipe(self, config):
         """Create FP8 scaling recipe for transformer engine.
@@ -668,9 +668,9 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
         
         if model_config and getattr(model_config, 'adaptive_recomputation', False):
             try:
-                from opss.optim.ink.checkpoint import POPSSInkCheckpointSelector
+                from opss.optim.ink.checkpoint import PiscesLxInkCheckpointSelector
                 
-                checkpoint_selector = POPSSInkCheckpointSelector(
+                checkpoint_selector = PiscesLxInkCheckpointSelector(
                     checkpoint_ratio=0.5,
                     preserve_ratio=0.3,
                     enable_transformer=True,
@@ -687,9 +687,9 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
         
         if model_config and getattr(model_config, 'structured_sparsity', False):
             try:
-                from opss.optim.ink.sparse import POPSSInkSparseSelector
+                from opss.optim.ink.sparse import PiscesLxInkSparseSelector
                 
-                trainer.sparse_selector = POPSSInkSparseSelector(
+                trainer.sparse_selector = PiscesLxInkSparseSelector(
                     sparse_ratio=0.01,
                     warmup_steps=1000,
                     adaptive=True,
@@ -705,9 +705,9 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
         
         if model_config and getattr(model_config, 'enable_teraio', False):
             try:
-                from opss.optim.offload import POPSSTERAIOManager
+                from opss.optim.offload import PiscesLxTERAIOManager
                 
-                trainer.teraio_manager = POPSSTERAIOManager(
+                trainer.teraio_manager = PiscesLxTERAIOManager(
                     gpu_memory_budget=getattr(model_config, 'gpu_memory_budget', 42949672960),
                     cpu_memory_budget=getattr(model_config, 'cpu_memory_budget', 137438953472),
                     enable_gds=getattr(model_config, 'enable_gds', True),
@@ -956,12 +956,12 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
             trainer._LOG.error(f"Failed to save model: {e}")
             return ""
 
-class POPSSSFTTrainingOperator(_SFTTrainingOperatorImpl):
+class PiscesLxSFTTrainingOperator(_PiscesLxSFTTrainingOperatorImpl):
     pass
 
 
 __all__ = [
-    "POPSSSFTTrainingConfig",
-    "POPSSSFTDataset",
-    "POPSSSFTTrainingOperator",
+    "PiscesLxSFTTrainingConfig",
+    "PiscesLxSFTDataset",
+    "PiscesLxSFTTrainingOperator",
 ]

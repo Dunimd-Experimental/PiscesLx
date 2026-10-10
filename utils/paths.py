@@ -262,8 +262,8 @@ def get_cache_dir(name: str) -> str:
     
     Example:
         >>> cache_dir = get_cache_dir("datasets")
-        >>> print(f"Dataset cache: {cache_dir}")
-        Dataset cache: .pisceslx/datasets
+        >>> print(f"PiscesLxDataset cache: {cache_dir}")
+        PiscesLxDataset cache: .pisceslx/datasets
         
         >>> model_cache = get_cache_dir("models")
         >>> print(f"Model cache: {model_cache}")

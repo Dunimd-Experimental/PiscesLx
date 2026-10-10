@@ -37,7 +37,7 @@ Key Features:
 
 Architecture:
     ┌─────────────────────────────────────────────────────────────┐
-    │                    POPSSInkOperator                          │
+    │                    PiscesLxInkOperator                          │
     ├─────────────────────────────────────────────────────────────┤
     │                                                             │
     │  Pipeline:                                                  │
@@ -77,17 +77,17 @@ from utils.opsc.interface import (
 from utils.dc import PiscesLxLogger
 from utils.paths import get_log_file
 
-from .config import POPSSInkConfig
-from .quantizer import POPSSInkBlockQuantizer
-from .sparse import POPSSInkSparseSelector
-from .integrator import POPSSInkIntegrator
-from .kv_cache import POPSSInkKVCacheQuantizer
-from .gradient import POPSSInkGradientCompressor
-from .moe import POPSSInkMoEManager
-from .checkpoint import POPSSInkCheckpointSelector
+from .config import PiscesLxInkConfig
+from .quantizer import PiscesLxInkBlockQuantizer
+from .sparse import PiscesLxInkSparseSelector
+from .integrator import PiscesLxInkIntegrator
+from .kv_cache import PiscesLxInkKVCacheQuantizer
+from .gradient import PiscesLxInkGradientCompressor
+from .moe import PiscesLxInkMoEManager
+from .checkpoint import PiscesLxInkCheckpointSelector
 
 
-class POPSSInkOperator(PiscesLxOperatorInterface):
+class PiscesLxInkOperator(PiscesLxOperatorInterface):
     """
     Ink Optimizer Operator - Unified Memory-Efficient Training.
     
@@ -101,19 +101,19 @@ class POPSSInkOperator(PiscesLxOperatorInterface):
     Attributes:
         name: Operator name identifier
         version: Semantic version string
-        config: POPSSInkConfig instance
+        config: PiscesLxInkConfig instance
         quantizer: Block quantizer for state compression
         sparse_selector: Sparse gradient selector
         integrator: Component integrator for GaLore/FP4/ROOT
         
     Example:
-        >>> config = POPSSInkConfig(
+        >>> config = PiscesLxInkConfig(
         ...     lr=1e-4,
         ...     momentum_bits=8,
         ...     variance_bits=4,
         ...     sparse_ratio=0.01
         ... )
-        >>> operator = POPSSInkOperator(config)
+        >>> operator = PiscesLxInkOperator(config)
         >>> operator.initialize(model)
         >>> 
         >>> for batch in dataloader:
@@ -122,25 +122,25 @@ class POPSSInkOperator(PiscesLxOperatorInterface):
         ...     operator.step()
     """
     
-    def __init__(self, config: Optional[POPSSInkConfig] = None):
+    def __init__(self, config: Optional[PiscesLxInkConfig] = None):
         """
         Initialize the Ink operator.
         
         Args:
-            config: POPSSInkConfig instance, uses defaults if None
+            config: PiscesLxInkConfig instance, uses defaults if None
         """
-        super().__init__(config or POPSSInkConfig())
+        super().__init__(config or PiscesLxInkConfig())
         
         self._name = "ink"
         self._version = VERSION
         
-        self._quantizer: Optional[POPSSInkBlockQuantizer] = None
-        self._sparse_selector: Optional[POPSSInkSparseSelector] = None
-        self._integrator: Optional[POPSSInkIntegrator] = None
-        self._kv_cache_quantizer: Optional[POPSSInkKVCacheQuantizer] = None
-        self._gradient_compressor: Optional[POPSSInkGradientCompressor] = None
-        self._moe_manager: Optional[POPSSInkMoEManager] = None
-        self._checkpoint_selector: Optional[POPSSInkCheckpointSelector] = None
+        self._quantizer: Optional[PiscesLxInkBlockQuantizer] = None
+        self._sparse_selector: Optional[PiscesLxInkSparseSelector] = None
+        self._integrator: Optional[PiscesLxInkIntegrator] = None
+        self._kv_cache_quantizer: Optional[PiscesLxInkKVCacheQuantizer] = None
+        self._gradient_compressor: Optional[PiscesLxInkGradientCompressor] = None
+        self._moe_manager: Optional[PiscesLxInkMoEManager] = None
+        self._checkpoint_selector: Optional[PiscesLxInkCheckpointSelector] = None
         
         self._momentum_int8: Dict[str, torch.Tensor] = {}
         self._momentum_scales: Dict[str, torch.Tensor] = {}
@@ -180,7 +180,7 @@ class POPSSInkOperator(PiscesLxOperatorInterface):
         return {
             "model": {"type": "nn.Module", "required": True},
             "gradients": {"type": "dict", "required": False},
-            "config": {"type": "POPSSInkConfig", "required": False},
+            "config": {"type": "PiscesLxInkConfig", "required": False},
             "step": {"type": "int", "required": False},
         }
     
@@ -195,7 +195,7 @@ class POPSSInkOperator(PiscesLxOperatorInterface):
     def validate_inputs(self, inputs: Dict[str, Any]) -> bool:
         return isinstance(inputs, dict) and ("model" in inputs or self._initialized)
     
-    def initialize(self, model: nn.Module, config: Optional[POPSSInkConfig] = None):
+    def initialize(self, model: nn.Module, config: Optional[PiscesLxInkConfig] = None):
         """
         Initialize the operator with a model.
         
@@ -211,41 +211,41 @@ class POPSSInkOperator(PiscesLxOperatorInterface):
         
         self._model = model
         
-        self._quantizer = POPSSInkBlockQuantizer(
+        self._quantizer = PiscesLxInkBlockQuantizer(
             momentum_bits=self.config.momentum_bits,
             variance_bits=self.config.variance_bits,
             momentum_block_size=self.config.momentum_block_size,
             variance_block_size=self.config.variance_block_size,
         )
         
-        self._sparse_selector = POPSSInkSparseSelector(
+        self._sparse_selector = PiscesLxInkSparseSelector(
             sparse_ratio=self.config.sparse_ratio,
             warmup_steps=self.config.sparse_warmup_steps,
             adaptive=self.config.sparse_adaptive,
         )
         
-        self._integrator = POPSSInkIntegrator(self.config)
+        self._integrator = PiscesLxInkIntegrator(self.config)
         self._integrator.initialize()
         
-        self._kv_cache_quantizer = POPSSInkKVCacheQuantizer(
+        self._kv_cache_quantizer = PiscesLxInkKVCacheQuantizer(
             kv_bits=self.config.kv_cache_bits,
             block_size=self.config.kv_cache_block_size,
         )
         
-        self._gradient_compressor = POPSSInkGradientCompressor(
+        self._gradient_compressor = PiscesLxInkGradientCompressor(
             gradient_bits=self.config.gradient_bits,
             block_size=self.config.gradient_block_size,
             stochastic_rounding=True,
         )
         
-        self._moe_manager = POPSSInkMoEManager(
+        self._moe_manager = PiscesLxInkMoEManager(
             num_experts=64,
             max_experts_on_gpu=self.config.max_experts_on_gpu,
             offload_threshold=self.config.moe_offload_threshold,
             lru_cache_size=self.config.moe_lru_cache_size,
         )
         
-        self._checkpoint_selector = POPSSInkCheckpointSelector(
+        self._checkpoint_selector = PiscesLxInkCheckpointSelector(
             checkpoint_ratio=self.config.checkpoint_ratio,
             preserve_ratio=self.config.checkpoint_preserve_ratio,
             enable_transformer=self.config.checkpoint_transformer,

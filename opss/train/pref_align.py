@@ -45,7 +45,7 @@ from utils.opsc.interface import (
 
 
 @dataclass
-class POPSSDPOConfig(PiscesLxOperatorConfig):
+class PiscesLxDPOConfig(PiscesLxOperatorConfig):
     """DPO (Direct Preference Optimization) configuration"""
     beta: float = 0.1
     label_smoothing: float = 0.0
@@ -55,7 +55,7 @@ class POPSSDPOConfig(PiscesLxOperatorConfig):
 
 
 @dataclass
-class POPSSPPOConfig(PiscesLxOperatorConfig):
+class PiscesLxPPOConfig(PiscesLxOperatorConfig):
     """PPO (Proximal Policy Optimization) configuration"""
     learning_rate: float = 1e-5
     ppo_epochs: int = 4
@@ -75,7 +75,7 @@ class POPSSPPOConfig(PiscesLxOperatorConfig):
 
 
 @dataclass
-class POPSSKTOConfig(PiscesLxOperatorConfig):
+class PiscesLxKTOConfig(PiscesLxOperatorConfig):
     """KTO (Kahneman-Tversky Optimization) configuration"""
     kl_weight: float = 0.1
     desirability_weight: float = 1.0
@@ -84,7 +84,7 @@ class POPSSKTOConfig(PiscesLxOperatorConfig):
 
 
 @dataclass
-class POPSSBCOConfig(PiscesLxOperatorConfig):
+class PiscesLxBCOConfig(PiscesLxOperatorConfig):
     """BCO (Binary Classification Optimization) configuration"""
     positive_weight: float = 1.0
     negative_weight: float = 1.0
@@ -92,7 +92,7 @@ class POPSSBCOConfig(PiscesLxOperatorConfig):
     focal_gamma: float = 2.0
 
 
-class POPSSDPOOperator(PiscesLxOperatorInterface):
+class PiscesLxDPOOperator(PiscesLxOperatorInterface):
     """Direct Preference Optimization (DPO) Operator
     
     DPO directly optimizes the policy to maximize the likelihood of preferred
@@ -123,7 +123,7 @@ class POPSSDPOOperator(PiscesLxOperatorInterface):
             model = inputs.get("model")
             reference_model = inputs.get("reference_model")
             preference_data = inputs.get("preference_data", [])
-            config = inputs.get("config", POPSSDPOConfig())
+            config = inputs.get("config", PiscesLxDPOConfig())
             optimizer = inputs.get("optimizer")
             
             if not model or not preference_data:
@@ -218,7 +218,7 @@ class POPSSDPOOperator(PiscesLxOperatorInterface):
     
     def _compute_dpo_loss(self, chosen_logps: torch.Tensor, rejected_logps: torch.Tensor,
                          ref_chosen_logps: torch.Tensor, ref_rejected_logps: torch.Tensor,
-                         config: POPSSDPOConfig) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+                         config: PiscesLxDPOConfig) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Compute DPO loss with optional KL regularization"""
         if config.loss_type == "sigmoid":
             logits = config.beta * (chosen_logps - rejected_logps)
@@ -240,7 +240,7 @@ class POPSSDPOOperator(PiscesLxOperatorInterface):
         return total_loss, chosen_logps.mean(), rejected_logps.mean()
 
 
-class POPSSPPOOperator(PiscesLxOperatorInterface):
+class PiscesLxPPOOperator(PiscesLxOperatorInterface):
     """PPO (Proximal Policy Optimization) Training Operator
     
     Complete PPO implementation with actor-critic architecture for RLHF training.
@@ -276,7 +276,7 @@ class POPSSPPOOperator(PiscesLxOperatorInterface):
             ref_model = inputs.get("reference_model")
             reward_model = inputs.get("reward_model")
             prompts = inputs.get("prompts", [])
-            config = inputs.get("config", POPSSPPOConfig())
+            config = inputs.get("config", PiscesLxPPOConfig())
             optimizer = inputs.get("optimizer")
             tokenizer = inputs.get("tokenizer")
             
@@ -336,7 +336,7 @@ class POPSSPPOOperator(PiscesLxOperatorInterface):
     
     def _collect_trajectories(self, model: nn.Module, ref_model: Optional[nn.Module],
                             reward_model: Optional[nn.Module], prompts: List[str],
-                            tokenizer, config: POPSSPPOConfig) -> Dict[str, torch.Tensor]:
+                            tokenizer, config: PiscesLxPPOConfig) -> Dict[str, torch.Tensor]:
         """Collect trajectories from current policy"""
         trajectories = {
             "old_log_probs": [], "old_values": [], "rewards": [],
@@ -406,7 +406,7 @@ class POPSSPPOOperator(PiscesLxOperatorInterface):
         return {k: torch.stack(v) if v else torch.tensor(0.0) for k, v in trajectories.items()}
     
     def _update_policy(self, model: nn.Module, trajectory_data: Dict[str, torch.Tensor],
-                      config: POPSSPPOConfig, optimizer) -> Dict[str, float]:
+                      config: PiscesLxPPOConfig, optimizer) -> Dict[str, float]:
         """Update policy using PPO"""
         old_log_probs = trajectory_data["old_log_probs"]
         rewards = trajectory_data["rewards"]
@@ -459,7 +459,7 @@ class POPSSPPOOperator(PiscesLxOperatorInterface):
         }
 
 
-class POPSSRewardModelOperator(PiscesLxOperatorInterface):
+class PiscesLxRewardModelOperator(PiscesLxOperatorInterface):
     """Reward Model Operator
     
     Train a reward model to predict human preferences.
@@ -488,7 +488,7 @@ class POPSSRewardModelOperator(PiscesLxOperatorInterface):
         try:
             model = inputs.get("model")
             preference_data = inputs.get("preference_data", [])
-            config = inputs.get("config", POPSSPPOConfig())
+            config = inputs.get("config", PiscesLxPPOConfig())
             optimizer = inputs.get("optimizer")
             
             if not model or not preference_data:
@@ -552,7 +552,7 @@ class POPSSRewardModelOperator(PiscesLxOperatorInterface):
         return [items[i:i + batch_size] for i in range(0, len(items), batch_size)]
 
 
-class POPSSKTOOperator(PiscesLxOperatorInterface):
+class PiscesLxKTOOperator(PiscesLxOperatorInterface):
     """KTO (Kahneman-Tversky Optimization) Operator
     
     KTO applies prospect theory to align models with human preferences.
@@ -586,7 +586,7 @@ class POPSSKTOOperator(PiscesLxOperatorInterface):
             model = inputs.get("model")
             ref_model = inputs.get("reference_model")
             preference_data = inputs.get("preference_data", [])
-            config = inputs.get("config", POPSSKTOConfig())
+            config = inputs.get("config", PiscesLxKTOConfig())
             optimizer = inputs.get("optimizer")
             
             if not model or not preference_data:
@@ -685,7 +685,7 @@ class POPSSKTOOperator(PiscesLxOperatorInterface):
     
     def _compute_kto_loss(self, chosen_utility: torch.Tensor, rejected_utility: torch.Tensor,
                          chosen_desirability: torch.Tensor, rejected_desirability: torch.Tensor,
-                         kl: torch.Tensor, config: POPSSKTOConfig) -> torch.Tensor:
+                         kl: torch.Tensor, config: PiscesLxKTOConfig) -> torch.Tensor:
         """Compute KTO loss based on prospect theory"""
         loss_components = []
         
@@ -710,7 +710,7 @@ class POPSSKTOOperator(PiscesLxOperatorInterface):
         return total_loss
 
 
-class POPSSBCOOperator(PiscesLxOperatorInterface):
+class PiscesLxBCOOperator(PiscesLxOperatorInterface):
     """BCO (Binary Classification Optimization) Operator
     
     BCO frames preference learning as a binary classification problem.
@@ -741,7 +741,7 @@ class POPSSBCOOperator(PiscesLxOperatorInterface):
         try:
             model = inputs.get("model")
             preference_data = inputs.get("preference_data", [])
-            config = inputs.get("config", POPSSBCOConfig())
+            config = inputs.get("config", PiscesLxBCOConfig())
             optimizer = inputs.get("optimizer")
             
             if not model or not preference_data:
@@ -808,7 +808,7 @@ class POPSSBCOOperator(PiscesLxOperatorInterface):
     
     def _compute_bco_loss(self, chosen_probs: torch.Tensor, rejected_probs: torch.Tensor,
                           chosen_labels: torch.Tensor, rejected_labels: torch.Tensor,
-                          config: POPSSBCOConfig) -> torch.Tensor:
+                          config: PiscesLxBCOConfig) -> torch.Tensor:
         """Compute BCO loss with optional focal loss"""
         eps = 1e-8
         
@@ -830,7 +830,7 @@ class POPSSBCOOperator(PiscesLxOperatorInterface):
         return (config.positive_weight * chosen_loss + config.negative_weight * rejected_loss) / 2
 
 
-class POPSSPreferenceAlignmentOperator(PiscesLxOperatorInterface):
+class PiscesLxPreferenceAlignmentOperator(PiscesLxOperatorInterface):
     """Unified Preference Alignment Operator
     
     Supports DPO, PPO, KTO, and BCO alignment methods.
@@ -841,10 +841,10 @@ class POPSSPreferenceAlignmentOperator(PiscesLxOperatorInterface):
         self._name = "preference_alignment"
         self._version = VERSION
         self.operators = {
-            "dpo": POPSSDPOOperator(),
-            "ppo": POPSSPPOOperator(),
-            "kto": POPSSKTOOperator(),
-            "bco": POPSSBCOOperator()
+            "dpo": PiscesLxDPOOperator(),
+            "ppo": PiscesLxPPOOperator(),
+            "kto": PiscesLxKTOOperator(),
+            "bco": PiscesLxBCOOperator()
         }
 
     @property
@@ -878,7 +878,7 @@ class POPSSPreferenceAlignmentOperator(PiscesLxOperatorInterface):
             )
 
 
-class POPSSPreferenceDataProcessor:
+class PiscesLxPreferenceDataProcessor:
     """Process and create preference data for alignment training"""
     
     @staticmethod
@@ -946,10 +946,10 @@ class POPSSPreferenceDataProcessor:
 
 
 __all__ = [
-    "POPSSDPOConfig",
-    "POPSSPPOConfig",
-    "POPSSKTOConfig",
-    "POPSSBCOConfig",
-    "POPSSPreferenceAlignmentOperator",
-    "POPSSPreferenceDataProcessor",
+    "PiscesLxDPOConfig",
+    "PiscesLxPPOConfig",
+    "PiscesLxKTOConfig",
+    "PiscesLxBCOConfig",
+    "PiscesLxPreferenceAlignmentOperator",
+    "PiscesLxPreferenceDataProcessor",
 ]

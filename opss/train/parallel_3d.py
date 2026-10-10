@@ -43,9 +43,9 @@ References:
     - 3D Parallelism (NVIDIA, 2022)
 
 Usage:
-    >>> from opss.train.parallel_3d import POPSSParallel3DOperator, POPSSParallel3DConfig
-    >>> config = POPSSParallel3DConfig(dp_size=8, tp_size=4, pp_size=2)
-    >>> operator = POPSSParallel3DOperator(config)
+    >>> from opss.train.parallel_3d import PiscesLxParallel3DOperator, PiscesLxParallel3DConfig
+    >>> config = PiscesLxParallel3DConfig(dp_size=8, tp_size=4, pp_size=2)
+    >>> operator = PiscesLxParallel3DOperator(config)
     >>> result = operator.execute({"model": model, "batch": batch})
 """
 
@@ -78,7 +78,7 @@ class POPSSParallelismType(Enum):
     EXPERT = "expert"
 
 
-class POPSSPipelineSchedule(Enum):
+class PiscesLxPipelineSchedule(Enum):
     """Pipeline scheduling strategies."""
     GPipe = "gpipe"
     ONE_F_ONE_B = "1f1b"
@@ -87,7 +87,7 @@ class POPSSPipelineSchedule(Enum):
 
 
 @dataclass
-class POPSSParallel3DConfig:
+class PiscesLxParallel3DConfig:
     """
     Configuration for 3D Parallelism Operator.
     
@@ -108,7 +108,7 @@ class POPSSParallel3DConfig:
     tp_size: int = 1
     pp_size: int = 1
     sequence_parallel: bool = True
-    pipeline_schedule: POPSSPipelineSchedule = POPSSPipelineSchedule.ONE_F_ONE_B
+    pipeline_schedule: PiscesLxPipelineSchedule = PiscesLxPipelineSchedule.ONE_F_ONE_B
     num_micro_batches: int = 4
     overlap_communication: bool = True
     gradient_checkpointing: bool = False
@@ -122,7 +122,7 @@ class POPSSParallel3DConfig:
     
     def __post_init__(self):
         if isinstance(self.pipeline_schedule, str):
-            self.pipeline_schedule = POPSSPipelineSchedule(self.pipeline_schedule)
+            self.pipeline_schedule = PiscesLxPipelineSchedule(self.pipeline_schedule)
         
         self.world_size = self.dp_size * self.tp_size * self.pp_size
     
@@ -139,7 +139,7 @@ class POPSSParallel3DConfig:
         return dp_rank * self.tp_size * self.pp_size + tp_rank * self.pp_size + pp_rank
 
 
-class POPSSParallel3DOperator(PiscesLxOperatorInterface):
+class PiscesLxParallel3DOperator(PiscesLxOperatorInterface):
     """
     3D Parallelism Operator for Large-Scale Model Training.
     
@@ -158,18 +158,18 @@ class POPSSParallel3DOperator(PiscesLxOperatorInterface):
         - 3D: O(model_size / (tp_size * pp_size))
     
     Example:
-        >>> config = POPSSParallel3DConfig(dp_size=8, tp_size=4, pp_size=2)
-        >>> operator = POPSSParallel3DOperator(config)
+        >>> config = PiscesLxParallel3DConfig(dp_size=8, tp_size=4, pp_size=2)
+        >>> operator = PiscesLxParallel3DOperator(config)
         >>> result = operator.initialize(model, optimizer)
     """
     
-    def __init__(self, config: Optional[POPSSParallel3DConfig] = None):
+    def __init__(self, config: Optional[PiscesLxParallel3DConfig] = None):
         super().__init__()
         self.name = "train.parallel_3d"
         self.version = VERSION
         self.type = "training"
         self._LOG = PiscesLxLogger("PiscesLx.Opss.Train",file_path=get_log_file("PiscesLx.Opss.Train"), enable_file=True)
-        self.config = config or POPSSParallel3DConfig()
+        self.config = config or PiscesLxParallel3DConfig()
         
         self._initialized = False
         self._dp_rank = 0
@@ -206,7 +206,7 @@ class POPSSParallel3DOperator(PiscesLxOperatorInterface):
             self._model = self._parallelize_model(model)
             self._optimizer = self._setup_optimizer(optimizer)
             if self.config.overlap_communication and self.config.dp_size > 1 and self._dp_group is not None:
-                self._overlap_optimizer = POPSSCommComputeOverlapOptimizer(
+                self._overlap_optimizer = PiscesLxCommComputeOverlapOptimizer(
                     model=self._model,
                     bucket_size_mb=int(getattr(self.config, "overlap_bucket_size_mb", 25) or 25),
                     enable_overlap=bool(getattr(self.config, "enable_overlap", True)),
@@ -390,7 +390,7 @@ class POPSSParallel3DOperator(PiscesLxOperatorInterface):
         
         stage_layers = layers[start_idx:end_idx]
         
-        class PipelineStage(nn.Module):
+        class PiscesLxPipelineStage(nn.Module):
             def __init__(self, layers):
                 super().__init__()
                 self.layers = nn.ModuleList(layers)
@@ -400,7 +400,7 @@ class POPSSParallel3DOperator(PiscesLxOperatorInterface):
                     x = layer(x)
                 return x
         
-        return PipelineStage(stage_layers)
+        return PiscesLxPipelineStage(stage_layers)
     
     def _apply_sequence_parallelism(self, model: nn.Module) -> nn.Module:
         """Apply sequence parallelism for long sequences."""
@@ -456,7 +456,7 @@ class POPSSParallel3DOperator(PiscesLxOperatorInterface):
         # Initialize communication-computation overlap optimizer for Zero-Bubble
         if self.config.overlap_communication and self.config.dp_size > 1:
             if not hasattr(self, '_overlap_optimizer') or self._overlap_optimizer is None:
-                self._overlap_optimizer = POPSSCommComputeOverlapOptimizer(
+                self._overlap_optimizer = PiscesLxCommComputeOverlapOptimizer(
                     model=self._model,
                     bucket_size_mb=25,
                     enable_overlap=True,
@@ -499,13 +499,13 @@ class POPSSParallel3DOperator(PiscesLxOperatorInterface):
         
         losses = []
 
-        if self.config.pipeline_schedule == POPSSPipelineSchedule.ZERO_BUBBLE:
+        if self.config.pipeline_schedule == PiscesLxPipelineSchedule.ZERO_BUBBLE:
             losses = self._zero_bubble_schedule(micro_batches, forward_fn)
-        elif self.config.pipeline_schedule == POPSSPipelineSchedule.ONE_F_ONE_B:
+        elif self.config.pipeline_schedule == PiscesLxPipelineSchedule.ONE_F_ONE_B:
             losses = self._one_f_one_b_schedule(micro_batches, forward_fn)
-        elif self.config.pipeline_schedule == POPSSPipelineSchedule.INTERLEAVED:
+        elif self.config.pipeline_schedule == PiscesLxPipelineSchedule.INTERLEAVED:
             losses = self._interleaved_schedule(micro_batches, forward_fn)
-        elif self.config.pipeline_schedule == POPSSPipelineSchedule.GPipe:
+        elif self.config.pipeline_schedule == PiscesLxPipelineSchedule.GPipe:
             losses = self._gpipe_schedule(micro_batches, forward_fn)
         else:
             losses = self._interleaved_schedule(micro_batches, forward_fn)
@@ -734,7 +734,7 @@ class POPSSParallel3DOperator(PiscesLxOperatorInterface):
         }
 
 
-class POPSSCommComputeOverlapOptimizer:
+class PiscesLxCommComputeOverlapOptimizer:
     """
     Communication-Computation Overlap Optimizer for Distributed Training.
 
@@ -750,7 +750,7 @@ class POPSSCommComputeOverlapOptimizer:
 
     Usage:
         >>> model = MyModel()
-        >>> optimizer = POPSSCommComputeOverlapOptimizer(
+        >>> optimizer = PiscesLxCommComputeOverlapOptimizer(
         ...     model=model,
         ...     bucket_size_mb=25,
         ...     enable_overlap=True,
@@ -970,8 +970,8 @@ class POPSSCommComputeOverlapOptimizer:
 
 __all__ = [
     "POPSSParallelismType",
-    "POPSSPipelineSchedule",
-    "POPSSParallel3DConfig",
-    "POPSSParallel3DOperator",
-    "POPSSCommComputeOverlapOptimizer",
+    "PiscesLxPipelineSchedule",
+    "PiscesLxParallel3DConfig",
+    "PiscesLxParallel3DOperator",
+    "PiscesLxCommComputeOverlapOptimizer",
 ]

@@ -25,7 +25,7 @@ from __future__ import annotations
 
 """Offline Knowledge Builder for Engram-style Lookup-Computation Separation.
 
-Implements the POPSSKnowledgeBuilder that processes raw text corpora
+Implements the PiscesLxKnowledgeBuilder that processes raw text corpora
 through a fixed small encoder (0.5B-scale, 640-dim) to produce
 256-dim knowledge embeddings, builds a FAISS IVF-PQ index, and saves
 an mmap-backed knowledge store for low-latency retrieval at inference.
@@ -75,7 +75,7 @@ _LOG = PiscesLxLogger(
 # ============================================================
 
 @dataclass
-class POPSSKnowledgeBuilderConfig:
+class PiscesLxKnowledgeBuilderConfig:
     """Configuration for the offline knowledge builder pipeline.
 
     Attributes:
@@ -130,7 +130,7 @@ class POPSSKnowledgeBuilderConfig:
 # Knowledge Encoder (Fixed 0.5B Scale)
 # ============================================================
 
-class _KnowledgeEncoderMLP(nn.Module):
+class _PiscesLxKnowledgeEncoderMLP(nn.Module):
     """MoE MLP block for knowledge encoder."""
 
     def __init__(
@@ -203,7 +203,7 @@ class _KnowledgeEncoderMLP(nn.Module):
         return output
 
 
-class _KnowledgeEncoderLayer(nn.Module):
+class _PiscesLxKnowledgeEncoderLayer(nn.Module):
     """Single transformer layer for knowledge encoder (Pre-LN with MoE)."""
 
     def __init__(
@@ -227,7 +227,7 @@ class _KnowledgeEncoderLayer(nn.Module):
 
         # MoE FFN (4x expansion)
         intermediate_size = hidden_size * 4
-        self.mlp = _KnowledgeEncoderMLP(
+        self.mlp = _PiscesLxKnowledgeEncoderMLP(
             hidden_size, intermediate_size, n_experts, device, dtype
         )
 
@@ -277,7 +277,7 @@ class _KnowledgeEncoderLayer(nn.Module):
         return x
 
 
-class _KnowledgeEncoder(nn.Module):
+class _PiscesLxKnowledgeEncoder(nn.Module):
     """Fixed 0.5B-scale knowledge encoder.
 
     Processes text chunks into knowledge embeddings. Uses MoE
@@ -320,7 +320,7 @@ class _KnowledgeEncoder(nn.Module):
 
         # Transformer layers
         self.layers = nn.ModuleList([
-            _KnowledgeEncoderLayer(hidden_size, n_heads, n_experts, device, dtype)
+            _PiscesLxKnowledgeEncoderLayer(hidden_size, n_heads, n_experts, device, dtype)
             for _ in range(n_layers)
         ])
 
@@ -362,7 +362,7 @@ class _KnowledgeEncoder(nn.Module):
 # Contrastive Learning
 # ============================================================
 
-class _NTXentLoss(nn.Module):
+class _PiscesLxNTXentLoss(nn.Module):
     """Normalized Temperature-scaled Cross Entropy Loss.
 
     Used for contrastive refinement of knowledge embeddings.
@@ -419,7 +419,7 @@ class _NTXentLoss(nn.Module):
 # Main Knowledge Builder
 # ============================================================
 
-class POPSSKnowledgeBuilder:
+class PiscesLxKnowledgeBuilder:
     """Offline knowledge store construction pipeline.
 
     Builds mmap-backed FAISS-indexed knowledge stores from raw text
@@ -434,19 +434,19 @@ class POPSSKnowledgeBuilder:
         6. mmap store serialization
 
     Usage:
-        config = POPSSKnowledgeBuilderConfig(
+        config = PiscesLxKnowledgeBuilderConfig(
             knowledge_slots=100_000_000,
             store_path="./knowledge_store/7B",
             chunk_size=256,
             contrastive_epochs=3,
         )
-        builder = POPSSKnowledgeBuilder(config)
+        builder = PiscesLxKnowledgeBuilder(config)
         builder.build_from_texts(texts=["...", "..."])
         # Or streaming:
         # builder.build_from_stream(text_iterator, total_slots=100_000_000)
     """
 
-    def __init__(self, config: POPSSKnowledgeBuilderConfig):
+    def __init__(self, config: PiscesLxKnowledgeBuilderConfig):
         """Initialize knowledge builder.
 
         Args:
@@ -457,7 +457,7 @@ class POPSSKnowledgeBuilder:
         self.dtype = getattr(torch, config.dtype)
 
         # Fixed encoder (0.5B scale)
-        self.encoder = _KnowledgeEncoder(
+        self.encoder = _PiscesLxKnowledgeEncoder(
             hidden_size=config.encoder_hidden,
             n_layers=config.encoder_layers,
             n_heads=config.encoder_heads,
@@ -468,7 +468,7 @@ class POPSSKnowledgeBuilder:
         )
 
         # Contrastive loss
-        self.contrastive_loss = _NTXentLoss(temperature=config.contrastive_temperature)
+        self.contrastive_loss = _PiscesLxNTXentLoss(temperature=config.contrastive_temperature)
 
         # Internal state
         self._knowledge_store: Optional[torch.Tensor] = None
@@ -953,7 +953,7 @@ def create_knowledge_builder(
     device: Optional[str] = None,
     dtype: Optional[str] = None,
     **kwargs,
-) -> POPSSKnowledgeBuilder:
+) -> PiscesLxKnowledgeBuilder:
     """Factory function for creating knowledge builder instances.
 
     Args:
@@ -971,9 +971,9 @@ def create_knowledge_builder(
         **kwargs: Additional config overrides.
 
     Returns:
-        Configured POPSSKnowledgeBuilder instance.
+        Configured PiscesLxKnowledgeBuilder instance.
     """
-    config = POPSSKnowledgeBuilderConfig(
+    config = PiscesLxKnowledgeBuilderConfig(
         encoder_hidden=encoder_hidden,
         encoder_layers=encoder_layers,
         encoder_experts=encoder_experts,
@@ -987,4 +987,4 @@ def create_knowledge_builder(
         dtype=dtype,
         **kwargs,
     )
-    return POPSSKnowledgeBuilder(config)
+    return PiscesLxKnowledgeBuilder(config)

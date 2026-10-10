@@ -50,7 +50,7 @@ from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResu
 
 
 @dataclass
-class POPSSSamplingConfig:
+class PiscesLxSamplingConfig:
     """Sampling configuration."""
     
     max_new_tokens: int = 512
@@ -79,7 +79,7 @@ class POPSSSamplingConfig:
     use_cuda_graph: bool = False
 
 
-class POPSSSamplingOperator(PiscesLxOperatorInterface):
+class PiscesLxSamplingOperator(PiscesLxOperatorInterface):
     """Complete sampling-based text generation operator."""
     
     def __init__(self):
@@ -108,7 +108,7 @@ class POPSSSamplingOperator(PiscesLxOperatorInterface):
             "model": {"type": "torch.nn.Module", "required": True, "description": "Language model for generation"},
             "tokenizer": {"type": "object", "required": True, "description": "Model tokenizer"},
             "prompt": {"type": "str", "required": True, "description": "Input prompt text"},
-            "config": {"type": "SamplingConfig", "required": False, "description": "Sampling configuration"},
+            "config": {"type": "PiscesLxSamplingConfig", "required": False, "description": "Sampling configuration"},
             "prefix_allowed_tokens_fn": {"type": "callable", "required": False, "description": "Constraint function"},
             "stopping_criteria": {"type": "list", "required": False, "description": "Custom stopping criteria"}
         }
@@ -169,7 +169,7 @@ class POPSSSamplingOperator(PiscesLxOperatorInterface):
             if custom_config:
                 config = custom_config
             else:
-                config = SamplingConfig()
+                config = PiscesLxSamplingConfig()
             
             # Set special token IDs if not provided
             if config.pad_token_id is None:
@@ -493,7 +493,7 @@ class POPSSSamplingOperator(PiscesLxOperatorInterface):
         return unfinished_sequences.max() == 0
 
 
-class POPSSBeamSearchOperator(PiscesLxOperatorInterface):
+class PiscesLxBeamSearchOperator(PiscesLxOperatorInterface):
     """Beam search text generation operator."""
     
     def __init__(self):
@@ -595,4 +595,4 @@ class POPSSBeamSearchOperator(PiscesLxOperatorInterface):
 
 
 # Export operators
-__all__ = ['POPSSSamplingOperator', 'POPSSBeamSearchOperator', 'POPSSSamplingConfig']
+__all__ = ['PiscesLxSamplingOperator', 'PiscesLxBeamSearchOperator', 'PiscesLxSamplingConfig']

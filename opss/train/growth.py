@@ -43,15 +43,15 @@ Growth Strategies:
 
 Usage:
     from opss.train.growth import (
-        POPSSModelGrowthConfig,
-        POPSSModelGrowthOperator,
+        PiscesLxModelGrowthConfig,
+        PiscesLxModelGrowthOperator,
     )
     
-    config = POPSSModelGrowthConfig(
+    config = PiscesLxModelGrowthConfig(
         growth_type="depth",
         num_new_layers=4,
     )
-    grower = POPSSModelGrowthOperator()
+    grower = PiscesLxModelGrowthOperator()
     grown_model = grower.execute({"model": model, "config": config})
 """
 
@@ -72,7 +72,7 @@ from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResu
 from configs.version import VERSION
 
 
-class POPSSGrowthType(Enum):
+class PiscesLxGrowthType(Enum):
     """Model growth type enumeration."""
     DEPTH = "depth"
     WIDTH = "width"
@@ -81,7 +81,7 @@ class POPSSGrowthType(Enum):
 
 
 @dataclass
-class POPSSModelGrowthConfig:
+class PiscesLxModelGrowthConfig:
     """Configuration for model growth operations.
     
     Attributes:
@@ -105,11 +105,11 @@ class POPSSModelGrowthConfig:
     layer_copy_strategy: str = "last"
     
     def __post_init__(self):
-        if isinstance(self.growth_type, POPSSGrowthType):
+        if isinstance(self.growth_type, PiscesLxGrowthType):
             self.growth_type = self.growth_type.value
 
 
-class POPSSOptimalTransportAligner:
+class PiscesLxOptimalTransportAligner:
     """Optimal Transport layer alignment for growth.
     
     Based on OpT-DeUS (arXiv 2508.08011):
@@ -203,16 +203,16 @@ class POPSSOptimalTransportAligner:
         return new_weights
 
 
-class POPSSDepthGrower:
+class PiscesLxDepthGrower:
     """Depth-wise model growth using Gstack strategy.
     
     Stacks layers to increase model depth, providing up to 2x
     training speedup compared to training from scratch.
     """
     
-    def __init__(self, config: POPSSModelGrowthConfig):
+    def __init__(self, config: PiscesLxModelGrowthConfig):
         self.config = config
-        self.ot_aligner = POPSSOptimalTransportAligner() if config.use_optimal_transport else None
+        self.ot_aligner = PiscesLxOptimalTransportAligner() if config.use_optimal_transport else None
         self._LOG = PiscesLxLogger(
             "PiscesLx.Growth.Depth",
             file_path=get_log_file("PiscesLx.Growth.Depth"),
@@ -305,14 +305,14 @@ class POPSSDepthGrower:
                 model.config.num_hidden_layers = new_num_layers
 
 
-class POPSSWidthGrower:
+class PiscesLxWidthGrower:
     """Width-wise model growth for hidden dimension expansion.
     
     Expands hidden dimensions while preserving knowledge through
     careful weight padding and initialization.
     """
     
-    def __init__(self, config: POPSSModelGrowthConfig):
+    def __init__(self, config: PiscesLxModelGrowthConfig):
         self.config = config
         self._LOG = PiscesLxLogger(
             "PiscesLx.Growth.Width",
@@ -456,14 +456,14 @@ class POPSSWidthGrower:
 
 
 # Paper: Original contribution by Dunimd Team (Yv Architecture)
-class POPSSExpertGrower:
+class PiscesLxExpertGrower:
     """MoE expert growth for capacity scaling.
     
     Adds new experts to MoE layers with routing alignment
     to preserve existing knowledge.
     """
     
-    def __init__(self, config: POPSSModelGrowthConfig):
+    def __init__(self, config: PiscesLxModelGrowthConfig):
         self.config = config
         self._LOG = PiscesLxLogger(
             "PiscesLx.Growth.Expert",
@@ -568,7 +568,7 @@ class POPSSExpertGrower:
                 model.config.moe_num_experts += num_new
 
 
-class _ModelGrowthOperatorImpl(PiscesLxOperatorInterface):
+class _PiscesLxModelGrowthOperatorImpl(PiscesLxOperatorInterface):
     """Model growth operator implementation."""
     
     def __init__(self):
@@ -588,7 +588,7 @@ class _ModelGrowthOperatorImpl(PiscesLxOperatorInterface):
         Args:
             params: Dictionary containing:
                 - model: Model to grow
-                - config: POPSSModelGrowthConfig
+                - config: PiscesLxModelGrowthConfig
                 
         Returns:
             Growth result with grown model.
@@ -603,19 +603,19 @@ class _ModelGrowthOperatorImpl(PiscesLxOperatorInterface):
             )
         
         if config is None:
-            config = POPSSModelGrowthConfig()
+            config = PiscesLxModelGrowthConfig()
         elif isinstance(config, dict):
-            config = POPSSModelGrowthConfig(**config)
+            config = PiscesLxModelGrowthConfig(**config)
         
         self._LOG.info(f"Starting model growth: type={config.growth_type}")
         
         try:
-            if config.growth_type == POPSSGrowthType.DEPTH.value:
-                grower = POPSSDepthGrower(config)
-            elif config.growth_type == POPSSGrowthType.WIDTH.value:
-                grower = POPSSWidthGrower(config)
-            elif config.growth_type == POPSSGrowthType.EXPERT.value:
-                grower = POPSSExpertGrower(config)
+            if config.growth_type == PiscesLxGrowthType.DEPTH.value:
+                grower = PiscesLxDepthGrower(config)
+            elif config.growth_type == PiscesLxGrowthType.WIDTH.value:
+                grower = PiscesLxWidthGrower(config)
+            elif config.growth_type == PiscesLxGrowthType.EXPERT.value:
+                grower = PiscesLxExpertGrower(config)
             else:
                 return PiscesLxOperatorResult(
                     status=PiscesLxOperatorStatus.ERROR,
@@ -641,18 +641,18 @@ class _ModelGrowthOperatorImpl(PiscesLxOperatorInterface):
 
 
 # Paper: Original contribution by Dunimd Team (Yv Architecture)
-class POPSSModelGrowthOperator:
+class PiscesLxModelGrowthOperator:
     """Facade for model growth operator.
     
     Example:
-        >>> config = POPSSModelGrowthConfig(growth_type="depth", num_new_layers=4)
-        >>> operator = POPSSModelGrowthOperator()
+        >>> config = PiscesLxModelGrowthConfig(growth_type="depth", num_new_layers=4)
+        >>> operator = PiscesLxModelGrowthOperator()
         >>> result = operator.execute({"model": model, "config": config})
         >>> grown_model = result.data["model"]
     """
     
     def __init__(self):
-        self._impl = _ModelGrowthOperatorImpl()
+        self._impl = _PiscesLxModelGrowthOperatorImpl()
     
     def execute(self, params: Dict[str, Any]) -> PiscesLxOperatorResult:
         """Execute model growth."""
@@ -660,29 +660,29 @@ class POPSSModelGrowthOperator:
     
     def grow_depth(self, model: nn.Module, num_layers: int = 4) -> nn.Module:
         """Convenience method for depth growth."""
-        config = POPSSModelGrowthConfig(growth_type="depth", num_new_layers=num_layers)
+        config = PiscesLxModelGrowthConfig(growth_type="depth", num_new_layers=num_layers)
         result = self.execute({"model": model, "config": config})
         return result.data.get("model", model) if result.status == PiscesLxOperatorStatus.SUCCESS else model
     
     def grow_width(self, model: nn.Module, new_hidden_size: int) -> nn.Module:
         """Convenience method for width growth."""
-        config = POPSSModelGrowthConfig(growth_type="width", new_hidden_size=new_hidden_size)
+        config = PiscesLxModelGrowthConfig(growth_type="width", new_hidden_size=new_hidden_size)
         result = self.execute({"model": model, "config": config})
         return result.data.get("model", model) if result.status == PiscesLxOperatorStatus.SUCCESS else model
     
     def grow_experts(self, model: nn.Module, num_experts: int = 8) -> nn.Module:
         """Convenience method for expert growth."""
-        config = POPSSModelGrowthConfig(growth_type="expert", num_new_experts=num_experts)
+        config = PiscesLxModelGrowthConfig(growth_type="expert", num_new_experts=num_experts)
         result = self.execute({"model": model, "config": config})
         return result.data.get("model", model) if result.status == PiscesLxOperatorStatus.SUCCESS else model
 
 
 __all__ = [
-    "POPSSGrowthType",
-    "POPSSModelGrowthConfig",
-    "POPSSOptimalTransportAligner",
-    "POPSSDepthGrower",
-    "POPSSWidthGrower",
-    "POPSSExpertGrower",
-    "POPSSModelGrowthOperator",
+    "PiscesLxGrowthType",
+    "PiscesLxModelGrowthConfig",
+    "PiscesLxOptimalTransportAligner",
+    "PiscesLxDepthGrower",
+    "PiscesLxWidthGrower",
+    "PiscesLxExpertGrower",
+    "PiscesLxModelGrowthOperator",
 ]

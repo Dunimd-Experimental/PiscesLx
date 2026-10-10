@@ -37,7 +37,7 @@ Key Features:
 
 Integration Architecture:
     ┌─────────────────────────────────────────────────────────────┐
-    │                    POPSSInkIntegrator                        │
+    │                    PiscesLxInkIntegrator                        │
     ├─────────────────────────────────────────────────────────────┤
     │                                                             │
     │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐           │
@@ -64,10 +64,10 @@ import torch.nn as nn
 from typing import Any, Dict, Optional, Tuple
 from configs.version import VERSION
 
-from .config import POPSSInkConfig
+from .config import PiscesLxInkConfig
 
 
-class POPSSInkIntegrator:
+class PiscesLxInkIntegrator:
     """
     Unified Integrator for GaLore, FP4, and ROOT Components.
     
@@ -82,7 +82,7 @@ class POPSSInkIntegrator:
         4. Apply ROOT orthogonalization (if enabled)
     
     Attributes:
-        config: POPSSInkConfig instance with all settings
+        config: PiscesLxInkConfig instance with all settings
         _galore_operator: Lazy-loaded GaLore operator
         _fp4_quantizer: Lazy-loaded FP4 quantizer
         _root_operator: Lazy-loaded ROOT operator
@@ -91,12 +91,12 @@ class POPSSInkIntegrator:
         _root_config: ROOT configuration
     
     Example:
-        >>> config = POPSSInkConfig(
+        >>> config = PiscesLxInkConfig(
         ...     use_galore=True,
         ...     use_fp4=True,
         ...     use_root_ortho=True
         ... )
-        >>> integrator = POPSSInkIntegrator(config)
+        >>> integrator = PiscesLxInkIntegrator(config)
         >>> 
         >>> # Apply GaLore projection
         >>> projected_grad = integrator.apply_galore(grad, "layer.weight", state)
@@ -105,12 +105,12 @@ class POPSSInkIntegrator:
         >>> ortho_momentum = integrator.apply_root_ortho(momentum)
     """
     
-    def __init__(self, config: POPSSInkConfig):
+    def __init__(self, config: PiscesLxInkConfig):
         """
         Initialize the integrator with configuration.
         
         Args:
-            config: POPSSInkConfig instance with component settings
+            config: PiscesLxInkConfig instance with component settings
         """
         self.config = config
         
@@ -152,10 +152,10 @@ class POPSSInkIntegrator:
     def _init_galore(self):
         """Initialize GaLore operator and configuration."""
         try:
-            from opss.optim.galore import POPSSGaLoreOperator, POPSSGaLoreConfig
+            from opss.optim.galore import PiscesLxGaLoreOperator, PiscesLxGaLoreConfig
             
-            self._galore_operator = POPSSGaLoreOperator()
-            self._galore_config = POPSSGaLoreConfig(
+            self._galore_operator = PiscesLxGaLoreOperator()
+            self._galore_config = PiscesLxGaLoreConfig(
                 rank=self.config.galore_rank,
                 update_proj_gap=self.config.galore_update_proj_gap,
                 quantization_bits=self.config.galore_quantization_bits,
@@ -172,13 +172,13 @@ class POPSSInkIntegrator:
     def _init_fp4(self):
         """Initialize FP4 quantizer and configuration."""
         try:
-            from opss.optim.fp4 import POPSSFP4Quantizer, POPSSFP4Config
+            from opss.optim.fp4 import PiscesLxFP4Quantizer, PiscesLxFP4Config
             
-            self._fp4_config = POPSSFP4Config(
+            self._fp4_config = PiscesLxFP4Config(
                 block_size=self.config.fp4_block_size,
                 stochastic_rounding=self.config.fp4_stochastic_rounding,
             )
-            self._fp4_quantizer = POPSSFP4Quantizer(
+            self._fp4_quantizer = PiscesLxFP4Quantizer(
                 block_size=self._fp4_config.block_size,
                 stochastic_rounding=self._fp4_config.stochastic_rounding,
             )
@@ -188,9 +188,9 @@ class POPSSInkIntegrator:
     def _init_root(self):
         """Initialize ROOT operator and configuration."""
         try:
-            from opss.optim.root import POPSSROOTConfig
+            from opss.optim.root import PiscesLxROOTConfig
             
-            self._root_config = POPSSROOTConfig(
+            self._root_config = PiscesLxROOTConfig(
                 lr=self.config.lr,
                 beta1=self.config.betas[0],
                 beta2=self.config.betas[1],

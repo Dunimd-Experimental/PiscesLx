@@ -33,10 +33,10 @@ from typing import Any, Dict, Optional
 from utils.dc import PiscesLxLogger
 
 from opss.run import (
-    POPSSRunController,
-    POPSSRunStore,
-    POPSSResourceMonitor,
-    POPSSHeartbeatMonitor,
+    PiscesLxRunController,
+    PiscesLxRunStore,
+    PiscesLxResourceMonitor,
+    PiscesLxHeartbeatMonitor,
 )
 
 
@@ -59,16 +59,16 @@ class PiscesLxTrainingRunReporter:
         enable_gpu_monitor: bool = True,
     ):
         self._logger = PiscesLxLogger("PiscesLx.Tools.Train.RunReporter", file_path=get_log_file("PiscesLx.Tools.Train.RunReporter"), enable_file=True)
-        self._store = POPSSRunStore(run_id, run_dir=run_dir)
-        self._ctl = POPSSRunController(self._store)
+        self._store = PiscesLxRunStore(run_id, run_dir=run_dir)
+        self._ctl = PiscesLxRunController(self._store)
         self._control_interval_s = float(control_interval_s or 0.5)
         self._run_name = str(run_name).strip() if run_name is not None else ""
         self._paused = False
         self._cancel_requested = False
         self._trainer = None
         self._train_config = None
-        self._resource_monitor: Optional[POPSSResourceMonitor] = None
-        self._heartbeat_monitor: Optional[POPSSHeartbeatMonitor] = None
+        self._resource_monitor: Optional[PiscesLxResourceMonitor] = None
+        self._heartbeat_monitor: Optional[PiscesLxHeartbeatMonitor] = None
         self._heartbeat_thread: Optional[threading.Thread] = None
         self._heartbeat_running = False
         self._enable_resource_monitor = bool(enable_resource_monitor)
@@ -79,19 +79,19 @@ class PiscesLxTrainingRunReporter:
         self._heartbeat_timeout_s = float(heartbeat_timeout_s or 60.0)
 
     @property
-    def store(self) -> POPSSRunStore:
+    def store(self) -> PiscesLxRunStore:
         return self._store
 
     @property
-    def controller(self) -> POPSSRunController:
+    def controller(self) -> PiscesLxRunController:
         return self._ctl
 
     @property
-    def resource_monitor(self) -> Optional[POPSSResourceMonitor]:
+    def resource_monitor(self) -> Optional[PiscesLxResourceMonitor]:
         return self._resource_monitor
 
     @property
-    def heartbeat_monitor(self) -> Optional[POPSSHeartbeatMonitor]:
+    def heartbeat_monitor(self) -> Optional[PiscesLxHeartbeatMonitor]:
         return self._heartbeat_monitor
 
     def init(self, spec: Dict[str, Any]) -> None:
@@ -102,7 +102,7 @@ class PiscesLxTrainingRunReporter:
         s.setdefault("type", "train")
         self._ctl.init_run(s, state={"status": "running", "phase": "initializing", "pid": int(os.getpid())})
         if self._enable_resource_monitor:
-            self._resource_monitor = POPSSResourceMonitor(
+            self._resource_monitor = PiscesLxResourceMonitor(
                 self._store,
                 interval_s=self._resource_interval_s,
                 enable_gpu=self._enable_gpu_monitor,
@@ -111,7 +111,7 @@ class PiscesLxTrainingRunReporter:
             self._resource_monitor.start()
             self._logger.info("Resource monitor started")
         if self._enable_heartbeat:
-            self._heartbeat_monitor = POPSSHeartbeatMonitor(
+            self._heartbeat_monitor = PiscesLxHeartbeatMonitor(
                 self._store,
                 interval_s=self._heartbeat_interval_s,
                 timeout_s=self._heartbeat_timeout_s,

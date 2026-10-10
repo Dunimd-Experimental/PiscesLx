@@ -27,7 +27,7 @@ import secrets
 from datetime import datetime, timezone
 
 
-class POPSSRunIdFactory:
+class PiscesLxRunIdFactory:
     def __init__(self, prefix: str = "run"):
         self._prefix = str(prefix).strip() or "run"
 

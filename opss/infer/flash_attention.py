@@ -44,9 +44,9 @@ References:
     - H100 Tensor Core Guide (NVIDIA, 2023)
 
 Usage:
-    >>> from opss.infer.flash_attention import POPSSFlashAttention3Operator, POPSSFlashAttention3Config
-    >>> config = POPSSFlashAttention3Config(use_fp8=True, block_size=128)
-    >>> operator = POPSSFlashAttention3Operator(config)
+    >>> from opss.infer.flash_attention import PiscesLxFlashAttention3Operator, PiscesLxFlashAttention3Config
+    >>> config = PiscesLxFlashAttention3Config(use_fp8=True, block_size=128)
+    >>> operator = PiscesLxFlashAttention3Operator(config)
     >>> result = operator.execute({"query": q, "key": k, "value": v})
 """
 
@@ -65,7 +65,7 @@ from utils.paths import get_log_file
 from configs.version import VERSION
 
 
-class POPSSFlashAttentionBackend(Enum):
+class PiscesLxFlashAttentionBackend(Enum):
     """Available FlashAttention backends."""
     FLASH_3 = "flash_3"
     FLASH_2 = "flash_2"
@@ -73,7 +73,7 @@ class POPSSFlashAttentionBackend(Enum):
     PYTORCH = "pytorch"
 
 
-class POPSSPrecisionMode(Enum):
+class PiscesLxPrecisionMode(Enum):
     """Precision modes for attention computation."""
     FP32 = "fp32"
     FP16 = "fp16"
@@ -83,7 +83,7 @@ class POPSSPrecisionMode(Enum):
 
 
 @dataclass
-class POPSSFlashAttention3Config:
+class PiscesLxFlashAttention3Config:
     """
     Configuration for FlashAttention-3 Operator.
     
@@ -105,7 +105,7 @@ class POPSSFlashAttention3Config:
     head_dim: int = 128
     block_size: int = 128
     use_fp8: bool = True
-    precision: POPSSPrecisionMode = POPSSPrecisionMode.BF16
+    precision: PiscesLxPrecisionMode = PiscesLxPrecisionMode.BF16
     causal: bool = True
     softmax_scale: Optional[float] = None
     dropout: float = 0.0
@@ -116,12 +116,12 @@ class POPSSFlashAttention3Config:
     
     def __post_init__(self):
         if isinstance(self.precision, str):
-            self.precision = POPSSPrecisionMode(self.precision)
+            self.precision = PiscesLxPrecisionMode(self.precision)
         if self.softmax_scale is None:
             self.softmax_scale = 1.0 / math.sqrt(self.head_dim)
 
 
-class POPSSFlashAttention3Operator(PiscesLxOperatorInterface):
+class PiscesLxFlashAttention3Operator(PiscesLxOperatorInterface):
     """
     FlashAttention-3 Operator for H100 GPU Optimization.
     
@@ -136,8 +136,8 @@ class POPSSFlashAttention3Operator(PiscesLxOperatorInterface):
         - FlashAttention-3: ~500 TFLOPS (1.7x improvement)
     
     Example:
-        >>> config = POPSSFlashAttention3Config(use_fp8=True)
-        >>> operator = POPSSFlashAttention3Operator(config)
+        >>> config = PiscesLxFlashAttention3Config(use_fp8=True)
+        >>> operator = PiscesLxFlashAttention3Operator(config)
         >>> output = operator.execute({
         ...     "query": query,
         ...     "key": key,
@@ -145,38 +145,38 @@ class POPSSFlashAttention3Operator(PiscesLxOperatorInterface):
         ... })
     """
     
-    def __init__(self, config: Optional[POPSSFlashAttention3Config] = None):
+    def __init__(self, config: Optional[PiscesLxFlashAttention3Config] = None):
         super().__init__()
         self.name = "infer.flash_attention_3"
         self.version = VERSION
         self.type = "inference"
         self._LOG = PiscesLxLogger("PiscesLx.Opss.Infer",file_path=get_log_file("PiscesLx.Opss.Infer"), enable_file=True)
-        self.config = config or POPSSFlashAttention3Config()
+        self.config = config or PiscesLxFlashAttention3Config()
         
         self._backend = self._detect_backend()
         self._flash_available = self._check_flash_availability()
         
-    def _detect_backend(self) -> POPSSFlashAttentionBackend:
+    def _detect_backend(self) -> PiscesLxFlashAttentionBackend:
         """Detect the best available backend."""
         try:
             if hasattr(F, 'scaled_dot_product_attention'):
-                return POPSSFlashAttentionBackend.FLASH_3
+                return PiscesLxFlashAttentionBackend.FLASH_3
         except Exception:
             pass
         
         try:
             import flash_attn
-            return POPSSFlashAttentionBackend.FLASH_2
+            return PiscesLxFlashAttentionBackend.FLASH_2
         except ImportError:
             pass
         
         try:
             import triton
-            return POPSSFlashAttentionBackend.TRITON
+            return PiscesLxFlashAttentionBackend.TRITON
         except ImportError:
             pass
         
-        return POPSSFlashAttentionBackend.PYTORCH
+        return PiscesLxFlashAttentionBackend.PYTORCH
     
     def _check_flash_availability(self) -> bool:
         """Check if FlashAttention is available."""
@@ -220,9 +220,9 @@ class POPSSFlashAttention3Operator(PiscesLxOperatorInterface):
             )
         
         try:
-            if self._flash_available and self._backend == POPSSFlashAttentionBackend.FLASH_3:
+            if self._flash_available and self._backend == PiscesLxFlashAttentionBackend.FLASH_3:
                 output, metrics = self._flash_attention_3(query, key, value, attention_mask, cu_seqlens, max_seqlen)
-            elif self._backend == POPSSFlashAttentionBackend.FLASH_2:
+            elif self._backend == PiscesLxFlashAttentionBackend.FLASH_2:
                 output, metrics = self._flash_attention_2(query, key, value, attention_mask)
             else:
                 output, metrics = self._pytorch_attention(query, key, value, attention_mask)
@@ -272,9 +272,9 @@ class POPSSFlashAttention3Operator(PiscesLxOperatorInterface):
     
     def _to_fp8(self, tensor: torch.Tensor) -> torch.Tensor:
         """Convert tensor to FP8 format."""
-        if self.config.precision == POPSSPrecisionMode.FP8_E4M3:
+        if self.config.precision == PiscesLxPrecisionMode.FP8_E4M3:
             return tensor.to(torch.float8_e4m3fn)
-        elif self.config.precision == POPSSPrecisionMode.FP8_E5M2:
+        elif self.config.precision == PiscesLxPrecisionMode.FP8_E5M2:
             return tensor.to(torch.float8_e5m2)
         return tensor
     
@@ -391,17 +391,17 @@ class POPSSFlashAttention3Operator(PiscesLxOperatorInterface):
 
 
 # Paper: Shah et al., "FlashAttention-3: Fast and Accurate Attention with Asynchronous Processing", 2024, arXiv:2407.08608
-class POPSSFlashAttention3Layer(nn.Module):
+class PiscesLxFlashAttention3Layer(nn.Module):
     """
     FlashAttention-3 Layer for transformer integration.
     
     Provides optimized attention with H100-specific features.
     """
     
-    def __init__(self, config: POPSSFlashAttention3Config):
+    def __init__(self, config: PiscesLxFlashAttention3Config):
         super().__init__()
         self.config = config
-        self.operator = POPSSFlashAttention3Operator(config)
+        self.operator = PiscesLxFlashAttention3Operator(config)
         
         hidden_dim = config.num_heads * config.head_dim
         self.q_proj = nn.Linear(hidden_dim, hidden_dim, bias=False)
@@ -444,9 +444,9 @@ class POPSSFlashAttention3Layer(nn.Module):
 
 
 __all__ = [
-    "POPSSFlashAttentionBackend",
-    "POPSSPrecisionMode",
-    "POPSSFlashAttention3Config",
-    "POPSSFlashAttention3Operator",
-    "POPSSFlashAttention3Layer",
+    "PiscesLxFlashAttentionBackend",
+    "PiscesLxPrecisionMode",
+    "PiscesLxFlashAttention3Config",
+    "PiscesLxFlashAttention3Operator",
+    "PiscesLxFlashAttention3Layer",
 ]

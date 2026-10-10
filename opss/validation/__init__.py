@@ -50,7 +50,7 @@ _LOG = PiscesLxLogger("PiscesLx.Opss.Validation", file_path=get_log_file("Pisces
 
 
 @dataclass
-class POPSSValidationRule:
+class PiscesLxValidationRule:
     """A single validation rule."""
     name: str
     validate: Callable[[Any], Tuple[bool, str]]
@@ -58,14 +58,14 @@ class POPSSValidationRule:
 
 
 @dataclass
-class POPSSValidationResult:
+class PiscesLxValidationResult:
     """Result of a validation operation."""
     is_valid: bool
     errors: List[str] = field(default_factory=list)
     validated_value: Any = None
 
 
-class POPSSValidator:
+class PiscesLxValidator:
     """
     A lightweight helper class for validation and assertions.
     
@@ -228,7 +228,7 @@ class POPSSValidator:
             )
 
 
-class POPSSValidatorOperator(PiscesLxOperatorInterface):
+class PiscesLxValidatorOperator(PiscesLxOperatorInterface):
     """
     Validation Operator.
     
@@ -248,7 +248,7 @@ class POPSSValidatorOperator(PiscesLxOperatorInterface):
         rules: Custom validation rules
     
     Output:
-        POPSSValidationResult with success status and details
+        PiscesLxValidationResult with success status and details
     """
     
     def __init__(self):
@@ -256,7 +256,7 @@ class POPSSValidatorOperator(PiscesLxOperatorInterface):
         self.name = "validation"
         self.version = VERSION
         self._LOG = PiscesLxLogger("pisceslx.ops.validation")
-        self._custom_rules: Dict[str, POPSSValidationRule] = {}
+        self._custom_rules: Dict[str, PiscesLxValidationRule] = {}
     
     @property
     def description(self) -> str:
@@ -327,7 +327,7 @@ class POPSSValidatorOperator(PiscesLxOperatorInterface):
         expected = inputs.get("expected")
         name = inputs.get("name", "value")
         
-        POPSSValidator.expect_type(value, expected, name)
+        PiscesLxValidator.expect_type(value, expected, name)
         
         return PiscesLxOperatorResult(
             status=PiscesLxOperatorStatus.SUCCESS,
@@ -346,7 +346,7 @@ class POPSSValidatorOperator(PiscesLxOperatorInterface):
             min_val = expected.get("min", 0)
             max_val = expected.get("max", float('inf'))
         
-        POPSSValidator.expect_range(value, min_val, max_val, name)
+        PiscesLxValidator.expect_range(value, min_val, max_val, name)
         
         return PiscesLxOperatorResult(
             status=PiscesLxOperatorStatus.SUCCESS,
@@ -359,7 +359,7 @@ class POPSSValidatorOperator(PiscesLxOperatorInterface):
         expected = inputs.get("expected")
         name = inputs.get("name", "value")
         
-        POPSSValidator.expect_in(value, expected, name)
+        PiscesLxValidator.expect_in(value, expected, name)
         
         return PiscesLxOperatorResult(
             status=PiscesLxOperatorStatus.SUCCESS,
@@ -378,7 +378,7 @@ class POPSSValidatorOperator(PiscesLxOperatorInterface):
             min_len = expected.get("min", 0)
             max_len = expected.get("max", float('inf'))
         
-        POPSSValidator.expect_length(value, min_len, max_len, name)
+        PiscesLxValidator.expect_length(value, min_len, max_len, name)
         
         return PiscesLxOperatorResult(
             status=PiscesLxOperatorStatus.SUCCESS,
@@ -391,7 +391,7 @@ class POPSSValidatorOperator(PiscesLxOperatorInterface):
         expected = inputs.get("expected")
         name = inputs.get("name", "value")
         
-        POPSSValidator.expect_match(value, expected, name)
+        PiscesLxValidator.expect_match(value, expected, name)
         
         return PiscesLxOperatorResult(
             status=PiscesLxOperatorStatus.SUCCESS,
@@ -410,7 +410,7 @@ class POPSSValidatorOperator(PiscesLxOperatorInterface):
             for key, expected_type in schema.items():
                 if key in value:
                     try:
-                        POPSSValidator.expect_type(value[key], expected_type, key)
+                        PiscesLxValidator.expect_type(value[key], expected_type, key)
                     except PiscesLxCoreValidationError as e:
                         errors.append(str(e))
         
@@ -477,7 +477,7 @@ class POPSSValidatorOperator(PiscesLxOperatorInterface):
     def add_rule(self, name: str, validate: Callable[[Any], Tuple[bool, str]], 
                  error_message: str = "Validation failed") -> None:
         """Add a custom validation rule."""
-        self._custom_rules[name] = POPSSValidationRule(
+        self._custom_rules[name] = PiscesLxValidationRule(
             name=name,
             validate=validate,
             error_message=error_message
@@ -485,8 +485,8 @@ class POPSSValidatorOperator(PiscesLxOperatorInterface):
 
 
 __all__ = [
-    "POPSSValidationRule",
-    "POPSSValidationResult",
-    "POPSSValidator",
-    "POPSSValidatorOperator",
+    "PiscesLxValidationRule",
+    "PiscesLxValidationResult",
+    "PiscesLxValidator",
+    "PiscesLxValidatorOperator",
 ]

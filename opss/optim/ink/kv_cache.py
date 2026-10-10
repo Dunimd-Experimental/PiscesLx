@@ -49,7 +49,7 @@ from dataclasses import dataclass
 from configs.version import VERSION
 
 
-class POPSSInkKVCacheQuantizer:
+class PiscesLxInkKVCacheQuantizer:
     """
     INT8/INT4 KV Cache Quantizer.
     
@@ -62,7 +62,7 @@ class POPSSInkKVCacheQuantizer:
         device: Device for tensor operations
     
     Example:
-        >>> quantizer = POPSSInkKVCacheQuantizer(kv_bits=8, block_size=64)
+        >>> quantizer = PiscesLxInkKVCacheQuantizer(kv_bits=8, block_size=64)
         >>> k_quantized, k_scales = quantizer.quantize_k(k_cache)
         >>> k_dequantized = quantizer.dequantize_k(k_quantized, k_scales, k_shape)
     """

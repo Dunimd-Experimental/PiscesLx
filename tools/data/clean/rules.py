@@ -105,15 +105,15 @@ class PiscesLxToolsDataStreamCleaner:
         if not path or not isinstance(path, str):
             return None
         try:
-            from .media import MediaCleaner
+            from .media import PiscesLxMediaCleaner
             if media_type == "image":
-                return MediaCleaner.clean_image_with_quality(path)
+                return PiscesLxMediaCleaner.clean_image_with_quality(path)
             if media_type == "audio":
-                return MediaCleaner.clean_audio_with_quality(path)
+                return PiscesLxMediaCleaner.clean_audio_with_quality(path)
             if media_type == "video":
-                return MediaCleaner.clean_video_with_quality(path)
+                return PiscesLxMediaCleaner.clean_video_with_quality(path)
             if media_type == "doc":
-                return MediaCleaner.clean_document_with_quality(path)
+                return PiscesLxMediaCleaner.clean_document_with_quality(path)
             return path
         except Exception as e:
             pass
@@ -132,24 +132,24 @@ class PiscesLxToolsDataStreamCleaner:
             float: The quality score of the media file. Returns 0.5 if an error occurs.
         """
         try:
-            from .media import MediaCleaner
+            from .media import PiscesLxMediaCleaner
             if media_type == "image":
                 from PIL import Image
                 with Image.open(media_path) as img:
-                    return MediaCleaner._calculate_image_quality(img)
+                    return PiscesLxMediaCleaner._calculate_image_quality(img)
             if media_type == "audio":
-                return MediaCleaner._calculate_audio_quality(media_path)
+                return PiscesLxMediaCleaner._calculate_audio_quality(media_path)
             if media_type == "video":
                 import cv2
                 cap = cv2.VideoCapture(media_path)
                 total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                score = MediaCleaner._calculate_video_quality(cap, total)
+                score = PiscesLxMediaCleaner._calculate_video_quality(cap, total)
                 cap.release()
                 return score
             if media_type == "doc":
                 import fitz
                 doc = fitz.open(media_path)
-                score = MediaCleaner._calculate_document_quality(doc)
+                score = PiscesLxMediaCleaner._calculate_document_quality(doc)
                 doc.close()
                 return score
             return 0.5

@@ -38,7 +38,7 @@ ARCHITECTURAL OVERVIEW:
     1. Separation of Configuration Concerns:
        - Model configurations define architecture-specific parameters
        - Training configurations control optimization and workflow
-       - Dataset configurations manage data sources and preprocessing
+       - PiscesLxDataset configurations manage data sources and preprocessing
        - System settings control runtime behavior and development tools
 
     2. Hierarchical Configuration Loading:
@@ -57,7 +57,7 @@ CONFIGURATION FILE STRUCTURE:
     ├── __init__.py              # Package initialization, exports, and documentation
     ├── version.py               # Version identifiers and release metadata
     ├── settings.yaml            # System-level and developer mode settings
-    ├── dataset.yaml             # Dataset registry with sources and preprocessing
+    ├── dataset.yaml             # PiscesLxDataset registry with sources and preprocessing
     │
     ├── model/                   # Model architecture configurations
     │   ├── 0.5B.yaml           # 0.5 billion parameters (compact model)

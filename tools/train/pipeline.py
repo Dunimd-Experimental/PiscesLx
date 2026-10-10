@@ -57,10 +57,10 @@ Callback System:
 
 Usage Examples:
     Basic Pipeline:
-        >>> from tools.train import TrainingConfig, TrainingPipelineOperator
+        >>> from tools.train import PiscesLxTrainingConfig, PiscesLxTrainingPipelineOperator
         >>> 
-        >>> config = TrainingConfig(max_steps=10000)
-        >>> pipeline = TrainingPipelineOperator(config)
+        >>> config = PiscesLxTrainingConfig(max_steps=10000)
+        >>> pipeline = PiscesLxTrainingPipelineOperator(config)
         >>> 
         >>> pipeline.initialize(model, train_loader, val_loader)
         >>> pipeline.train(epochs=3)
@@ -92,7 +92,7 @@ from utils.opsc.registry import PiscesLxOperatorRegistrar
 from utils.dc import PiscesLxLogger
 
 from .core import PiscesLxTrainingOperator
-from .config import TrainingConfig
+from .config import PiscesLxTrainingConfig
 from configs.version import VERSION
 
 
@@ -100,7 +100,7 @@ from utils.paths import get_log_file
 _LOG = PiscesLxLogger("PiscesLx.Tools.Train", file_path=get_log_file("PiscesLx.Tools.Train"), enable_file=True)
 
 
-class TrainingInterruption(Exception):
+class PiscesLxTrainingInterruption(Exception):
     """
     Training interruption exception for graceful handling.
     
@@ -118,12 +118,12 @@ class TrainingInterruption(Exception):
         super().__init__(message or f"Training interrupted: {mode}")
     
     @classmethod
-    def skip_current_dataset(cls, reason: str = "") -> "TrainingInterruption":
+    def skip_current_dataset(cls, reason: str = "") -> "PiscesLxTrainingInterruption":
         """Create exception to skip current dataset."""
         return cls(mode=cls.SKIP_DATASET, message=reason)
     
     @classmethod
-    def stop_all(cls, reason: str = "") -> "TrainingInterruption":
+    def stop_all(cls, reason: str = "") -> "PiscesLxTrainingInterruption":
         """Create exception to stop all training."""
         return cls(mode=cls.FULL_STOP, message=reason)
 
@@ -145,7 +145,7 @@ def _signal_handler(signum, frame):
     if time_since_last < _interrupt_state['double_press_window']:
         _interrupt_state['interrupt_count'] += 1
         _LOG.warning("Double Ctrl+C detected - will skip current dataset")
-        raise TrainingInterruption.skip_current_dataset("User requested skip current dataset")
+        raise PiscesLxTrainingInterruption.skip_current_dataset("User requested skip current dataset")
     else:
         _interrupt_state['interrupt_count'] = 1
         _LOG.warning("Single Ctrl+C detected - press again within 1s to skip dataset, or wait for full stop")
@@ -156,11 +156,11 @@ def _signal_handler(signum, frame):
         time.sleep(1.0)
         if _interrupt_state['interrupt_count'] == 1:
             _LOG.warning("Full stop requested - stopping all training")
-            raise TrainingInterruption.stop_all("User requested full stop")
+            raise PiscesLxTrainingInterruption.stop_all("User requested full stop")
 
 
 @PiscesLxOperatorRegistrar()
-class TrainingPipelineOperator(PiscesLxTransformOperator):
+class PiscesLxTrainingPipelineOperator(PiscesLxTransformOperator):
     """
     Training Pipeline Operator
     
@@ -168,7 +168,7 @@ class TrainingPipelineOperator(PiscesLxTransformOperator):
     evaluation loops, and checkpoint management.
     
     Attributes:
-        config: TrainingConfig instance
+        config: PiscesLxTrainingConfig instance
         trainer: PiscesLxTrainingOperator for core training logic
         callbacks: List of callback functions for custom logic
         metrics: Dictionary storing training and evaluation metrics
@@ -179,18 +179,18 @@ class TrainingPipelineOperator(PiscesLxTransformOperator):
         ...     metrics['custom_metric'] = compute_metric()
     
     Example:
-        >>> config = TrainingConfig(max_steps=10000)
-        >>> pipeline = TrainingPipelineOperator(config)
+        >>> config = PiscesLxTrainingConfig(max_steps=10000)
+        >>> pipeline = PiscesLxTrainingPipelineOperator(config)
         >>> pipeline.initialize(model, train_loader, val_loader)
         >>> pipeline.train(epochs=3)
     """
     
-    def __init__(self, config: Optional[Union[PiscesLxOperatorConfig, TrainingConfig, str, Dict[str, Any]]] = None, trainer: Optional[Any] = None):
+    def __init__(self, config: Optional[Union[PiscesLxOperatorConfig, PiscesLxTrainingConfig, str, Dict[str, Any]]] = None, trainer: Optional[Any] = None):
         """
         Initialize training pipeline.
         
         Args:
-            config: TrainingConfig with all training parameters
+            config: PiscesLxTrainingConfig with all training parameters
             trainer: Optional pre-initialized trainer instance
         """
         op_config = config if isinstance(config, PiscesLxOperatorConfig) else None
@@ -201,33 +201,33 @@ class TrainingPipelineOperator(PiscesLxTransformOperator):
         self.metrics = {}
         self.stage = getattr(self.train_config, 'stage', None)
 
-    def _normalize_train_config(self, config: Optional[Union[PiscesLxOperatorConfig, TrainingConfig, str, Dict[str, Any]]]) -> TrainingConfig:
-        if isinstance(config, TrainingConfig):
+    def _normalize_train_config(self, config: Optional[Union[PiscesLxOperatorConfig, PiscesLxTrainingConfig, str, Dict[str, Any]]]) -> PiscesLxTrainingConfig:
+        if isinstance(config, PiscesLxTrainingConfig):
             return config
         if isinstance(config, str):
             if config.lower().endswith(".json"):
-                return TrainingConfig.load_from_json(config)
+                return PiscesLxTrainingConfig.load_from_json(config)
             if config.lower().endswith((".yaml", ".yml")):
                 with open(config, "r", encoding="utf-8") as f:
-                    return TrainingConfig.from_dict(yaml.safe_load(f) or {})
+                    return PiscesLxTrainingConfig.from_dict(yaml.safe_load(f) or {})
             raise ValueError(f"Unsupported config file format: {config}")
         if isinstance(config, dict):
-            return TrainingConfig.from_dict(config)
+            return PiscesLxTrainingConfig.from_dict(config)
         if isinstance(config, PiscesLxOperatorConfig):
             params = getattr(config, "parameters", {}) or {}
             cfg = params.get("training_config", None)
-            if isinstance(cfg, TrainingConfig):
+            if isinstance(cfg, PiscesLxTrainingConfig):
                 return cfg
             if isinstance(cfg, str):
                 if cfg.lower().endswith(".json"):
-                    return TrainingConfig.load_from_json(cfg)
+                    return PiscesLxTrainingConfig.load_from_json(cfg)
                 if cfg.lower().endswith((".yaml", ".yml")):
                     with open(cfg, "r", encoding="utf-8") as f:
-                        return TrainingConfig.from_dict(yaml.safe_load(f) or {})
+                        return PiscesLxTrainingConfig.from_dict(yaml.safe_load(f) or {})
                 raise ValueError(f"Unsupported config file format: {cfg}")
             if isinstance(cfg, dict):
-                return TrainingConfig.from_dict(cfg)
-        return TrainingConfig()
+                return PiscesLxTrainingConfig.from_dict(cfg)
+        return PiscesLxTrainingConfig()
     
     @property
     def name(self) -> str:
@@ -501,7 +501,7 @@ class TrainingPipelineOperator(PiscesLxTransformOperator):
             training_history['cancelled'] = True
             training_history['cancellation_reason'] = getattr(e, 'reason', 'unknown')
             _LOG.info(f"Training cancelled: {getattr(e, 'reason', 'unknown')}")
-        except TrainingInterruption as e:
+        except PiscesLxTrainingInterruption as e:
             training_history['interrupted'] = True
             training_history['interruption_type'] = e.mode
             _LOG.info(f"Training interrupted: {e.mode} - {str(e)}")
@@ -530,7 +530,7 @@ class TrainingPipelineOperator(PiscesLxTransformOperator):
 
 
 @PiscesLxOperatorRegistrar()
-class CurriculumLearningOperator(PiscesLxTransformOperator):
+class PiscesLxCurriculumLearningOperator(PiscesLxTransformOperator):
     """
     Curriculum Learning Operator.
     

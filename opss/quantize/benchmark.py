@@ -56,7 +56,7 @@ from configs.version import VERSION
 
 
 @dataclass
-class BenchmarkConfig(PiscesLxOperatorConfig):
+class PiscesLxBenchmarkConfig(PiscesLxOperatorConfig):
     """Benchmark configuration."""
     batch_size: int = 1
     sequence_length: int = 512
@@ -73,7 +73,7 @@ class BenchmarkConfig(PiscesLxOperatorConfig):
 
 
 @dataclass
-class BenchmarkResult:
+class PiscesLxBenchmarkResult:
     """Benchmark result data structure."""
     model_name: str
     quantization_method: str
@@ -92,7 +92,7 @@ class BenchmarkResult:
     comparison_with_baseline: Dict[str, float] = field(default_factory=dict)
 
 
-class YvQuantizationBenchmark:
+class PiscesLxQuantizationBenchmark:
     """
     Comprehensive quantization benchmark suite.
     
@@ -105,21 +105,21 @@ class YvQuantizationBenchmark:
     - Detailed telemetry export
     """
     
-    def __init__(self, config: Optional[BenchmarkConfig] = None):
+    def __init__(self, config: Optional[PiscesLxBenchmarkConfig] = None):
         """Initialize benchmark suite.
         
         Args:
             config: Benchmark configuration.
         """
-        self.config = config or BenchmarkConfig()
+        self.config = config or PiscesLxBenchmarkConfig()
         self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer",file_path=get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
         
-        self.baseline_results: Optional[BenchmarkResult] = None
-        self.current_results: Optional[BenchmarkResult] = None
+        self.baseline_results: Optional[PiscesLxBenchmarkResult] = None
+        self.current_results: Optional[PiscesLxBenchmarkResult] = None
         
-        self.memory_profiler: Optional[MemoryProfiler] = None
+        self.memory_profiler: Optional[PiscesLxMemoryProfiler] = None
         if self.config.enable_memory_profiling:
-            self.memory_profiler = MemoryProfiler()
+            self.memory_profiler = PiscesLxMemoryProfiler()
         
         self.lock = threading.Lock()
         
@@ -129,7 +129,7 @@ class YvQuantizationBenchmark:
             "models_tested": set(),
         }
     
-    def set_baseline(self, results: BenchmarkResult):
+    def set_baseline(self, results: PiscesLxBenchmarkResult):
         """Set baseline results for comparison.
         
         Args:
@@ -439,8 +439,8 @@ class YvQuantizationBenchmark:
     
     def compare_with_baseline(
         self,
-        current: BenchmarkResult,
-        baseline: Optional[BenchmarkResult] = None,
+        current: PiscesLxBenchmarkResult,
+        baseline: Optional[PiscesLxBenchmarkResult] = None,
     ) -> Dict[str, float]:
         """
         Compare current results with baseline.
@@ -506,7 +506,7 @@ class YvQuantizationBenchmark:
         quantization_method: str = "fp32",
         bits: int = 32,
         test_inputs: Optional[Dict[str, torch.Tensor]] = None,
-    ) -> BenchmarkResult:
+    ) -> PiscesLxBenchmarkResult:
         """
         Run complete benchmark suite.
         
@@ -525,7 +525,7 @@ class YvQuantizationBenchmark:
         
         test_inputs = test_inputs or self.generate_test_inputs()
         
-        benchmark_result = BenchmarkResult(
+        benchmark_result = PiscesLxBenchmarkResult(
             model_name=model_name,
             quantization_method=quantization_method,
             bits=bits,
@@ -579,7 +579,7 @@ class YvQuantizationBenchmark:
     
     def export_results(
         self,
-        results: BenchmarkResult,
+        results: PiscesLxBenchmarkResult,
         output_path: str,
         format: str = "json",
     ) -> str:
@@ -649,7 +649,7 @@ class YvQuantizationBenchmark:
             }
 
 
-class MemoryProfiler:
+class PiscesLxMemoryProfiler:
     """Memory profiling utility."""
     
     def __init__(self):
@@ -688,7 +688,7 @@ class MemoryProfiler:
         return delta
 
 
-class POPSSQuantizationBenchmarkOperator(PiscesLxOperatorInterface):
+class PiscesLxQuantizationBenchmarkOperator(PiscesLxOperatorInterface):
     """Quantization benchmark operator."""
     
     def __init__(self):
@@ -697,7 +697,7 @@ class POPSSQuantizationBenchmarkOperator(PiscesLxOperatorInterface):
         self.version = VERSION
         self.type = "quantize"
         self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer",file_path=get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
-        self.benchmark_suite: Optional[YvQuantizationBenchmark] = None
+        self.benchmark_suite: Optional[PiscesLxQuantizationBenchmark] = None
     
     @property
     def description(self) -> str:
@@ -710,7 +710,7 @@ class POPSSQuantizationBenchmarkOperator(PiscesLxOperatorInterface):
             "model_name": {"type": "str", "required": False, "description": "Model identifier"},
             "quantization_method": {"type": "str", "required": False, "description": "Quantization method"},
             "bits": {"type": "int", "required": False, "description": "Quantization bits"},
-            "config": {"type": "BenchmarkConfig", "required": False, "description": "Benchmark config"},
+            "config": {"type": "PiscesLxBenchmarkConfig", "required": False, "description": "Benchmark config"},
             "action": {"type": "str", "required": False, "description": "YvReActAction: benchmark, compare, export"},
             "baseline_model": {"type": "Module", "required": False, "description": "Baseline model"},
         }
@@ -718,7 +718,7 @@ class POPSSQuantizationBenchmarkOperator(PiscesLxOperatorInterface):
     @property
     def output_schema(self) -> Dict[str, Any]:
         return {
-            "results": {"type": "BenchmarkResult", "description": "Benchmark results"},
+            "results": {"type": "PiscesLxBenchmarkResult", "description": "Benchmark results"},
             "comparison": {"type": "dict", "description": "Comparison with baseline"},
         }
     
@@ -730,14 +730,14 @@ class POPSSQuantizationBenchmarkOperator(PiscesLxOperatorInterface):
             config = inputs.get("config")
             
             if config is None:
-                config = BenchmarkConfig(
+                config = PiscesLxBenchmarkConfig(
                     batch_size=inputs.get("batch_size", 1),
                     sequence_length=inputs.get("sequence_length", 512),
                     num_warmup_iterations=inputs.get("warmup_iterations", 10),
                     num_benchmark_iterations=inputs.get("benchmark_iterations", 100),
                 )
             
-            self.benchmark_suite = YvQuantizationBenchmark(config)
+            self.benchmark_suite = PiscesLxQuantizationBenchmark(config)
             
             if action == "benchmark":
                 return self._execute_benchmark(inputs, start_time)

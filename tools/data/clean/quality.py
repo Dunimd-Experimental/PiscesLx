@@ -29,12 +29,12 @@ import math
 import pandas as pd
 from collections import Counter
 from typing import Dict, Any, List, Optional, Tuple, Set
-from datasets import load_from_disk, Dataset
+from datasets import load_from_disk, PiscesLxDataset
 from dataclasses import dataclass, field
 from enum import Enum
 
 
-class LanguageType(Enum):
+class PiscesLxLanguageType(Enum):
     UNKNOWN = "unknown"
     ENGLISH = "english"
     CHINESE = "chinese"
@@ -74,11 +74,11 @@ class PiscesLxDataLanguageDetector:
     _language_patterns: Dict[str, re.Pattern] = {}
 
     _CHAR_RANGES = {
-        LanguageType.CHINESE: [(0x4E00, 0x9FFF), (0x3400, 0x4DBF), (0x20000, 0x2A6DF)],
-        LanguageType.JAPANESE: [(0x3040, 0x309F), (0x30A0, 0x30FF)],
-        LanguageType.KOREAN: [(0xAC00, 0xD7AF), (0x1100, 0x11FF)],
-        LanguageType.ARABIC: [(0x0600, 0x06FF), (0x0750, 0x077F)],
-        LanguageType.RUSSIAN: [(0x0400, 0x04FF)],
+        PiscesLxLanguageType.CHINESE: [(0x4E00, 0x9FFF), (0x3400, 0x4DBF), (0x20000, 0x2A6DF)],
+        PiscesLxLanguageType.JAPANESE: [(0x3040, 0x309F), (0x30A0, 0x30FF)],
+        PiscesLxLanguageType.KOREAN: [(0xAC00, 0xD7AF), (0x1100, 0x11FF)],
+        PiscesLxLanguageType.ARABIC: [(0x0600, 0x06FF), (0x0750, 0x077F)],
+        PiscesLxLanguageType.RUSSIAN: [(0x0400, 0x04FF)],
     }
 
     _CODE_KEYWORDS = {
@@ -91,19 +91,19 @@ class PiscesLxDataLanguageDetector:
     }
 
     @classmethod
-    def detect(cls, text: str) -> LanguageType:
+    def detect(cls, text: str) -> PiscesLxLanguageType:
         if not text or not isinstance(text, str):
-            return LanguageType.UNKNOWN
+            return PiscesLxLanguageType.UNKNOWN
 
         text = text.strip()
         if not text:
-            return LanguageType.UNKNOWN
+            return PiscesLxLanguageType.UNKNOWN
 
         code_score = cls._detect_code(text)
         if code_score > 0.3:
-            return LanguageType.CODE
+            return PiscesLxLanguageType.CODE
 
-        char_counts: Dict[LanguageType, int] = {}
+        char_counts: Dict[PiscesLxLanguageType, int] = {}
         total_alpha = 0
 
         for char in text:
@@ -118,7 +118,7 @@ class PiscesLxDataLanguageDetector:
                 total_alpha += 1
 
         if total_alpha == 0:
-            return LanguageType.UNKNOWN
+            return PiscesLxLanguageType.UNKNOWN
 
         detected_langs = []
         for lang_type, count in char_counts.items():
@@ -127,7 +127,7 @@ class PiscesLxDataLanguageDetector:
                 detected_langs.append((lang_type, ratio))
 
         if len(detected_langs) > 1:
-            return LanguageType.MIXED
+            return PiscesLxLanguageType.MIXED
 
         if detected_langs:
             return detected_langs[0][0]
@@ -136,7 +136,7 @@ class PiscesLxDataLanguageDetector:
         if latin_ratio > 0.8:
             return cls._detect_latin_language(text)
 
-        return LanguageType.ENGLISH
+        return PiscesLxLanguageType.ENGLISH
 
     @classmethod
     def _detect_code(cls, text: str) -> float:
@@ -145,7 +145,7 @@ class PiscesLxDataLanguageDetector:
         return matches / max(len(cls._CODE_KEYWORDS), 1)
 
     @classmethod
-    def _detect_latin_language(cls, text: str) -> LanguageType:
+    def _detect_latin_language(cls, text: str) -> PiscesLxLanguageType:
         text_lower = text.lower()
 
         french_words = {"le", "la", "les", "de", "du", "des", "et", "est", "en", "que", "qui", "dans", "pour"}
@@ -161,14 +161,14 @@ class PiscesLxDataLanguageDetector:
         max_overlap = max(french_overlap, german_overlap, spanish_overlap)
 
         if max_overlap < 0.05:
-            return LanguageType.ENGLISH
+            return PiscesLxLanguageType.ENGLISH
 
         if french_overlap == max_overlap:
-            return LanguageType.FRENCH
+            return PiscesLxLanguageType.FRENCH
         elif german_overlap == max_overlap:
-            return LanguageType.GERMAN
+            return PiscesLxLanguageType.GERMAN
         else:
-            return LanguageType.SPANISH
+            return PiscesLxLanguageType.SPANISH
 
 
 class PiscesLxDataDomainClassifier:
@@ -600,7 +600,7 @@ class PiscesLxToolsDataQualityController:
     def analyze_dataset_quality(self, dataset_path: str) -> Dict[str, Any]:
         try:
             if not os.path.exists(dataset_path):
-                return {"error": "Dataset path does not exist"}
+                return {"error": "PiscesLxDataset path does not exist"}
 
             if os.path.isdir(dataset_path):
                 dataset = load_from_disk(dataset_path)

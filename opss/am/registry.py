@@ -31,10 +31,10 @@ tools with Agent experts, enabling seamless tool discovery and execution across
 both systems.
 
 Key Components:
-    - POPSSToolType: Enumeration of tool types (MCP_TOOL, AGENT_EXPERT, NATIVE_FUNCTION)
-    - POPSSToolInfo: Tool metadata container with execution statistics
-    - POPSSToolResult: Execution result container with timing and thoughts
-    - POPSSToolRegistry: Singleton registry for unified tool management
+    - PiscesLxToolType: Enumeration of tool types (MCP_TOOL, AGENT_EXPERT, NATIVE_FUNCTION)
+    - PiscesLxToolInfo: Tool metadata container with execution statistics
+    - PiscesLxToolResult: Execution result container with timing and thoughts
+    - PiscesLxToolRegistry: Singleton registry for unified tool management
 
 Features:
     - Unified tool registration for MCP tools, agent experts, and native functions
@@ -51,7 +51,7 @@ Tool Types:
 
 Usage:
     # Get singleton instance
-    registry = POPSSToolRegistry.get_instance()
+    registry = PiscesLxToolRegistry.get_instance()
     
     # Register MCP tools (auto-discovered if plaza provided)
     registry.register_mcp_tool("web_search", "Search the web", {"query": "string"})
@@ -93,7 +93,7 @@ from utils.dc import PiscesLxLogger
 from utils.paths import get_log_file
 
 
-class POPSSToolType(Enum):
+class PiscesLxToolType(Enum):
     """
     Enumeration of tool types supported by the registry.
     
@@ -111,7 +111,7 @@ class POPSSToolType(Enum):
 
 
 @dataclass
-class POPSSToolInfo:
+class PiscesLxToolInfo:
     """
     Container for tool metadata and execution statistics.
     
@@ -136,18 +136,18 @@ class POPSSToolInfo:
         average_execution_time: Average execution time in seconds.
     
     Example:
-        >>> tool_info = POPSSToolInfo(
+        >>> tool_info = PiscesLxToolInfo(
         ...     tool_id="mcp_web_search_abc123",
         ...     name="web_search",
         ...     description="Search the web for information",
-        ...     tool_type=POPSSToolType.MCP_TOOL,
+        ...     tool_type=PiscesLxToolType.MCP_TOOL,
         ...     capabilities={"search", "web"}
         ... )
     """
     tool_id: str
     name: str
     description: str
-    tool_type: POPSSToolType
+    tool_type: PiscesLxToolType
     
     parameters: Dict[str, Any] = field(default_factory=dict)
     return_type: str = "any"
@@ -166,7 +166,7 @@ class POPSSToolInfo:
 
 
 @dataclass
-class POPSSToolResult:
+class PiscesLxToolResult:
     """
     Container for tool execution results.
     
@@ -185,10 +185,10 @@ class POPSSToolResult:
         agent_thoughts: List of thought dictionaries from agent execution.
     
     Example:
-        >>> result = POPSSToolResult(
+        >>> result = PiscesLxToolResult(
         ...     tool_id="agent_code_expert_xyz",
         ...     tool_name="code_expert",
-        ...     tool_type=POPSSToolType.AGENT_EXPERT,
+        ...     tool_type=PiscesLxToolType.AGENT_EXPERT,
         ...     success=True,
         ...     result={"code": "print('Hello')"},
         ...     execution_time=1.5
@@ -196,7 +196,7 @@ class POPSSToolResult:
     """
     tool_id: str
     tool_name: str
-    tool_type: POPSSToolType
+    tool_type: PiscesLxToolType
     
     success: bool
     result: Any = None
@@ -206,7 +206,7 @@ class POPSSToolResult:
     agent_thoughts: List[Dict[str, Any]] = field(default_factory=list)
 
 
-class POPSSToolRegistry:
+class PiscesLxToolRegistry:
     """
     Singleton registry for unified tool management.
     
@@ -224,7 +224,7 @@ class POPSSToolRegistry:
     
     Attributes:
         _instance: Singleton instance of the registry.
-        _tools: Dictionary mapping tool_id to POPSSToolInfo.
+        _tools: Dictionary mapping tool_id to PiscesLxToolInfo.
         _tools_by_name: Dictionary mapping tool name to tool_id.
         _agents: Dictionary mapping agent_id to agent instance.
         _mcp_plaza: Reference to the MCP plaza for tool discovery.
@@ -234,7 +234,7 @@ class POPSSToolRegistry:
     
     Example:
         >>> # Get singleton instance
-        >>> registry = POPSSToolRegistry.get_instance()
+        >>> registry = PiscesLxToolRegistry.get_instance()
         >>> 
         >>> # Register and execute
         >>> registry.register_native_function(my_func, "helper")
@@ -244,19 +244,19 @@ class POPSSToolRegistry:
         >>> tools = registry.search_tools("analysis")
     
     See Also:
-        - POPSSToolInfo: Tool metadata container
-        - POPSSToolResult: Execution result container
-        - POPSSToolType: Tool type enumeration
+        - PiscesLxToolInfo: Tool metadata container
+        - PiscesLxToolResult: Execution result container
+        - PiscesLxToolType: Tool type enumeration
     """
     
-    _instance: Optional['POPSSToolRegistry'] = None
+    _instance: Optional['PiscesLxToolRegistry'] = None
     
     def __new__(cls, *args, **kwargs):
         """
         Create or return the singleton instance.
         
         Returns:
-            POPSSToolRegistry: The singleton instance.
+            PiscesLxToolRegistry: The singleton instance.
         """
         if cls._instance is None:
             cls._instance = super().__new__(cls)
@@ -282,7 +282,7 @@ class POPSSToolRegistry:
         
         self._LOG = PiscesLxLogger("PiscesLx.Opss.AM",file_path=get_log_file("PiscesLx.Opss.AM"), enable_file=True)
         
-        self._tools: Dict[str, POPSSToolInfo] = {}
+        self._tools: Dict[str, PiscesLxToolInfo] = {}
         self._tools_by_name: Dict[str, str] = {}
         self._agents: Dict[str, Any] = {}
         
@@ -297,10 +297,10 @@ class POPSSToolRegistry:
         if mcp_plaza and auto_discover_mcp:
             self._discover_mcp_tools()
         
-        self._LOG.info(f"POPSSToolRegistry initialized with {len(self._tools)} tools")
+        self._LOG.info(f"PiscesLxToolRegistry initialized with {len(self._tools)} tools")
     
     @classmethod
-    def get_instance(cls) -> 'POPSSToolRegistry':
+    def get_instance(cls) -> 'PiscesLxToolRegistry':
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
@@ -345,11 +345,11 @@ class POPSSToolRegistry:
     ) -> str:
         tool_id = f"mcp_{tool_name}_{uuid.uuid4().hex[:8]}"
         
-        tool_info = POPSSToolInfo(
+        tool_info = PiscesLxToolInfo(
             tool_id=tool_id,
             name=tool_name,
             description=description or f"MCP Tool: {tool_name}",
-            tool_type=POPSSToolType.MCP_TOOL,
+            tool_type=PiscesLxToolType.MCP_TOOL,
             parameters=parameters or {},
             mcp_tool_name=tool_name,
             priority=priority,
@@ -378,11 +378,11 @@ class POPSSToolRegistry:
         
         agent_id = getattr(agent, 'agent_id', str(uuid.uuid4()))
         
-        tool_info = POPSSToolInfo(
+        tool_info = PiscesLxToolInfo(
             tool_id=tool_id,
             name=agent_name,
             description=description or f"Agent Expert: {agent_name}",
-            tool_type=POPSSToolType.AGENT_EXPERT,
+            tool_type=PiscesLxToolType.AGENT_EXPERT,
             agent=agent,
             capabilities=agent_capabilities,
             priority=priority,
@@ -407,11 +407,11 @@ class POPSSToolRegistry:
         func_name = name or func.__name__
         tool_id = f"native_{func_name}_{uuid.uuid4().hex[:8]}"
         
-        tool_info = POPSSToolInfo(
+        tool_info = PiscesLxToolInfo(
             tool_id=tool_id,
             name=func_name,
             description=description or f"Native Function: {func_name}",
-            tool_type=POPSSToolType.NATIVE_FUNCTION,
+            tool_type=PiscesLxToolType.NATIVE_FUNCTION,
             parameters=parameters or {},
             executor=func,
             capabilities=capabilities or set(),
@@ -437,7 +437,7 @@ class POPSSToolRegistry:
         self._LOG.debug(f"Unregistered tool: {tool.name}")
         return True
     
-    def get_tool(self, name_or_id: str) -> Optional[POPSSToolInfo]:
+    def get_tool(self, name_or_id: str) -> Optional[PiscesLxToolInfo]:
         if name_or_id in self._tools:
             return self._tools[name_or_id]
         if name_or_id in self._tools_by_name:
@@ -446,9 +446,9 @@ class POPSSToolRegistry:
     
     def list_tools(
         self,
-        tool_type: Optional[POPSSToolType] = None,
+        tool_type: Optional[PiscesLxToolType] = None,
         capabilities: Optional[Set[str]] = None,
-    ) -> List[POPSSToolInfo]:
+    ) -> List[PiscesLxToolInfo]:
         tools = list(self._tools.values())
         
         if tool_type:
@@ -459,16 +459,16 @@ class POPSSToolRegistry:
         
         return sorted(tools, key=lambda t: -t.priority)
     
-    def list_mcp_tools(self) -> List[POPSSToolInfo]:
-        return self.list_tools(tool_type=POPSSToolType.MCP_TOOL)
+    def list_mcp_tools(self) -> List[PiscesLxToolInfo]:
+        return self.list_tools(tool_type=PiscesLxToolType.MCP_TOOL)
     
-    def list_agent_experts(self) -> List[POPSSToolInfo]:
-        return self.list_tools(tool_type=POPSSToolType.AGENT_EXPERT)
+    def list_agent_experts(self) -> List[PiscesLxToolInfo]:
+        return self.list_tools(tool_type=PiscesLxToolType.AGENT_EXPERT)
     
-    def list_native_functions(self) -> List[POPSSToolInfo]:
-        return self.list_tools(tool_type=POPSSToolType.NATIVE_FUNCTION)
+    def list_native_functions(self) -> List[PiscesLxToolInfo]:
+        return self.list_tools(tool_type=PiscesLxToolType.NATIVE_FUNCTION)
     
-    def search_tools(self, query: str) -> List[POPSSToolInfo]:
+    def search_tools(self, query: str) -> List[PiscesLxToolInfo]:
         query_lower = query.lower()
         results = []
         
@@ -490,31 +490,31 @@ class POPSSToolRegistry:
         arguments: Dict[str, Any],
         context: Optional[Any] = None,
         timeout: float = 60.0,
-    ) -> POPSSToolResult:
+    ) -> PiscesLxToolResult:
         start_time = datetime.now()
         tool = self.get_tool(name_or_id)
         
         if not tool:
-            return POPSSToolResult(
+            return PiscesLxToolResult(
                 tool_id="unknown",
                 tool_name=name_or_id,
-                tool_type=POPSSToolType.MCP_TOOL,
+                tool_type=PiscesLxToolType.MCP_TOOL,
                 success=False,
                 error=f"Tool not found: {name_or_id}",
             )
         
         try:
-            if tool.tool_type == POPSSToolType.MCP_TOOL:
+            if tool.tool_type == PiscesLxToolType.MCP_TOOL:
                 result = await self._execute_mcp_tool(tool, arguments, timeout)
             
-            elif tool.tool_type == POPSSToolType.AGENT_EXPERT:
+            elif tool.tool_type == PiscesLxToolType.AGENT_EXPERT:
                 result = await self._execute_agent_expert(tool, arguments, context, timeout)
             
-            elif tool.tool_type == POPSSToolType.NATIVE_FUNCTION:
+            elif tool.tool_type == PiscesLxToolType.NATIVE_FUNCTION:
                 result = await self._execute_native_function(tool, arguments, timeout)
             
             else:
-                result = POPSSToolResult(
+                result = PiscesLxToolResult(
                     tool_id=tool.tool_id,
                     tool_name=tool.name,
                     tool_type=tool.tool_type,
@@ -542,7 +542,7 @@ class POPSSToolRegistry:
             
         except Exception as e:
             self._LOG.error(f"Error executing tool {tool.name}: {e}")
-            return POPSSToolResult(
+            return PiscesLxToolResult(
                 tool_id=tool.tool_id,
                 tool_name=tool.name,
                 tool_type=tool.tool_type,
@@ -557,7 +557,7 @@ class POPSSToolRegistry:
         arguments: Dict[str, Any],
         context: Optional[Any] = None,
         timeout: float = 60.0,
-    ) -> POPSSToolResult:
+    ) -> PiscesLxToolResult:
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
@@ -573,22 +573,22 @@ class POPSSToolRegistry:
                     self.execute(name_or_id, arguments, context, timeout)
                 )
         except Exception as e:
-            return POPSSToolResult(
+            return PiscesLxToolResult(
                 tool_id="unknown",
                 tool_name=name_or_id,
-                tool_type=POPSSToolType.NATIVE_FUNCTION,
+                tool_type=PiscesLxToolType.NATIVE_FUNCTION,
                 success=False,
                 error=str(e),
             )
     
     async def _execute_mcp_tool(
         self,
-        tool: POPSSToolInfo,
+        tool: PiscesLxToolInfo,
         arguments: Dict[str, Any],
         timeout: float,
-    ) -> POPSSToolResult:
+    ) -> PiscesLxToolResult:
         if not self._mcp_plaza:
-            return POPSSToolResult(
+            return PiscesLxToolResult(
                 tool_id=tool.tool_id,
                 tool_name=tool.name,
                 tool_type=tool.tool_type,
@@ -611,7 +611,7 @@ class POPSSToolRegistry:
                     arguments=arguments,
                 )
             else:
-                return POPSSToolResult(
+                return PiscesLxToolResult(
                     tool_id=tool.tool_id,
                     tool_name=tool.name,
                     tool_type=tool.tool_type,
@@ -619,7 +619,7 @@ class POPSSToolRegistry:
                     error="MCP Plaza has no execute method",
                 )
             
-            return POPSSToolResult(
+            return PiscesLxToolResult(
                 tool_id=tool.tool_id,
                 tool_name=tool.name,
                 tool_type=tool.tool_type,
@@ -628,7 +628,7 @@ class POPSSToolRegistry:
             )
             
         except asyncio.TimeoutError:
-            return POPSSToolResult(
+            return PiscesLxToolResult(
                 tool_id=tool.tool_id,
                 tool_name=tool.name,
                 tool_type=tool.tool_type,
@@ -636,7 +636,7 @@ class POPSSToolRegistry:
                 error=f"MCP tool execution timed out after {timeout}s",
             )
         except Exception as e:
-            return POPSSToolResult(
+            return PiscesLxToolResult(
                 tool_id=tool.tool_id,
                 tool_name=tool.name,
                 tool_type=tool.tool_type,
@@ -645,12 +645,12 @@ class POPSSToolRegistry:
             )
     async def _execute_native_function(
         self,
-        tool: POPSSToolInfo,
+        tool: PiscesLxToolInfo,
         arguments: Dict[str, Any],
         timeout: float,
-    ) -> POPSSToolResult:
+    ) -> PiscesLxToolResult:
         if not tool.executor:
-            return POPSSToolResult(
+            return PiscesLxToolResult(
                 tool_id=tool.tool_id,
                 tool_name=tool.name,
                 tool_type=tool.tool_type,
@@ -667,7 +667,7 @@ class POPSSToolRegistry:
             else:
                 result = tool.executor(**arguments)
             
-            return POPSSToolResult(
+            return PiscesLxToolResult(
                 tool_id=tool.tool_id,
                 tool_name=tool.name,
                 tool_type=tool.tool_type,
@@ -676,7 +676,7 @@ class POPSSToolRegistry:
             )
             
         except asyncio.TimeoutError:
-            return POPSSToolResult(
+            return PiscesLxToolResult(
                 tool_id=tool.tool_id,
                 tool_name=tool.name,
                 tool_type=tool.tool_type,
@@ -684,7 +684,7 @@ class POPSSToolRegistry:
                 error=f"Native function timed out after {timeout}s",
             )
         except Exception as e:
-            return POPSSToolResult(
+            return PiscesLxToolResult(
                 tool_id=tool.tool_id,
                 tool_name=tool.name,
                 tool_type=tool.tool_type,
@@ -694,9 +694,9 @@ class POPSSToolRegistry:
     
     def _record_call(
         self,
-        tool: POPSSToolInfo,
+        tool: PiscesLxToolInfo,
         arguments: Dict[str, Any],
-        result: POPSSToolResult,
+        result: PiscesLxToolResult,
     ):
         record = {
             "timestamp": datetime.now().isoformat(),
@@ -752,4 +752,4 @@ class POPSSToolRegistry:
         self._tools_by_name.clear()
         self._agents.clear()
         self._call_history.clear()
-        self._LOG.info("POPSSToolRegistry cleared")
+        self._LOG.info("PiscesLxToolRegistry cleared")

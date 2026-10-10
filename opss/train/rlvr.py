@@ -71,7 +71,7 @@ from utils.opsc.interface import (
 )
 
 
-class POPSSRLVRVerifierType(Enum):
+class PiscesLxRLVRVerifierType(Enum):
     """Types of verifiers supported by RLVR."""
     CODE = "code"
     MATH = "math"
@@ -80,7 +80,7 @@ class POPSSRLVRVerifierType(Enum):
 
 
 @dataclass
-class POPSSRLVRConfig(PiscesLxOperatorConfig):
+class PiscesLxRLVRConfig(PiscesLxOperatorConfig):
     """
     RLVR (Reinforcement Learning with Verifiable Rewards) Configuration.
     
@@ -129,7 +129,7 @@ class POPSSRLVRConfig(PiscesLxOperatorConfig):
 
 
 # Paper: DeepSeek-AI, "DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning", arXiv:2501.12948
-class POPSSRLVROperator(PiscesLxOperatorInterface):
+class PiscesLxRLVROperator(PiscesLxOperatorInterface):
     """
     Reinforcement Learning with Verifiable Rewards (RLVR) Operator.
     
@@ -145,8 +145,8 @@ class POPSSRLVROperator(PiscesLxOperatorInterface):
         - Sandboxed execution
     
     Example:
-        >>> config = POPSSRLVRConfig(verifier_type="code")
-        >>> rlvr = POPSSRLVROperator()
+        >>> config = PiscesLxRLVRConfig(verifier_type="code")
+        >>> rlvr = PiscesLxRLVROperator()
         >>> reward, info = rlvr.compute_verifiable_reward(
         ...     response=code_response,
         ...     task={"type": "code", "test_cases": [...]}
@@ -189,7 +189,7 @@ class POPSSRLVROperator(PiscesLxOperatorInterface):
         try:
             responses = inputs.get("responses", [])
             tasks = inputs.get("tasks", [])
-            config = inputs.get("config", POPSSRLVRConfig())
+            config = inputs.get("config", PiscesLxRLVRConfig())
             
             if not responses:
                 raise ValueError("Responses are required for RLVR verification")
@@ -247,7 +247,7 @@ class POPSSRLVROperator(PiscesLxOperatorInterface):
         self,
         response: str,
         task: Dict[str, Any],
-        config: Optional[POPSSRLVRConfig] = None,
+        config: Optional[PiscesLxRLVRConfig] = None,
     ) -> Tuple[float, Dict[str, Any]]:
         """
         Compute verifiable reward for a response.
@@ -261,7 +261,7 @@ class POPSSRLVROperator(PiscesLxOperatorInterface):
             Tuple of (reward, verification_info)
         """
         if config is None:
-            config = POPSSRLVRConfig()
+            config = PiscesLxRLVRConfig()
         
         task_type = task.get("type", config.verifier_type)
         
@@ -325,7 +325,7 @@ class POPSSRLVROperator(PiscesLxOperatorInterface):
         self,
         code: str,
         test_cases: List[Dict[str, Any]],
-        config: POPSSRLVRConfig,
+        config: PiscesLxRLVRConfig,
     ) -> Tuple[bool, float, str]:
         """
         Verify code by executing test cases.
@@ -410,7 +410,7 @@ class POPSSRLVROperator(PiscesLxOperatorInterface):
         self,
         answer: str,
         ground_truth: str,
-        config: POPSSRLVRConfig,
+        config: PiscesLxRLVRConfig,
     ) -> Tuple[bool, float, str]:
         """
         Verify mathematical answer.
@@ -451,7 +451,7 @@ class POPSSRLVROperator(PiscesLxOperatorInterface):
         self,
         answer: str,
         ground_truth: str,
-        config: POPSSRLVRConfig,
+        config: PiscesLxRLVRConfig,
     ) -> Tuple[bool, float, str]:
         """Verify using symbolic math (sympy)."""
         try:
@@ -482,7 +482,7 @@ class POPSSRLVROperator(PiscesLxOperatorInterface):
         self,
         response: str,
         constraints: List[Dict[str, Any]],
-        config: POPSSRLVRConfig,
+        config: PiscesLxRLVRConfig,
     ) -> Tuple[bool, float, str]:
         """
         Verify logical constraints.
@@ -601,7 +601,7 @@ class POPSSRLVROperator(PiscesLxOperatorInterface):
         
         return text.strip()
     
-    def _compare_results(self, result, expected, config: POPSSRLVRConfig) -> bool:
+    def _compare_results(self, result, expected, config: PiscesLxRLVRConfig) -> bool:
         """Compare execution result with expected output."""
         if result == expected:
             return True
@@ -675,14 +675,14 @@ class POPSSRLVROperator(PiscesLxOperatorInterface):
         self._verification_cache.clear()
 
 
-class POPSSRLVRDataset:
+class PiscesLxRLVRDataset:
     """
-    Dataset for RLVR training with verifiable tasks.
+    PiscesLxDataset for RLVR training with verifiable tasks.
     
     Each sample contains a prompt, expected task type, and verification data.
     
     Example:
-        >>> dataset = POPSSRLVRDataset([
+        >>> dataset = PiscesLxRLVRDataset([
         ...     {
         ...         "prompt": "Write a function to sort a list",
         ...         "type": "code",
@@ -693,7 +693,7 @@ class POPSSRLVRDataset:
     
     def __init__(self, samples: List[Dict[str, Any]]):
         self.samples = samples
-        self.operator = POPSSRLVROperator()
+        self.operator = PiscesLxRLVROperator()
     
     def __len__(self) -> int:
         return len(self.samples)
@@ -705,7 +705,7 @@ class POPSSRLVRDataset:
         self,
         idx: int,
         response: str,
-        config: Optional[POPSSRLVRConfig] = None,
+        config: Optional[PiscesLxRLVRConfig] = None,
     ) -> Tuple[float, Dict[str, Any]]:
         """Verify a response for a specific sample."""
         sample = self.samples[idx]
@@ -720,7 +720,7 @@ class POPSSRLVRDataset:
     def batch_verify(
         self,
         responses: List[str],
-        config: Optional[POPSSRLVRConfig] = None,
+        config: Optional[PiscesLxRLVRConfig] = None,
     ) -> List[Tuple[float, Dict[str, Any]]]:
         """Verify multiple responses."""
         results = []
@@ -737,7 +737,7 @@ class POPSSRLVRDataset:
         cls,
         tasks: List[Dict[str, Any]],
         prompt_template: str = "Write a Python function to solve the following problem:\n\n{description}",
-    ) -> "POPSSRLVRDataset":
+    ) -> "PiscesLxRLVRDataset":
         """Create dataset from code tasks."""
         samples = []
         for task in tasks:
@@ -754,7 +754,7 @@ class POPSSRLVRDataset:
         cls,
         tasks: List[Dict[str, Any]],
         prompt_template: str = "Solve the following math problem:\n\n{problem}",
-    ) -> "POPSSRLVRDataset":
+    ) -> "PiscesLxRLVRDataset":
         """Create dataset from math tasks."""
         samples = []
         for task in tasks:
@@ -767,15 +767,15 @@ class POPSSRLVRDataset:
 
 
 # Paper: DeepSeek-AI, "DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning", arXiv:2501.12948
-class POPSSRLVRTrainer:
+class PiscesLxRLVRTrainer:
     """
     High-level trainer combining RLVR with GRPO for verifiable reward training.
     
     Example:
-        >>> trainer = POPSSRLVRTrainer(
+        >>> trainer = PiscesLxRLVRTrainer(
         ...     model=policy_model,
         ...     dataset=rlvr_dataset,
-        ...     config=POPSSRLVRConfig(verifier_type="code"),
+        ...     config=PiscesLxRLVRConfig(verifier_type="code"),
         ... )
         >>> trainer.train(num_epochs=10)
     """
@@ -783,17 +783,17 @@ class POPSSRLVRTrainer:
     def __init__(
         self,
         model: nn.Module,
-        dataset: POPSSRLVRDataset,
-        config: Optional[POPSSRLVRConfig] = None,
-        grpo_config: Optional['POPSSGRPOConfig'] = None,
+        dataset: PiscesLxRLVRDataset,
+        config: Optional[PiscesLxRLVRConfig] = None,
+        grpo_config: Optional['PiscesLxGRPOConfig'] = None,
         optimizer: Optional[torch.optim.Optimizer] = None,
     ):
-        from .grpo import POPSSGRPOConfig, POPSSGRPOOperator
+        from .grpo import PiscesLxGRPOConfig, PiscesLxGRPOOperator
         
         self.model = model
         self.dataset = dataset
-        self.config = config or POPSSRLVRConfig()
-        self.grpo_config = grpo_config or POPSSGRPOConfig()
+        self.config = config or PiscesLxRLVRConfig()
+        self.grpo_config = grpo_config or PiscesLxGRPOConfig()
         
         if optimizer is None:
             self.optimizer = torch.optim.AdamW(
@@ -804,8 +804,8 @@ class POPSSRLVRTrainer:
         else:
             self.optimizer = optimizer
         
-        self.rlvr_operator = POPSSRLVROperator()
-        self.grpo_operator = POPSSGRPOOperator()
+        self.rlvr_operator = PiscesLxRLVROperator()
+        self.grpo_operator = PiscesLxGRPOOperator()
     
     def train(
         self,

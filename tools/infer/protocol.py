@@ -31,28 +31,28 @@ All models use Pydantic for validation and serialization.
 
 Protocol Hierarchy:
     Request Models:
-        - ChatCompletionRequest: Chat completion with messages
-        - CompletionRequest: Legacy text completion
-        - EmbeddingRequest: Text embedding generation
-        - ImageGenerationRequest: Image generation from text
-        - VideoGenerationRequest: Video generation from text
-        - AudioSpeechRequest: Text-to-speech synthesis
-        - AgentExecuteRequest: Agent execution request
-        - ToolExecuteRequest: Tool execution request
-        - RunControlRequest: Run control commands
+        - PiscesLxChatCompletionRequest: Chat completion with messages
+        - PiscesLxCompletionRequest: Legacy text completion
+        - PiscesLxEmbeddingRequest: Text embedding generation
+        - PiscesLxImageGenerationRequest: Image generation from text
+        - PiscesLxVideoGenerationRequest: Video generation from text
+        - PiscesLxAudioSpeechRequest: Text-to-speech synthesis
+        - PiscesLxAgentExecuteRequest: Agent execution request
+        - PiscesLxToolExecuteRequest: Tool execution request
+        - PiscesLxRunControlRequest: Run control commands
 
     Response Models:
-        - ChatCompletionResponse: Chat completion response
-        - ChatCompletionChunk: Streaming chunk
-        - EmbeddingResponse: Embedding vectors
-        - ImageGenerationResponse: Generated images
-        - VideoGenerationResponse: Generated videos
-        - AgentExecuteResponse: Agent execution result
-        - ToolExecuteResponse: Tool execution result
+        - PiscesLxChatCompletionResponse: Chat completion response
+        - PiscesLxChatCompletionChunk: Streaming chunk
+        - PiscesLxEmbeddingResponse: Embedding vectors
+        - PiscesLxImageGenerationResponse: Generated images
+        - PiscesLxVideoGenerationResponse: Generated videos
+        - PiscesLxAgentExecuteResponse: Agent execution result
+        - PiscesLxToolExecuteResponse: Tool execution result
 
 Usage:
-    >>> from tools.infer.protocol import ChatCompletionRequest
-    >>> request = ChatCompletionRequest(
+    >>> from tools.infer.protocol import PiscesLxChatCompletionRequest
+    >>> request = PiscesLxChatCompletionRequest(
     ...     model="piscesl1-7b",
     ...     messages=[{"role": "user", "content": "Hello"}]
     ... )
@@ -90,7 +90,7 @@ class PiscesLxTool(BaseModel):
     function: Dict[str, Any] = Field(..., description="Function definition")
 
 
-class ChatCompletionRequest(BaseModel):
+class PiscesLxChatCompletionRequest(BaseModel):
     """Chat completion request in OpenAI format."""
     model: str = Field("piscesl1-7b", description="Model ID to use")
     messages: List[PiscesLxChatMessage] = Field(..., description="List of chat messages")
@@ -115,7 +115,7 @@ class ChatCompletionRequest(BaseModel):
         extra = "allow"
 
 
-class ChatCompletionChoice(BaseModel):
+class PiscesLxChatCompletionChoice(BaseModel):
     """Single choice in chat completion response."""
     index: int = Field(..., description="Choice index")
     message: PiscesLxChatMessage = Field(..., description="Generated message")
@@ -123,52 +123,52 @@ class ChatCompletionChoice(BaseModel):
     logprobs: Optional[Dict[str, Any]] = Field(None, description="Log probabilities")
 
 
-class ChatCompletionUsage(BaseModel):
+class PiscesLxChatCompletionUsage(BaseModel):
     """Token usage statistics."""
     prompt_tokens: int = Field(0, description="Tokens in prompt")
     completion_tokens: int = Field(0, description="Tokens in completion")
     total_tokens: int = Field(0, description="Total tokens")
 
 
-class ChatCompletionResponse(BaseModel):
+class PiscesLxChatCompletionResponse(BaseModel):
     """Chat completion response in OpenAI format."""
     id: str = Field(default_factory=lambda: f"chatcmpl-{uuid.uuid4().hex[:12]}")
     object: str = Field("chat.completion")
     created: int = Field(default_factory=lambda: int(time.time()))
     model: str = Field("piscesl1-7b")
-    choices: List[ChatCompletionChoice] = Field(default_factory=list)
-    usage: ChatCompletionUsage = Field(default_factory=ChatCompletionUsage)
+    choices: List[PiscesLxChatCompletionChoice] = Field(default_factory=list)
+    usage: PiscesLxChatCompletionUsage = Field(default_factory=PiscesLxChatCompletionUsage)
     system_fingerprint: Optional[str] = Field(None, description="System fingerprint")
 
     class Config:
         extra = "allow"
 
 
-class ChatCompletionChunkDelta(BaseModel):
+class PiscesLxChatCompletionChunkDelta(BaseModel):
     """Delta content in streaming chunk."""
     role: Optional[str] = Field(None, description="Message role")
     content: Optional[str] = Field(None, description="Content delta")
     tool_calls: Optional[List[Dict[str, Any]]] = Field(None, description="Tool call deltas")
 
 
-class ChatCompletionChunkChoice(BaseModel):
+class PiscesLxChatCompletionChunkChoice(BaseModel):
     """Single choice in streaming chunk."""
     index: int = Field(0, description="Choice index")
-    delta: ChatCompletionChunkDelta = Field(default_factory=ChatCompletionChunkDelta)
+    delta: PiscesLxChatCompletionChunkDelta = Field(default_factory=PiscesLxChatCompletionChunkDelta)
     finish_reason: Optional[str] = Field(None, description="Finish reason")
 
 
-class ChatCompletionChunk(BaseModel):
+class PiscesLxChatCompletionChunk(BaseModel):
     """Streaming chunk for chat completion."""
     id: str = Field(default_factory=lambda: f"chatcmpl-{uuid.uuid4().hex[:12]}")
     object: str = Field("chat.completion.chunk")
     created: int = Field(default_factory=lambda: int(time.time()))
     model: str = Field("piscesl1-7b")
-    choices: List[ChatCompletionChunkChoice] = Field(default_factory=list)
+    choices: List[PiscesLxChatCompletionChunkChoice] = Field(default_factory=list)
     system_fingerprint: Optional[str] = Field(None)
 
 
-class CompletionRequest(BaseModel):
+class PiscesLxCompletionRequest(BaseModel):
     """Legacy text completion request."""
     model: str = Field("piscesl1-7b")
     prompt: Union[str, List[str]] = Field(..., description="Text prompt(s)")
@@ -190,7 +190,7 @@ class CompletionRequest(BaseModel):
         extra = "allow"
 
 
-class CompletionChoice(BaseModel):
+class PiscesLxCompletionChoice(BaseModel):
     """Single choice in text completion."""
     text: str = Field("", description="Generated text")
     index: int = Field(0)
@@ -198,17 +198,17 @@ class CompletionChoice(BaseModel):
     logprobs: Optional[Dict[str, Any]] = Field(None)
 
 
-class CompletionResponse(BaseModel):
+class PiscesLxCompletionResponse(BaseModel):
     """Legacy text completion response."""
     id: str = Field(default_factory=lambda: f"cmpl-{uuid.uuid4().hex[:12]}")
     object: str = Field("text_completion")
     created: int = Field(default_factory=lambda: int(time.time()))
     model: str = Field("piscesl1-7b")
-    choices: List[CompletionChoice] = Field(default_factory=list)
-    usage: ChatCompletionUsage = Field(default_factory=ChatCompletionUsage)
+    choices: List[PiscesLxCompletionChoice] = Field(default_factory=list)
+    usage: PiscesLxChatCompletionUsage = Field(default_factory=PiscesLxChatCompletionUsage)
 
 
-class EmbeddingRequest(BaseModel):
+class PiscesLxEmbeddingRequest(BaseModel):
     """Text embedding request."""
     model: str = Field("piscesl1-7b")
     input: Union[str, List[str]] = Field(..., description="Text to embed")
@@ -220,22 +220,22 @@ class EmbeddingRequest(BaseModel):
         extra = "allow"
 
 
-class EmbeddingData(BaseModel):
+class PiscesLxEmbeddingData(BaseModel):
     """Single embedding result."""
     object: str = Field("embedding")
     index: int = Field(0)
     embedding: List[float] = Field(default_factory=list)
 
 
-class EmbeddingResponse(BaseModel):
+class PiscesLxEmbeddingResponse(BaseModel):
     """Embedding response."""
     object: str = Field("list")
-    data: List[EmbeddingData] = Field(default_factory=list)
+    data: List[PiscesLxEmbeddingData] = Field(default_factory=list)
     model: str = Field("piscesl1-7b")
-    usage: ChatCompletionUsage = Field(default_factory=ChatCompletionUsage)
+    usage: PiscesLxChatCompletionUsage = Field(default_factory=PiscesLxChatCompletionUsage)
 
 
-class ImageGenerationRequest(BaseModel):
+class PiscesLxImageGenerationRequest(BaseModel):
     """Image generation request."""
     model: str = Field("piscesl1-7b")
     prompt: str = Field(..., description="Image description")
@@ -250,20 +250,20 @@ class ImageGenerationRequest(BaseModel):
         extra = "allow"
 
 
-class ImageData(BaseModel):
+class PiscesLxImageData(BaseModel):
     """Generated image data."""
     url: Optional[str] = Field(None, description="Image URL")
     b64_json: Optional[str] = Field(None, description="Base64 encoded image")
     revised_prompt: Optional[str] = Field(None, description="Revised prompt")
 
 
-class ImageGenerationResponse(BaseModel):
+class PiscesLxImageGenerationResponse(BaseModel):
     """Image generation response."""
     created: int = Field(default_factory=lambda: int(time.time()))
-    data: List[ImageData] = Field(default_factory=list)
+    data: List[PiscesLxImageData] = Field(default_factory=list)
 
 
-class ImageEditRequest(BaseModel):
+class PiscesLxImageEditRequest(BaseModel):
     """Image edit request with detection and segmentation."""
     model: str = Field("piscesl1-7b")
     image: str = Field(..., description="Base64 encoded image")
@@ -278,7 +278,7 @@ class ImageEditRequest(BaseModel):
         extra = "allow"
 
 
-class VideoGenerationRequest(BaseModel):
+class PiscesLxVideoGenerationRequest(BaseModel):
     """Video generation request."""
     model: str = Field("piscesl1-7b")
     prompt: str = Field(..., description="Video description")
@@ -294,20 +294,20 @@ class VideoGenerationRequest(BaseModel):
         extra = "allow"
 
 
-class VideoData(BaseModel):
+class PiscesLxVideoData(BaseModel):
     """Generated video data."""
     b64_json: Optional[str] = Field(None, description="Base64 encoded video")
     url: Optional[str] = Field(None, description="Video URL")
     duration: Optional[float] = Field(None, description="Video duration")
 
 
-class VideoGenerationResponse(BaseModel):
+class PiscesLxVideoGenerationResponse(BaseModel):
     """Video generation response."""
     created: int = Field(default_factory=lambda: int(time.time()))
-    data: List[VideoData] = Field(default_factory=list)
+    data: List[PiscesLxVideoData] = Field(default_factory=list)
 
 
-class AudioSpeechRequest(BaseModel):
+class PiscesLxAudioSpeechRequest(BaseModel):
     """Text-to-speech request."""
     model: str = Field("piscesl1-7b")
     input: str = Field(..., description="Text to synthesize")
@@ -320,13 +320,13 @@ class AudioSpeechRequest(BaseModel):
         extra = "allow"
 
 
-class AudioSpeechResponse(BaseModel):
+class PiscesLxAudioSpeechResponse(BaseModel):
     """Text-to-speech response."""
     created: int = Field(default_factory=lambda: int(time.time()))
     data: List[Dict[str, Any]] = Field(default_factory=list)
 
 
-class AgentExecuteRequest(BaseModel):
+class PiscesLxAgentExecuteRequest(BaseModel):
     """Agent execution request."""
     agent: str = Field(..., description="Agent name or ID")
     task: str = Field(..., description="Task description")
@@ -340,7 +340,7 @@ class AgentExecuteRequest(BaseModel):
         extra = "allow"
 
 
-class AgentExecuteResponse(BaseModel):
+class PiscesLxAgentExecuteResponse(BaseModel):
     """Agent execution response."""
     agent: str = Field(..., description="Agent name")
     success: bool = Field(True, description="Execution success")
@@ -350,7 +350,7 @@ class AgentExecuteResponse(BaseModel):
     error: Optional[str] = Field(None, description="Error message if failed")
 
 
-class SwarmExecuteRequest(BaseModel):
+class PiscesLxSwarmExecuteRequest(BaseModel):
     """Swarm execution request."""
     task_type: str = Field("general", description="Task type")
     description: str = Field(..., description="Task description")
@@ -363,7 +363,7 @@ class SwarmExecuteRequest(BaseModel):
         extra = "allow"
 
 
-class SwarmExecuteResponse(BaseModel):
+class PiscesLxSwarmExecuteResponse(BaseModel):
     """Swarm execution response."""
     task_id: str = Field(..., description="Task ID")
     status: str = Field("submitted", description="Task status")
@@ -371,7 +371,7 @@ class SwarmExecuteResponse(BaseModel):
     agents_involved: Optional[List[str]] = Field(None, description="Agents involved")
 
 
-class ToolExecuteRequest(BaseModel):
+class PiscesLxToolExecuteRequest(BaseModel):
     """Tool execution request."""
     tool_name: str = Field(..., description="Tool name")
     arguments: Dict[str, Any] = Field(default_factory=dict, description="Tool arguments")
@@ -382,7 +382,7 @@ class ToolExecuteRequest(BaseModel):
         extra = "allow"
 
 
-class ToolExecuteResponse(BaseModel):
+class PiscesLxToolExecuteResponse(BaseModel):
     """Tool execution response."""
     tool_name: str = Field(..., description="Tool name")
     success: bool = Field(True, description="Execution success")
@@ -391,7 +391,7 @@ class ToolExecuteResponse(BaseModel):
     metadata: Optional[Dict[str, Any]] = Field(None, description="Execution metadata")
 
 
-class ToolInfo(BaseModel):
+class PiscesLxToolInfo(BaseModel):
     """Tool information."""
     name: str = Field(..., description="Tool name")
     description: str = Field("", description="Tool description")
@@ -399,13 +399,13 @@ class ToolInfo(BaseModel):
     parameters: Optional[Dict[str, Any]] = Field(None, description="Tool parameters schema")
 
 
-class ToolListResponse(BaseModel):
+class PiscesLxToolListResponse(BaseModel):
     """Tool list response."""
-    tools: List[ToolInfo] = Field(default_factory=list)
+    tools: List[PiscesLxToolInfo] = Field(default_factory=list)
     total: int = Field(0, description="Total tools")
 
 
-class ToolSearchRequest(BaseModel):
+class PiscesLxToolSearchRequest(BaseModel):
     """Tool search request."""
     query: str = Field(..., description="Search query")
     category: Optional[str] = Field(None, description="Filter by category")
@@ -423,19 +423,19 @@ class RunInfo(BaseModel):
     pid: Optional[int] = Field(None, description="Process ID")
 
 
-class RunListResponse(BaseModel):
+class PiscesLxRunListResponse(BaseModel):
     """Run list response."""
     runs: List[RunInfo] = Field(default_factory=list)
     total: int = Field(0)
 
 
-class RunControlRequest(BaseModel):
+class PiscesLxRunControlRequest(BaseModel):
     """Run control request."""
     action: str = Field(..., description="Control action: pause, resume, cancel, kill, reload")
     payload: Optional[Dict[str, Any]] = Field(None, description="YvReActAction payload")
 
 
-class RunControlResponse(BaseModel):
+class PiscesLxRunControlResponse(BaseModel):
     """Run control response."""
     success: bool = Field(True)
     run_id: str = Field(..., description="Run ID")
@@ -443,7 +443,7 @@ class RunControlResponse(BaseModel):
     message: Optional[str] = Field(None)
 
 
-class ModelInfo(BaseModel):
+class PiscesLxModelInfo(BaseModel):
     """Model information."""
     id: str = Field(..., description="Model ID")
     object: str = Field("model", description="Object type")
@@ -454,13 +454,13 @@ class ModelInfo(BaseModel):
     parent: Optional[str] = Field(None)
 
 
-class ModelListResponse(BaseModel):
+class PiscesLxModelListResponse(BaseModel):
     """Model list response."""
     object: str = Field("list")
-    data: List[ModelInfo] = Field(default_factory=list)
+    data: List[PiscesLxModelInfo] = Field(default_factory=list)
 
 
-class ServiceStats(BaseModel):
+class PiscesLxServiceStats(BaseModel):
     """Service statistics."""
     uptime_seconds: float = Field(0, description="Service uptime")
     request_count: int = Field(0, description="Total requests")
@@ -474,7 +474,7 @@ class ServiceStats(BaseModel):
     resource: Optional[Dict[str, Any]] = Field(None)
 
 
-class HealthResponse(BaseModel):
+class PiscesLxHealthResponse(BaseModel):
     """Health check response."""
     status: str = Field("healthy")
     run_id: Optional[str] = Field(None)
@@ -483,14 +483,14 @@ class HealthResponse(BaseModel):
     gpu_memory_mb: Optional[float] = Field(None)
 
 
-class ReadyResponse(BaseModel):
+class PiscesLxReadyResponse(BaseModel):
     """Readiness check response."""
     ready: bool = Field(False)
     run_id: Optional[str] = Field(None)
     reason: Optional[str] = Field(None)
 
 
-class ErrorResponse(BaseModel):
+class PiscesLxErrorResponse(BaseModel):
     """Error response."""
     code: int = Field(..., description="Error code")
     message: str = Field(..., description="Error message")

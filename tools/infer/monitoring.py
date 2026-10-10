@@ -50,7 +50,7 @@ _LOG = PiscesLxLogger("PiscesLx.Tools.Infer", file_path=get_log_file("PiscesLx.T
 
 
 @PiscesLxOperatorRegistrar()
-class InferenceMonitorOperator(PiscesLxTransformOperator):
+class PiscesLxInferenceMonitorOperator(PiscesLxTransformOperator):
     """
     Inference Monitor Operator.
     Real-time monitoring of inference metrics and system state.
@@ -84,11 +84,11 @@ class InferenceMonitorOperator(PiscesLxTransformOperator):
         }
         
         # System resource monitor
-        self.system_monitor = SystemResourceMonitor()
+        self.system_monitor = PiscesLxSystemResourceMonitor()
         
         # Visualization component
         if self.enable_visualization:
-            self.visualizer = InferenceVisualizer(self.log_dir)
+            self.visualizer = PiscesLxInferenceVisualizer(self.log_dir)
         
         _LOG.info(f"InferenceMonitor initialized with log_dir: {self.log_dir}")
 
@@ -237,7 +237,7 @@ class InferenceMonitorOperator(PiscesLxTransformOperator):
         return anomalies
 
 
-class SystemResourceMonitor:
+class PiscesLxSystemResourceMonitor:
     """System resource monitor."""
     
     def __init__(self):
@@ -270,7 +270,7 @@ class SystemResourceMonitor:
         return metrics
 
 
-class InferenceVisualizer:
+class PiscesLxInferenceVisualizer:
     """Inference visualizer."""
     
     def __init__(self, log_dir: Path):
@@ -308,7 +308,7 @@ class InferenceVisualizer:
 
 
 @PiscesLxOperatorRegistrar()
-class PerformanceProfilerOperator(PiscesLxTransformOperator):
+class PiscesLxPerformanceProfilerOperator(PiscesLxTransformOperator):
     """
     Performance Profiler Operator.
     Provides detailed analysis of inference performance bottlenecks.

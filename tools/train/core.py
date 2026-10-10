@@ -80,9 +80,9 @@ Training Loop:
 
 Usage Examples:
     Basic Training:
-        >>> from tools.train import TrainingConfig, PiscesLxTrainingEngine
+        >>> from tools.train import PiscesLxTrainingConfig, PiscesLxTrainingEngine
 
-        >>> config = TrainingConfig(model_name="gpt-7b", max_steps=100000)
+        >>> config = PiscesLxTrainingConfig(model_name="gpt-7b", max_steps=100000)
         >>> engine = PiscesLxTrainingEngine(config)
 
         >>> # Initialize with model and data
@@ -138,7 +138,7 @@ from contextlib import nullcontext
 
 from utils.dc import PiscesLxLogger, PiscesLxSystemMonitor
 
-from .config import TrainingConfig
+from .config import PiscesLxTrainingConfig
 
 from utils.paths import get_log_file
 _LOG = PiscesLxLogger("PiscesLx.Tools.Train", file_path=get_log_file("PiscesLx.Tools.Train"), enable_file=True)
@@ -200,7 +200,7 @@ class PiscesLxTrainingOperator(object):
     optimization features.
 
     Attributes:
-        config: TrainingConfig instance with all training parameters
+        config: PiscesLxTrainingConfig instance with all training parameters
         model: The neural network model being trained (initialized in setup)
         optimizer: PyTorch optimizer instance (AdamW, SGD, etc.)
         scheduler: Learning rate scheduler instance
@@ -218,7 +218,7 @@ class PiscesLxTrainingOperator(object):
         - current_epoch: Current training epoch
 
     Example:
-        >>> config = TrainingConfig(
+        >>> config = PiscesLxTrainingConfig(
         ...     model_name="gpt-7b",
         ...     max_steps=100000,
         ...     mixed_precision="bf16"
@@ -228,12 +228,12 @@ class PiscesLxTrainingOperator(object):
         >>> engine.train()
     """
 
-    def __init__(self, config: TrainingConfig):
+    def __init__(self, config: PiscesLxTrainingConfig):
         """
         Initialize the training engine.
 
         Args:
-            config: TrainingConfig with all training parameters
+            config: PiscesLxTrainingConfig with all training parameters
         """
         self.config = config
         self.model = None
@@ -414,25 +414,25 @@ class PiscesLxTrainingOperator(object):
     def _setup_advanced_operators(self):
         """Setup advanced training operators for modality-aware scheduling, MoE gradients, K-FAC, and multi-task learning."""
         from opss.train.modality_scheduler import (
-            POPSSModalitySchedulerConfig,
-            POPSSModalitySchedulerOperator
+            PiscesLxModalitySchedulerConfig,
+            PiscesLxModalitySchedulerOperator
         )
         from opss.train.moe_gradient import (
-            POPSSMoEGradientConfig,
-            POPSSMoEGradientOperator
+            PiscesLxMoEGradientConfig,
+            PiscesLxMoEGradientOperator
         )
         from opss.train.kfac import (
-            POPSSKFacConfig,
-            POPSSKFacOperator
+            PiscesLxKFacConfig,
+            PiscesLxKFacOperator
         )
         from opss.train.multitask_uncertainty import (
-            POPSSMultiTaskConfig,
-            POPSSMultiTaskOperator
+            PiscesLxMultiTaskConfig,
+            PiscesLxMultiTaskOperator
         )
         try:
             if hasattr(self.config, 'modality_scheduler') and self.config.modality_scheduler.get('enabled', False):
-                modality_config = POPSSModalitySchedulerConfig(**{k: v for k, v in self.config.modality_scheduler.items() if k != 'enabled'})
-                self._modality_scheduler = POPSSModalitySchedulerOperator(modality_config)
+                modality_config = PiscesLxModalitySchedulerConfig(**{k: v for k, v in self.config.modality_scheduler.items() if k != 'enabled'})
+                self._modality_scheduler = PiscesLxModalitySchedulerOperator(modality_config)
                 _LOG.info("Modality-aware scheduler operator initialized")
         except Exception as e:
             _LOG.warning(f"Failed to initialize modality scheduler: {e}")
@@ -441,8 +441,8 @@ class PiscesLxTrainingOperator(object):
             if hasattr(self.config, 'moe_gradient') and self.config.moe_gradient.get('enabled', False):
                 # Filter out 'enabled' field before creating config
                 moe_config_dict = {k: v for k, v in self.config.moe_gradient.items() if k != 'enabled'}
-                moe_config = POPSSMoEGradientConfig(**moe_config_dict)
-                self._moe_gradient_optimizer = POPSSMoEGradientOperator(moe_config)
+                moe_config = PiscesLxMoEGradientConfig(**moe_config_dict)
+                self._moe_gradient_optimizer = PiscesLxMoEGradientOperator(moe_config)
                 _LOG.info("MoE gradient optimizer operator initialized")
         except Exception as e:
             _LOG.warning(f"Failed to initialize MoE gradient optimizer: {e}")
@@ -450,8 +450,8 @@ class PiscesLxTrainingOperator(object):
         try:
             if hasattr(self.config, 'kfac') and self.config.kfac.get('enabled', False):
                 kfac_config_dict = {k: v for k, v in self.config.kfac.items() if k != 'enabled'}
-                kfac_config = POPSSKFacConfig(**kfac_config_dict)
-                self._kfac_operator = POPSSKFacOperator(kfac_config)
+                kfac_config = PiscesLxKFacConfig(**kfac_config_dict)
+                self._kfac_operator = PiscesLxKFacOperator(kfac_config)
                 _LOG.info("K-FAC operator initialized")
         except Exception as e:
             _LOG.warning(f"Failed to initialize K-FAC operator: {e}")
@@ -459,8 +459,8 @@ class PiscesLxTrainingOperator(object):
         try:
             if hasattr(self.config, 'multitask') and self.config.multitask.get('enabled', False):
                 multitask_config_dict = {k: v for k, v in self.config.multitask.items() if k != 'enabled'}
-                multitask_config = POPSSMultiTaskConfig(**multitask_config_dict)
-                self._multitask_operator = POPSSMultiTaskOperator(multitask_config)
+                multitask_config = PiscesLxMultiTaskConfig(**multitask_config_dict)
+                self._multitask_operator = PiscesLxMultiTaskOperator(multitask_config)
                 _LOG.info("Multi-task uncertainty operator initialized")
         except Exception as e:
             _LOG.warning(f"Failed to initialize multi-task operator: {e}")
@@ -468,8 +468,8 @@ class PiscesLxTrainingOperator(object):
     def _setup_parallel_3d_operator(self):
         """Setup 3D parallelism operator for large-scale distributed training."""
         from opss.train.parallel_3d import (
-            POPSSParallel3DConfig,
-            POPSSParallel3DOperator
+            PiscesLxParallel3DConfig,
+            PiscesLxParallel3DOperator
         )
         try:
             if hasattr(self.config, 'parallel_3d') and self.config.parallel_3d.get('enabled', False):
@@ -484,7 +484,7 @@ class PiscesLxTrainingOperator(object):
                 inferred_dp = configured_dp
                 if configured_tp * configured_pp > 0 and env_world_size > 1:
                     inferred_dp = max(1, env_world_size // max(1, configured_tp * configured_pp))
-                parallel_config = POPSSParallel3DConfig(
+                parallel_config = PiscesLxParallel3DConfig(
                     dp_size=inferred_dp,
                     tp_size=configured_tp,
                     pp_size=configured_pp,
@@ -504,7 +504,7 @@ class PiscesLxTrainingOperator(object):
                         "Keeping inferred dp_size but cluster topology may still be misconfigured."
                     )
 
-                self._parallel_3d_operator = POPSSParallel3DOperator(parallel_config)
+                self._parallel_3d_operator = PiscesLxParallel3DOperator(parallel_config)
                 _LOG.info(
                     f"3D Parallelism operator initialized: dp={parallel_config.dp_size}, "
                     f"tp={parallel_config.tp_size}, pp={parallel_config.pp_size}, world_size={parallel_config.world_size}"
@@ -517,26 +517,26 @@ class PiscesLxTrainingOperator(object):
         """Setup evolution operators for self-evolution training pipeline.
         
         Initializes:
-            - POPSSModelGrowthOperator: For progressive model expansion
-            - POPSSWeakToStrongOperator: For weak-to-strong training
-            - POPSSEvolutionPipeline: Complete evolution pipeline
+            - PiscesLxModelGrowthOperator: For progressive model expansion
+            - PiscesLxWeakToStrongOperator: For weak-to-strong training
+            - PiscesLxEvolutionPipeline: Complete evolution pipeline
         """
         try:
             evolution_cfg = getattr(self.config, 'evolution', None)
             if evolution_cfg is None or not getattr(evolution_cfg, 'enabled', False):
                 return
             
-            from opss.train.growth import POPSSModelGrowthOperator
-            from opss.train.weak_to_strong import POPSSWeakToStrongOperator
-            from opss.train.evolution_pipeline import POPSSEvolutionPipeline, POPSSEvolutionConfig
+            from opss.train.growth import PiscesLxModelGrowthOperator
+            from opss.train.weak_to_strong import PiscesLxWeakToStrongOperator
+            from opss.train.evolution_pipeline import PiscesLxEvolutionPipeline, PiscesLxEvolutionConfig
             
-            self._growth_operator = POPSSModelGrowthOperator()
+            self._growth_operator = PiscesLxModelGrowthOperator()
             _LOG.info("Model growth operator initialized")
 
-            self._w2s_operator = POPSSWeakToStrongOperator()
+            self._w2s_operator = PiscesLxWeakToStrongOperator()
             _LOG.info("Weak-to-strong operator initialized")
 
-            self._evolution_config = POPSSEvolutionConfig(
+            self._evolution_config = PiscesLxEvolutionConfig(
                 seed_size=getattr(evolution_cfg, 'seed_size', '0.5B'),
                 target_size=getattr(evolution_cfg, 'target_size', '7B'),
                 distill_steps=getattr(evolution_cfg, 'distill_steps', 2000),
@@ -545,7 +545,7 @@ class PiscesLxTrainingOperator(object):
                 growth_stages=getattr(evolution_cfg, 'growth_stages', []),
             )
             
-            self._evolution_operator = POPSSEvolutionPipeline(self._evolution_config)
+            self._evolution_operator = PiscesLxEvolutionPipeline(self._evolution_config)
             _LOG.info(
                 f"Evolution pipeline initialized: seed={self._evolution_config.seed_size}, "
                 f"target={self._evolution_config.target_size}"
@@ -600,13 +600,13 @@ class PiscesLxTrainingOperator(object):
     def _setup_profiler(self):
         """Setup profiler for training performance analysis."""
         try:
-            from opss.train.profiler import ProfilingConfig, ProfilingOperator
-            prof_cfg = ProfilingConfig(
+            from opss.train.profiler import PiscesLxProfilingConfig, PiscesLxProfilingOperator
+            prof_cfg = PiscesLxProfilingConfig(
                 profile_memory=True,
                 profile_compute=True,
                 profile_io=True,
             )
-            self._profiler = ProfilingOperator(prof_cfg)
+            self._profiler = PiscesLxProfilingOperator(prof_cfg)
             _LOG.info("Profiler initialized")
         except Exception:
             self._profiler = None
@@ -933,13 +933,13 @@ class PiscesLxTrainingOperator(object):
         fp8_enabled = getattr(self.config, 'fp8', {}).get('enabled', False) if hasattr(self.config, 'fp8') else False
         if fp8_enabled:
             try:
-                from opss.train.fp8 import FP8Operator, FP8TrainingConfig as _FP8Cfg
+                from opss.train.fp8 import PiscesLxFP8Operator, PiscesLxFP8TrainingConfig as _FP8Cfg
                 fp8_cfg = _FP8Cfg(
                     fp8_format=getattr(self.config, 'fp8', {}).get('format', 'e4m3'),
                     amax_history_len=getattr(self.config, 'fp8', {}).get('amax_history_len', 1024),
                     amax_compute_algo=getattr(self.config, 'fp8', {}).get('amax_compute_algo', 'max'),
                 )
-                self._fp8_operator = FP8Operator(fp8_cfg)
+                self._fp8_operator = PiscesLxFP8Operator(fp8_cfg)
                 result = self._fp8_operator.execute({"model": self.model, "initialize": True})
                 if result.is_success() and result.output:
                     _LOG.info("FP8 training operator initialized")
@@ -1542,7 +1542,7 @@ class PiscesLxTrainingOperator(object):
         is_small_hidden = (getattr(self.config, 'hidden_size', 0) or 0) < 1024
 
         try:
-            from opss.optim.ink import POPSSInkOptimizer, POPSSInkConfig
+            from opss.optim.ink import PiscesLxInkOptimizer, PiscesLxInkConfig
             
             ink_section = getattr(self.config, 'ink_optimizer', None) or self.config
             
@@ -1553,7 +1553,7 @@ class PiscesLxTrainingOperator(object):
             momentum_bits = max(4, int(getattr(ink_section, 'momentum_bits', 8 if is_small_model else 4)))
             variance_bits = max(4, int(getattr(ink_section, 'variance_bits', 8 if is_small_model else 4)))
             
-            ink_config = POPSSInkConfig(
+            ink_config = PiscesLxInkConfig(
                 lr=self.config.optimizer.learning_rate,
                 weight_decay=self.config.optimizer.weight_decay,
                 betas=self.config.optimizer.betas,
@@ -1596,7 +1596,7 @@ class PiscesLxTrainingOperator(object):
                 checkpoint_preserve_ratio=getattr(ink_section, 'checkpoint_preserve_ratio', 0.3),
             )
 
-            self.optimizer = POPSSInkOptimizer(trainable_params, config=ink_config)
+            self.optimizer = PiscesLxInkOptimizer(trainable_params, config=ink_config)
             self._ink_config = ink_config
 
             memory_stats = self.optimizer.get_memory_stats()
@@ -1636,8 +1636,8 @@ class PiscesLxTrainingOperator(object):
             if opt_name == "sgd":
                 optimizer_class = torch.optim.SGD
             elif getattr(self.config.optimizer, "use_fused_adamw", False):
-                from opss.kernels.fused_adamw import FusedAdamW
-                optimizer_class = FusedAdamW
+                from opss.kernels.fused_adamw import PiscesLxFusedAdamW
+                optimizer_class = PiscesLxFusedAdamW
             else:
                 optimizer_class = torch.optim.AdamW
             
@@ -1652,9 +1652,9 @@ class PiscesLxTrainingOperator(object):
         """Initialize learning rate scheduler with warmup support."""
         try:
             from opss.train.lr_scheduler import (
-                POPSSLRSchedulerOperator,
-                POPSSLRSchedulerConfig,
-                POPSSSchedulerType
+                PiscesLxLRSchedulerOperator,
+                PiscesLxLRSchedulerConfig,
+                PiscesLxSchedulerType
             )
             
             warmup_steps = self.config.scheduler.warmup_steps
@@ -1662,20 +1662,20 @@ class PiscesLxTrainingOperator(object):
                 warmup_steps = int(self.config.scheduler.warmup_ratio * self.config.max_steps)
             
             scheduler_type_map = {
-                'cosine': POPSSSchedulerType.COSINE,
-                'linear': POPSSSchedulerType.LINEAR,
-                'polynomial': POPSSSchedulerType.POLYNOMIAL,
-                'inverse_square': POPSSSchedulerType.INVERSE_SQUARE,
-                'step': POPSSSchedulerType.STEP,
-                'exponential': POPSSSchedulerType.EXPONENTIAL,
+                'cosine': PiscesLxSchedulerType.COSINE,
+                'linear': PiscesLxSchedulerType.LINEAR,
+                'polynomial': PiscesLxSchedulerType.POLYNOMIAL,
+                'inverse_square': PiscesLxSchedulerType.INVERSE_SQUARE,
+                'step': PiscesLxSchedulerType.STEP,
+                'exponential': PiscesLxSchedulerType.EXPONENTIAL,
             }
             
             scheduler_type = scheduler_type_map.get(
                 self.config.scheduler.name.lower(), 
-                POPSSSchedulerType.COSINE
+                PiscesLxSchedulerType.COSINE
             )
             
-            lr_config = POPSSLRSchedulerConfig(
+            lr_config = PiscesLxLRSchedulerConfig(
                 type=scheduler_type,
                 initial_lr=self.config.optimizer.learning_rate,
                 min_lr=self.config.optimizer.learning_rate * self.config.scheduler.min_lr_ratio,
@@ -1685,7 +1685,7 @@ class PiscesLxTrainingOperator(object):
                 total_steps=self.config.max_steps
             )
             
-            self._lr_scheduler_operator = POPSSLRSchedulerOperator(lr_config)
+            self._lr_scheduler_operator = PiscesLxLRSchedulerOperator(lr_config)
             self.scheduler = self._lr_scheduler_operator
 
             # IMPORTANT: Ensure the optimizer starts at the warmup-start LR.
@@ -1798,7 +1798,7 @@ class PiscesLxTrainingOperator(object):
         Returns:
             Dictionary containing loss and outputs
         """
-        from .config import TrainingStage
+        from .config import PiscesLxTrainingStage
         
         model_batch = self._prepare_model_batch(batch)
 
@@ -1807,16 +1807,16 @@ class PiscesLxTrainingOperator(object):
         
         # Try opss/train/ operator dispatch first
         dispatch_map = {
-            TrainingStage.ALIGNMENT_DPO: ('POPSSDPOTrainingOperator', self._compute_dpo_forward),
-            TrainingStage.ALIGNMENT_PPO: ('POPSSPreferenceAlignmentOperator', self._compute_ppo_forward),
-            TrainingStage.ALIGNMENT_ORPO: (None, self._compute_orpo_forward),
-            TrainingStage.RL_GRPO: ('POPSSGRPOOperator', self._compute_grpo_forward),
-            TrainingStage.RL_RLVR: ('POPSSRLVROperator', self._compute_rlvr_forward),
-            TrainingStage.RL_DAPO: ('YvDAPO', self._compute_dapo_forward),
-            TrainingStage.RL_SELF_PLAY: ('POPSSSelfPlayTrainer', self._compute_self_play_forward),
-            TrainingStage.RL_MEMSEP: ('POPSSMemSepTrainer', self._compute_memsep_forward),
+            PiscesLxTrainingStage.ALIGNMENT_DPO: ('PiscesLxDPOTrainingOperator', self._compute_dpo_forward),
+            PiscesLxTrainingStage.ALIGNMENT_PPO: ('PiscesLxPreferenceAlignmentOperator', self._compute_ppo_forward),
+            PiscesLxTrainingStage.ALIGNMENT_ORPO: (None, self._compute_orpo_forward),
+            PiscesLxTrainingStage.RL_GRPO: ('PiscesLxGRPOOperator', self._compute_grpo_forward),
+            PiscesLxTrainingStage.RL_RLVR: ('PiscesLxRLVROperator', self._compute_rlvr_forward),
+            PiscesLxTrainingStage.RL_DAPO: ('PiscesLxDAPO', self._compute_dapo_forward),
+            PiscesLxTrainingStage.RL_SELF_PLAY: ('PiscesLxSelfPlayTrainer', self._compute_self_play_forward),
+            PiscesLxTrainingStage.RL_MEMSEP: ('PiscesLxMemSepTrainer', self._compute_memsep_forward),
         }
-        if self.stage in [TrainingStage.SFT, TrainingStage.SPECIALIZED]:
+        if self.stage in [PiscesLxTrainingStage.SFT, PiscesLxTrainingStage.SPECIALIZED]:
             op_result = self._try_sft_operator(model_batch)
             if op_result is not None:
                 return op_result
@@ -1824,17 +1824,17 @@ class PiscesLxTrainingOperator(object):
         
         if self.stage in dispatch_map:
             op_name, fallback = dispatch_map[self.stage]
-            if op_name == 'POPSSDPOTrainingOperator':
+            if op_name == 'PiscesLxDPOTrainingOperator':
                 op_result = self._try_dpo_operator(model_batch)
                 if op_result is not None:
                     return op_result
                 return fallback(model_batch)
-            if op_name == 'POPSSGRPOOperator':
+            if op_name == 'PiscesLxGRPOOperator':
                 op_result = self._try_grpo_operator(model_batch)
                 if op_result is not None:
                     return op_result
                 return fallback(model_batch)
-            if op_name == 'POPSSRLVROperator':
+            if op_name == 'PiscesLxRLVROperator':
                 op_result = self._try_rlvr_operator(model_batch)
                 if op_result is not None:
                     return op_result
@@ -1939,8 +1939,8 @@ class PiscesLxTrainingOperator(object):
     
     def _try_sft_operator(self, batch: Dict[str, torch.Tensor]) -> Optional[Dict[str, Any]]:
         try:
-            from opss.train.sft import POPSSSFTTrainingOperator, POPSSSFTTrainingConfig as _SFTConfig
-            sft_op = POPSSSFTTrainingOperator()
+            from opss.train.sft import PiscesLxSFTTrainingOperator, PiscesLxSFTTrainingConfig as _SFTConfig
+            sft_op = PiscesLxSFTTrainingOperator()
             result = sft_op.execute({"model": self.model, "batch": batch})
             if result.is_success() and result.output:
                 _LOG.debug("SFT operator used for forward pass")
@@ -1951,7 +1951,7 @@ class PiscesLxTrainingOperator(object):
     
     def _try_dpo_operator(self, batch: Dict[str, torch.Tensor]) -> Optional[Dict[str, Any]]:
         try:
-            from opss.train.dpo import POPSSDPOTrainingOperator as _DPOOp
+            from opss.train.dpo import PiscesLxDPOTrainingOperator as _DPOOp
             dpo_op = _DPOOp()
             result = dpo_op.execute({"model": self.model, "batch": batch, "beta": getattr(self.config, 'beta', 0.1)})
             if result.is_success() and result.output:
@@ -1963,8 +1963,8 @@ class PiscesLxTrainingOperator(object):
 
     def _try_grpo_operator(self, batch: Dict[str, torch.Tensor]) -> Optional[Dict[str, Any]]:
         try:
-            from opss.train.grpo import POPSSGRPOOperator
-            grpo_op = POPSSGRPOOperator()
+            from opss.train.grpo import PiscesLxGRPOOperator
+            grpo_op = PiscesLxGRPOOperator()
             result = grpo_op.execute({"model": self.model, "batch": batch})
             if result.is_success() and result.output:
                 _LOG.debug("GRPO operator used for forward pass")
@@ -1975,8 +1975,8 @@ class PiscesLxTrainingOperator(object):
 
     def _try_rlvr_operator(self, batch: Dict[str, torch.Tensor]) -> Optional[Dict[str, Any]]:
         try:
-            from opss.train.rlvr import POPSSRLVROperator
-            rlvr_op = POPSSRLVROperator()
+            from opss.train.rlvr import PiscesLxRLVROperator
+            rlvr_op = PiscesLxRLVROperator()
             result = rlvr_op.execute({"model": self.model, "batch": batch})
             if result.is_success() and result.output:
                 _LOG.debug("RLVR operator used for forward pass")
@@ -1990,7 +1990,7 @@ class PiscesLxTrainingOperator(object):
         Distillation forward pass using teacher logits.
 
         Runs teacher inference (no_grad), student forward, and computes
-        multi-part distillation loss via POPSSDistillationLoss.
+        multi-part distillation loss via PiscesLxDistillationLoss.
         """
         device = self.device
         mv = self._distill_model_vocab_size
@@ -2018,9 +2018,9 @@ class PiscesLxTrainingOperator(object):
             _base_model = _base_model.model
         _reasoner_backup = None
         if hasattr(_base_model, 'reasoner'):
-            from opss.train.distill import _NoOpReasoner
+            from opss.train.distill import _PiscesLxNoOpReasoner
             _reasoner_backup = _base_model.reasoner
-            _base_model.reasoner = _NoOpReasoner()
+            _base_model.reasoner = _PiscesLxNoOpReasoner()
 
         try:
             student_out = self._call_training_model(
@@ -2286,8 +2286,8 @@ class PiscesLxTrainingOperator(object):
     def _compute_grpo_forward(self, batch: Dict[str, torch.Tensor]) -> Dict[str, Any]:
         """GRPO forward pass with group-relative advantage."""
         try:
-            from opss.train.grpo import POPSSGRPOOperator
-            grpo_op = POPSSGRPOOperator()
+            from opss.train.grpo import PiscesLxGRPOOperator
+            grpo_op = PiscesLxGRPOOperator()
             result = grpo_op.execute({"model": self.model, "batch": batch})
             if result.is_success() and result.output:
                 return result.output
@@ -2301,8 +2301,8 @@ class PiscesLxTrainingOperator(object):
     def _compute_rlvr_forward(self, batch: Dict[str, torch.Tensor]) -> Dict[str, Any]:
         """RLVR forward pass with verifier-based reward."""
         try:
-            from opss.train.rlvr import POPSSRLVROperator
-            rlvr_op = POPSSRLVROperator()
+            from opss.train.rlvr import PiscesLxRLVROperator
+            rlvr_op = PiscesLxRLVROperator()
             result = rlvr_op.execute({"model": self.model, "batch": batch})
             if result.is_success() and result.output:
                 return result.output
@@ -2316,8 +2316,8 @@ class PiscesLxTrainingOperator(object):
     def _compute_dapo_forward(self, batch: Dict[str, torch.Tensor]) -> Dict[str, Any]:
         """DAPO forward pass with decoupled clipping."""
         try:
-            from opss.train.dapo import YvDAPO
-            dapo = YvDAPO()
+            from opss.train.dapo import PiscesLxDAPO
+            dapo = PiscesLxDAPO()
             result = dapo.compute_loss(batch)
             if isinstance(result, dict) and 'loss' in result:
                 return result
@@ -2331,8 +2331,8 @@ class PiscesLxTrainingOperator(object):
     def _compute_self_play_forward(self, batch: Dict[str, torch.Tensor]) -> Dict[str, Any]:
         """Self-Play forward pass."""
         try:
-            from opss.train.self_play import POPSSSelfPlayTrainer
-            sp = POPSSSelfPlayTrainer(model=self.model)
+            from opss.train.self_play import PiscesLxSelfPlayTrainer
+            sp = PiscesLxSelfPlayTrainer(model=self.model)
             result = sp.train_step(batch)
             if isinstance(result, dict) and 'loss' in result:
                 return result
@@ -2346,8 +2346,8 @@ class PiscesLxTrainingOperator(object):
     def _compute_memsep_forward(self, batch: Dict[str, torch.Tensor]) -> Dict[str, Any]:
         """MemSep forward pass with memory separation."""
         try:
-            from opss.train.memsep import POPSSMemSepTrainer
-            ms = POPSSMemSepTrainer(model=self.model)
+            from opss.train.memsep import PiscesLxMemSepTrainer
+            ms = PiscesLxMemSepTrainer(model=self.model)
             result = ms.train_step(batch)
             if isinstance(result, dict) and 'loss' in result:
                 return result
@@ -2407,7 +2407,7 @@ class PiscesLxTrainingOperator(object):
         Set teacher provider for knowledge distillation.
         
         Args:
-            teacher_provider: POPSSTeacherProvider instance for distillation
+            teacher_provider: PiscesLxTeacherProvider instance for distillation
         """
         self._teacher_provider = teacher_provider
         if self._teacher_provider is not None:
@@ -2430,7 +2430,7 @@ class PiscesLxTrainingOperator(object):
         Set distillation loss function and model vocab size.
         
         Args:
-            distill_loss_fn: POPSSDistillationLoss instance.
+            distill_loss_fn: PiscesLxDistillationLoss instance.
             model_vocab_size: Student model vocab size for token ID clamping.
         """
         self._distill_loss_fn = distill_loss_fn

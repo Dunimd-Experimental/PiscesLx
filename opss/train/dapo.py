@@ -38,7 +38,7 @@ from typing import Optional, Tuple, List
 
 
 # Paper: Yu et al., "DAPO: An Open-Source RL System from the Ground Up", arXiv:2503.14476
-class YvDAPO:
+class PiscesLxDAPO:
     """DAPO policy optimization trainer.
 
     Extends GRPO with decoupled clipping and dynamic sampling.
@@ -51,7 +51,7 @@ class YvDAPO:
         diversity_threshold (float): Threshold for dynamic sampling.
 
     Example:
-        >>> dapo = YvDAPO(epsilon_low=0.2, epsilon_high=0.4)
+        >>> dapo = PiscesLxDAPO(epsilon_low=0.2, epsilon_high=0.4)
         >>> loss = dapo.compute_policy_loss(log_probs, ref_log_probs, advantages)
     """
 

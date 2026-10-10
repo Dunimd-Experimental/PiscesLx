@@ -30,7 +30,7 @@ This module provides a controller for managing run lifecycle, state transitions,
 event logging, and process spawning in the PiscesLx execution framework.
 
 Key Components:
-    - POPSSRunController: Main controller class for run management
+    - PiscesLxRunController: Main controller class for run management
 
 Features:
     - Run initialization with spec and state
@@ -41,11 +41,11 @@ Features:
     - Process lifecycle management (kill, check)
 
 Usage:
-    from opss.run.store import POPSSRunStore
-    from opss.run.controller import POPSSRunController
+    from opss.run.store import PiscesLxRunStore
+    from opss.run.controller import PiscesLxRunController
     
-    store = POPSSRunStore(run_id="run_123", base_dir="./runs")
-    controller = POPSSRunController(store)
+    store = PiscesLxRunStore(run_id="run_123", base_dir="./runs")
+    controller = PiscesLxRunController(store)
     
     # Initialize run
     controller.init_run({"model": "ruchbah", "task": "train"})
@@ -74,10 +74,10 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from .store import POPSSRunStore
+from .store import PiscesLxRunStore
 
 
-class POPSSRunController:
+class PiscesLxRunController:
     """
     Controller for managing run lifecycle, state, and process execution.
     
@@ -85,7 +85,7 @@ class POPSSRunController:
     initialization, state management, event logging, and process spawning.
     
     Attributes:
-        _store: POPSSRunStore instance for persistent storage.
+        _store: PiscesLxRunStore instance for persistent storage.
     
     State Structure:
         - run_id: Unique identifier for the run
@@ -97,31 +97,31 @@ class POPSSRunController:
         - last_control_seq: Sequence number of last processed control
     
     Example:
-        >>> store = POPSSRunStore(run_id="run_abc", base_dir="./runs")
-        >>> controller = POPSSRunController(store)
+        >>> store = PiscesLxRunStore(run_id="run_abc", base_dir="./runs")
+        >>> controller = PiscesLxRunController(store)
         >>> controller.init_run({"model": "ruchbah"})
         >>> controller.append_event("started", level="info")
         >>> controller.update_state({"status": "running"})
     """
     
-    def __init__(self, store: POPSSRunStore):
+    def __init__(self, store: PiscesLxRunStore):
         """
         Initialize the run controller.
         
         Args:
-            store: POPSSRunStore instance for persistent storage.
+            store: PiscesLxRunStore instance for persistent storage.
         """
         self._store = store
         self._gpu_scheduler = None
         self._resource_limits = None
 
     @property
-    def store(self) -> POPSSRunStore:
+    def store(self) -> PiscesLxRunStore:
         """
         Get the underlying store instance.
         
         Returns:
-            POPSSRunStore: The store instance.
+            PiscesLxRunStore: The store instance.
         """
         return self._store
 
@@ -135,8 +135,8 @@ class POPSSRunController:
     def _get_resource_limits(self):
         """Get or create resource limits instance."""
         if self._resource_limits is None:
-            from .resources import POPSSResourceLimits
-            self._resource_limits = POPSSResourceLimits()
+            from .resources import PiscesLxResourceLimits
+            self._resource_limits = PiscesLxResourceLimits()
         return self._resource_limits
 
     def allocate_gpus(

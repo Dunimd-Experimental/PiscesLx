@@ -37,16 +37,16 @@ Key Features:
     - State serialization/deserialization
 
 Usage:
-    >>> from opss.optim.ink import POPSSInkOptimizer, POPSSInkConfig
+    >>> from opss.optim.ink import PiscesLxInkOptimizer, PiscesLxInkConfig
     >>> 
-    >>> config = POPSSInkConfig(
+    >>> config = PiscesLxInkConfig(
     ...     lr=1e-4,
     ...     momentum_bits=8,
     ...     variance_bits=4,
     ...     sparse_ratio=0.01
     ... )
     >>> 
-    >>> optimizer = POPSSInkOptimizer(model.parameters(), config)
+    >>> optimizer = PiscesLxInkOptimizer(model.parameters(), config)
     >>> 
     >>> for batch in dataloader:
     ...     optimizer.zero_grad()
@@ -63,18 +63,18 @@ import torch.nn as nn
 from torch.optim import Optimizer
 
 from configs.version import VERSION
-from .config import POPSSInkConfig
-from .operator import POPSSInkOperator
-from .quantizer import POPSSInkBlockQuantizer
-from .sparse import POPSSInkSparseSelector
-from .integrator import POPSSInkIntegrator
-from .kv_cache import POPSSInkKVCacheQuantizer
-from .gradient import POPSSInkGradientCompressor
-from .moe import POPSSInkMoEManager
-from .checkpoint import POPSSInkCheckpointSelector
+from .config import PiscesLxInkConfig
+from .operator import PiscesLxInkOperator
+from .quantizer import PiscesLxInkBlockQuantizer
+from .sparse import PiscesLxInkSparseSelector
+from .integrator import PiscesLxInkIntegrator
+from .kv_cache import PiscesLxInkKVCacheQuantizer
+from .gradient import PiscesLxInkGradientCompressor
+from .moe import PiscesLxInkMoEManager
+from .checkpoint import PiscesLxInkCheckpointSelector
 
 
-class POPSSInkOptimizer(Optimizer):
+class PiscesLxInkOptimizer(Optimizer):
     """
     PyTorch-Compatible Ink Optimizer.
     
@@ -85,14 +85,14 @@ class POPSSInkOptimizer(Optimizer):
     while providing the standard PyTorch optimizer interface.
     
     Attributes:
-        config: POPSSInkConfig instance with all settings
-        _operator: Internal POPSSInkOperator instance
+        config: PiscesLxInkConfig instance with all settings
+        _operator: Internal PiscesLxInkOperator instance
         _param_names: Mapping from parameter IDs to names
         _initialized: Whether optimizer has been initialized
     
     Example:
         >>> # Basic usage
-        >>> optimizer = POPSSInkOptimizer(
+        >>> optimizer = PiscesLxInkOptimizer(
         ...     model.parameters(),
         ...     lr=1e-4,
         ...     momentum_bits=8,
@@ -100,7 +100,7 @@ class POPSSInkOptimizer(Optimizer):
         ... )
         >>> 
         >>> # With configuration object
-        >>> config = POPSSInkConfig(
+        >>> config = PiscesLxInkConfig(
         ...     lr=1e-4,
         ...     momentum_bits=8,
         ...     variance_bits=4,
@@ -109,7 +109,7 @@ class POPSSInkOptimizer(Optimizer):
         ...     use_fp4=True,
         ...     use_root_ortho=True
         ... )
-        >>> optimizer = POPSSInkOptimizer(model.parameters(), config=config)
+        >>> optimizer = PiscesLxInkOptimizer(model.parameters(), config=config)
         >>> 
         >>> # Training loop
         >>> for epoch in range(epochs):
@@ -132,7 +132,7 @@ class POPSSInkOptimizer(Optimizer):
         eps: float = 1e-8,
         weight_decay: float = 0.01,
         *,
-        config: Optional[POPSSInkConfig] = None,
+        config: Optional[PiscesLxInkConfig] = None,
         momentum_bits: int = 8,
         variance_bits: int = 8,
         momentum_block_size: int = 128,
@@ -154,7 +154,7 @@ class POPSSInkOptimizer(Optimizer):
             betas: Beta coefficients for Adam (default: (0.9, 0.999))
             eps: Epsilon for numerical stability (default: 1e-8)
             weight_decay: Weight decay coefficient (default: 0.01)
-            config: Optional POPSSInkConfig instance (overrides other args)
+            config: Optional PiscesLxInkConfig instance (overrides other args)
             momentum_bits: Bits for momentum quantization (default: 8)
             variance_bits: Bits for variance quantization (default: 8)
             momentum_block_size: Block size for momentum (default: 128)
@@ -168,7 +168,7 @@ class POPSSInkOptimizer(Optimizer):
             num_update_blocks: Number of blocks for block-wise updates (default: 4)
         """
         if config is None:
-            config = POPSSInkConfig(
+            config = PiscesLxInkConfig(
                 lr=lr,
                 betas=betas,
                 eps=eps,
@@ -198,41 +198,41 @@ class POPSSInkOptimizer(Optimizer):
         
         self.config = config
         
-        self._quantizer = POPSSInkBlockQuantizer(
+        self._quantizer = PiscesLxInkBlockQuantizer(
             momentum_bits=config.momentum_bits,
             variance_bits=config.variance_bits,
             momentum_block_size=config.momentum_block_size,
             variance_block_size=config.variance_block_size,
         )
         
-        self._sparse_selector = POPSSInkSparseSelector(
+        self._sparse_selector = PiscesLxInkSparseSelector(
             sparse_ratio=config.sparse_ratio,
             warmup_steps=config.sparse_warmup_steps,
             adaptive=config.sparse_adaptive,
         )
         
-        self._integrator = POPSSInkIntegrator(config)
+        self._integrator = PiscesLxInkIntegrator(config)
         self._integrator.initialize()
         
-        self._kv_cache_quantizer = POPSSInkKVCacheQuantizer(
+        self._kv_cache_quantizer = PiscesLxInkKVCacheQuantizer(
             kv_bits=config.kv_cache_bits,
             block_size=config.kv_cache_block_size,
         )
         
-        self._gradient_compressor = POPSSInkGradientCompressor(
+        self._gradient_compressor = PiscesLxInkGradientCompressor(
             gradient_bits=config.gradient_bits,
             block_size=config.gradient_block_size,
             stochastic_rounding=True,
         )
         
-        self._moe_manager = POPSSInkMoEManager(
+        self._moe_manager = PiscesLxInkMoEManager(
             num_experts=64,
             max_experts_on_gpu=config.max_experts_on_gpu,
             offload_threshold=config.moe_offload_threshold,
             lru_cache_size=config.moe_lru_cache_size,
         )
         
-        self._checkpoint_selector = POPSSInkCheckpointSelector(
+        self._checkpoint_selector = PiscesLxInkCheckpointSelector(
             checkpoint_ratio=config.checkpoint_ratio,
             preserve_ratio=config.checkpoint_preserve_ratio,
             enable_transformer=config.checkpoint_transformer,
@@ -554,7 +554,7 @@ class POPSSInkOptimizer(Optimizer):
         
         if "ink_config" in state_dict:
             config_dict = state_dict["ink_config"]
-            self.config = POPSSInkConfig(**config_dict)
+            self.config = PiscesLxInkConfig(**config_dict)
         
         for key in ["momentum_int8", "momentum_scales", "variance_int4", "variance_scales"]:
             if key in state_dict:

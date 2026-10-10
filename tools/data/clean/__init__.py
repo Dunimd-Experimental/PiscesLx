@@ -23,7 +23,7 @@
 
 from __future__ import annotations
 
-from .pipeline import DatasetCleaner
-from .core import DatasetClean
+from .pipeline import PiscesLxDatasetCleaner
+from .core import PiscesLxDatasetClean
 
-__all__ = ["DatasetClean", "DatasetCleaner"]
+__all__ = ["PiscesLxDatasetClean", "PiscesLxDatasetCleaner"]

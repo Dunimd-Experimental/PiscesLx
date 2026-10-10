@@ -881,7 +881,7 @@ class PiscesLxPipelineParallelOperator(PiscesLxDistributedOperator, ABC):
         - Interleaved: Multiple stages per device
 
     Usage:
-        class PipelineStage(PiscesLxPipelineParallelOperator):
+        class PiscesLxPipelineStage(PiscesLxPipelineParallelOperator):
             def forward_stage(self, inputs):
                 output = self.stage_forward(inputs)
                 if not self.is_last_stage:

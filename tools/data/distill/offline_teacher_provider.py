@@ -45,16 +45,16 @@ Architecture:
 
 Usage:
     from tools.data.distill.offline_teacher_provider import (
-        POPSSTeacherProviderFactory,
-        POPSSTeacherConfig,
-        POPSSTeacherProviderType,
+        PiscesLxTeacherProviderFactory,
+        PiscesLxTeacherConfig,
+        PiscesLxTeacherProviderType,
     )
 
-    config = POPSSTeacherConfig(
-        provider_type=POPSSTeacherProviderType.LOCAL,
+    config = PiscesLxTeacherConfig(
+        provider_type=PiscesLxTeacherProviderType.LOCAL,
         model_path="./models/teacher-7b"
     )
-    teacher = POPSSTeacherProviderFactory.create(config)
+    teacher = PiscesLxTeacherProviderFactory.create(config)
     outputs = teacher.get_all_outputs(input_ids)
 """
 
@@ -97,7 +97,7 @@ def _normalize_base_url(base_url: str) -> str:
     return base_url
 
 
-class POPSSTeacherProviderType(Enum):
+class PiscesLxTeacherProviderType(Enum):
     """Teacher provider type enumeration."""
     LOCAL = "local"
     SERVER = "server"
@@ -107,7 +107,7 @@ class POPSSTeacherProviderType(Enum):
 
 
 @dataclass
-class POPSSTeacherConfig:
+class PiscesLxTeacherConfig:
     """Teacher model configuration for distillation.
     
     Attributes:
@@ -158,7 +158,7 @@ class POPSSTeacherConfig:
     temperature: float = 2.0
 
 
-class POPSSTeacherProvider(ABC):
+class PiscesLxTeacherProvider(ABC):
     """Abstract base class for teacher model providers.
     
     This class defines the unified interface for accessing teacher models
@@ -174,7 +174,7 @@ class POPSSTeacherProvider(ABC):
     distillation loss computation.
     """
     
-    def __init__(self, config: POPSSTeacherConfig):
+    def __init__(self, config: PiscesLxTeacherConfig):
         self.config = config
         self._LOG = PiscesLxLogger(
             "PiscesLx.Distill.Provider",
@@ -261,7 +261,7 @@ class POPSSTeacherProvider(ABC):
         pass
 
 
-class POPSSLocalTeacherProvider(POPSSTeacherProvider):
+class PiscesLxLocalTeacherProvider(PiscesLxTeacherProvider):
     """Local teacher model provider.
     
     Loads teacher model weights directly into GPU memory.
@@ -278,7 +278,7 @@ class POPSSLocalTeacherProvider(POPSSTeacherProvider):
         - Limited by local GPU capacity
     """
     
-    def __init__(self, config: POPSSTeacherConfig, model_class=None, tokenizer=None):
+    def __init__(self, config: PiscesLxTeacherConfig, model_class=None, tokenizer=None):
         super().__init__(config)
         self.model = None
         self.tokenizer = tokenizer
@@ -381,7 +381,7 @@ class POPSSLocalTeacherProvider(POPSSTeacherProvider):
         self._initialized = False
 
 
-class POPSSServerTeacherProvider(POPSSTeacherProvider):
+class PiscesLxServerTeacherProvider(PiscesLxTeacherProvider):
     """Server-based teacher model provider.
     
     Connects to a private inference server for teacher outputs.
@@ -399,7 +399,7 @@ class POPSSServerTeacherProvider(POPSSTeacherProvider):
         - Server maintenance overhead
     """
     
-    def __init__(self, config: POPSSTeacherConfig):
+    def __init__(self, config: PiscesLxTeacherConfig):
         super().__init__(config)
         self.session = None
         self._init_session()
@@ -508,7 +508,7 @@ class POPSSServerTeacherProvider(POPSSTeacherProvider):
             self.session = None
 
 
-class POPSSRemoteTeacherProvider(POPSSTeacherProvider):
+class PiscesLxRemoteTeacherProvider(PiscesLxTeacherProvider):
     """Remote API teacher model provider.
     
     Uses external API services (OpenAI, Anthropic, etc.) as teacher.
@@ -527,7 +527,7 @@ class POPSSRemoteTeacherProvider(POPSSTeacherProvider):
         - Data privacy concerns
     """
     
-    def __init__(self, config: POPSSTeacherConfig, tokenizer=None):
+    def __init__(self, config: PiscesLxTeacherConfig, tokenizer=None):
         super().__init__(config)
         self.tokenizer = tokenizer
         self.client = None
@@ -723,7 +723,7 @@ class POPSSRemoteTeacherProvider(POPSSTeacherProvider):
         return True
 
 
-class POPSSTeacherProviderFactory:
+class PiscesLxTeacherProviderFactory:
     """Factory for creating teacher providers.
     
     This factory automatically creates the appropriate provider
@@ -731,18 +731,18 @@ class POPSSTeacherProviderFactory:
     """
     
     _registry: Dict[str, type] = {
-        POPSSTeacherProviderType.LOCAL.value: POPSSLocalTeacherProvider,
-        POPSSTeacherProviderType.SERVER.value: POPSSServerTeacherProvider,
-        POPSSTeacherProviderType.REMOTE.value: POPSSRemoteTeacherProvider,
+        PiscesLxTeacherProviderType.LOCAL.value: PiscesLxLocalTeacherProvider,
+        PiscesLxTeacherProviderType.SERVER.value: PiscesLxServerTeacherProvider,
+        PiscesLxTeacherProviderType.REMOTE.value: PiscesLxRemoteTeacherProvider,
     }
     
     @classmethod
     def create(
         cls,
-        config: POPSSTeacherConfig,
+        config: PiscesLxTeacherConfig,
         model_class=None,
         tokenizer=None,
-    ) -> POPSSTeacherProvider:
+    ) -> PiscesLxTeacherProvider:
         """Create a teacher provider based on configuration.
         
         Args:
@@ -763,9 +763,9 @@ class POPSSTeacherProviderFactory:
         
         provider_class = cls._registry[provider_type]
         
-        if provider_type == POPSSTeacherProviderType.LOCAL.value:
+        if provider_type == PiscesLxTeacherProviderType.LOCAL.value:
             return provider_class(config, model_class=model_class, tokenizer=tokenizer)
-        elif provider_type == POPSSTeacherProviderType.REMOTE.value:
+        elif provider_type == PiscesLxTeacherProviderType.REMOTE.value:
             return provider_class(config, tokenizer=tokenizer)
         else:
             return provider_class(config)
@@ -784,10 +784,10 @@ class POPSSTeacherProviderFactory:
     @contextmanager
     def create_with_cleanup(
         cls,
-        config: POPSSTeacherConfig,
+        config: PiscesLxTeacherConfig,
         model_class=None,
         tokenizer=None,
-    ) -> Iterator[POPSSTeacherProvider]:
+    ) -> Iterator[PiscesLxTeacherProvider]:
         """Create a teacher provider with automatic resource cleanup.
         
         This context manager ensures the provider's resources are properly
@@ -800,15 +800,15 @@ class POPSSTeacherProviderFactory:
             tokenizer: Optional tokenizer for remote provider.
             
         Yields:
-            POPSSTeacherProvider: The created provider instance.
+            PiscesLxTeacherProvider: The created provider instance.
             
         Example:
-            >>> config = POPSSTeacherConfig(
-            ...     provider_type=POPSSTeacherProviderType.REMOTE,
+            >>> config = PiscesLxTeacherConfig(
+            ...     provider_type=PiscesLxTeacherProviderType.REMOTE,
             ...     api_key="...",
             ...     model_name="gpt-4o"
             ... )
-            >>> with POPSSTeacherProviderFactory.create_with_cleanup(config) as teacher:
+            >>> with PiscesLxTeacherProviderFactory.create_with_cleanup(config) as teacher:
             ...     outputs = teacher.get_all_outputs(input_ids)
         """
         provider = None
@@ -825,11 +825,11 @@ class POPSSTeacherProviderFactory:
 
 
 __all__ = [
-    "POPSSTeacherProviderType",
-    "POPSSTeacherConfig",
-    "POPSSTeacherProvider",
-    "POPSSLocalTeacherProvider",
-    "POPSSServerTeacherProvider",
-    "POPSSRemoteTeacherProvider",
-    "POPSSTeacherProviderFactory",
+    "PiscesLxTeacherProviderType",
+    "PiscesLxTeacherConfig",
+    "PiscesLxTeacherProvider",
+    "PiscesLxLocalTeacherProvider",
+    "PiscesLxServerTeacherProvider",
+    "PiscesLxRemoteTeacherProvider",
+    "PiscesLxTeacherProviderFactory",
 ]

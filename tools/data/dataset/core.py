@@ -29,7 +29,7 @@ import threading
 import queue
 import time
 from datasets import load_from_disk
-from torch.utils.data import Dataset as TorchDataset
+from torch.utils.data import PiscesLxDataset as TorchDataset
 from typing import Optional, Dict, Any, List, Callable, Union
 from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor
@@ -213,7 +213,7 @@ class PiscesLxDataAugmentationPipeline:
             return image_path
 
 
-class Dataset(TorchDataset):
+class PiscesLxDataset(TorchDataset):
     _global_cache: Dict[str, Any] = {}
     _cache_lock = threading.Lock()
 
@@ -253,7 +253,7 @@ class Dataset(TorchDataset):
         cache_path = os.path.join(str(data_cache), self.subset)
 
         if not os.path.exists(cache_path):
-            raise FileNotFoundError(f"Dataset cache not found at {cache_path}. Please run downloader to prepare local cache.")
+            raise FileNotFoundError(f"PiscesLxDataset cache not found at {cache_path}. Please run downloader to prepare local cache.")
 
         ds = load_from_disk(cache_path)
         if hasattr(ds, 'keys'):
@@ -263,7 +263,7 @@ class Dataset(TorchDataset):
                 available_splits = list(ds.keys()) if hasattr(ds, 'keys') else []
                 if available_splits:
                     default_split = available_splits[0]
-                    _LOG.warning(f"Dataset split '{self.split}' not found. Using first available split: '{default_split}'")
+                    _LOG.warning(f"PiscesLxDataset split '{self.split}' not found. Using first available split: '{default_split}'")
                     ds = ds[default_split]
                     self.split = default_split
         self.ds = ds
@@ -456,7 +456,7 @@ class Dataset(TorchDataset):
 class PiscesLxDataIterableDataset(torch.utils.data.IterableDataset):
     def __init__(
         self,
-        dataset: Dataset,
+        dataset: PiscesLxDataset,
         shuffle: bool = True,
         buffer_size: int = 1000
     ):

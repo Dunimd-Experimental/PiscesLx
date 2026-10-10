@@ -46,28 +46,28 @@ Distillation Strategies:
 
 Usage:
     from opss.train.distill import (
-        POPSSDistillationConfig,
-        POPSSDistillationOperator,
+        PiscesLxDistillationConfig,
+        PiscesLxDistillationOperator,
     )
     from tools.data.distill.offline_teacher_provider import (
-        POPSSTeacherProviderFactory,
-        POPSSTeacherConfig,
+        PiscesLxTeacherProviderFactory,
+        PiscesLxTeacherConfig,
     )
     
     # User creates and configures the teacher provider
-    teacher_config = POPSSTeacherConfig(
+    teacher_config = PiscesLxTeacherConfig(
         provider_type="local",
         model_path="./models/teacher-7b"
     )
-    teacher_provider = POPSSTeacherProviderFactory.create(teacher_config)
+    teacher_provider = PiscesLxTeacherProviderFactory.create(teacher_config)
     
     # Training engine injects teacher to distillation operator
-    config = POPSSDistillationConfig(
+    config = PiscesLxDistillationConfig(
         student_model_path="./models/student-7b",
         output_dir="./outputs/distilled"
     )
     
-    operator = POPSSDistillationOperator()
+    operator = PiscesLxDistillationOperator()
     result = operator.execute({
         "config": config,
         "teacher_provider": teacher_provider,  # Injected by training engine
@@ -86,7 +86,7 @@ from datetime import datetime
 
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import PiscesLxDataset, DataLoader
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 import torch.distributed as dist
@@ -98,15 +98,15 @@ from utils.paths import get_log_file, get_work_dir
 from configs.version import VERSION
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
 
-from tools.data.distill.offline_teacher_provider import POPSSTeacherProvider
+from tools.data.distill.offline_teacher_provider import PiscesLxTeacherProvider
 from .distill_loss import (
-    POPSSDistillationLossConfig,
-    POPSSDistillationLoss,
+    PiscesLxDistillationLossConfig,
+    PiscesLxDistillationLoss,
 )
 
 
 @dataclass
-class POPSSDistillationConfig:
+class PiscesLxDistillationConfig:
     """Configuration for knowledge distillation training.
     
     Note: Teacher model is NOT defined here. The training engine injects
@@ -208,8 +208,8 @@ class POPSSDistillationConfig:
             self.use_bf16 = False
 
 
-class POPSSDistillationDataset(Dataset):
-    """Dataset for knowledge distillation training."""
+class PiscesLxDistillationDataset(PiscesLxDataset):
+    """PiscesLxDataset for knowledge distillation training."""
     
     def __init__(
         self,
@@ -291,7 +291,7 @@ class POPSSDistillationDataset(Dataset):
         }
 
 
-class _NoOpReasoner(nn.Module):
+class _PiscesLxNoOpReasoner(nn.Module):
     """No-op reasoner that bypasses the model's reasoner during distillation.
 
     Logits are computed BEFORE the reasoner in YvModel.forward, so skipping
@@ -306,7 +306,7 @@ class _NoOpReasoner(nn.Module):
         }
 
 
-class _DistillationOperatorImpl(PiscesLxOperatorInterface):
+class _PiscesLxDistillationOperatorImpl(PiscesLxOperatorInterface):
     """Knowledge distillation training operator implementation.
     
     The teacher model is injected by the training engine at runtime,
@@ -324,14 +324,14 @@ class _DistillationOperatorImpl(PiscesLxOperatorInterface):
             enable_file=True,
         )
 
-        self.teacher_provider: Optional[POPSSTeacherProvider] = None
+        self.teacher_provider: Optional[PiscesLxTeacherProvider] = None
         self.student_model: Optional[nn.Module] = None
         self.tokenizer: Optional[Any] = None
         self.optimizer: Optional[Optimizer] = None
         self.scheduler: Optional[LRScheduler] = None
         self.scaler: Optional[GradScaler] = None
 
-        self.config: Optional[POPSSDistillationConfig] = None
+        self.config: Optional[PiscesLxDistillationConfig] = None
         self.global_step: int = 0
         self.best_loss: float = float('inf')
 
@@ -353,8 +353,8 @@ class _DistillationOperatorImpl(PiscesLxOperatorInterface):
             "type": "object",
             "required": ["config", "teacher_provider"],
             "properties": {
-                "config": {"type": "object", "description": "POPSSDistillationConfig"},
-                "teacher_provider": {"type": "object", "description": "POPSSTeacherProvider instance"},
+                "config": {"type": "object", "description": "PiscesLxDistillationConfig"},
+                "teacher_provider": {"type": "object", "description": "PiscesLxTeacherProvider instance"},
             },
         }
 
@@ -372,14 +372,14 @@ class _DistillationOperatorImpl(PiscesLxOperatorInterface):
     def validate_inputs(self, inputs: Dict[str, Any]) -> bool:
         if "config" not in inputs and "teacher_provider" not in inputs:
             return False
-        if "teacher_provider" in inputs and not isinstance(inputs["teacher_provider"], POPSSTeacherProvider):
+        if "teacher_provider" in inputs and not isinstance(inputs["teacher_provider"], PiscesLxTeacherProvider):
             return False
         return True
 
     def initialize(
         self,
-        config: POPSSDistillationConfig,
-        teacher_provider: POPSSTeacherProvider,
+        config: PiscesLxDistillationConfig,
+        teacher_provider: PiscesLxTeacherProvider,
         student_model: Optional[Any] = None,
         tokenizer: Optional[Any] = None,
     ) -> None:
@@ -580,7 +580,7 @@ class _DistillationOperatorImpl(PiscesLxOperatorInterface):
     
     def _init_loss(self) -> None:
         """Initialize distillation loss."""
-        loss_config = POPSSDistillationLossConfig(
+        loss_config = PiscesLxDistillationLossConfig(
             temperature=self.config.temperature,
             alpha=self.config.alpha,
             beta=self.config.beta,
@@ -589,7 +589,7 @@ class _DistillationOperatorImpl(PiscesLxOperatorInterface):
             epsilon=self.config.epsilon,
             ignore_index=self.config.ignore_index,
         )
-        self.distill_loss = POPSSDistillationLoss(loss_config)
+        self.distill_loss = PiscesLxDistillationLoss(loss_config)
     
     def train_step(self, batch: Dict[str, torch.Tensor]) -> Dict[str, float]:
         """Execute single training step."""
@@ -631,7 +631,7 @@ class _DistillationOperatorImpl(PiscesLxOperatorInterface):
         _reasoner_patched = False
         if hasattr(_base_model, 'reasoner'):
             _reasoner_backup = _base_model.reasoner
-            _base_model.reasoner = _NoOpReasoner()
+            _base_model.reasoner = _PiscesLxNoOpReasoner()
             _reasoner_patched = True
 
         try:
@@ -717,8 +717,8 @@ class _DistillationOperatorImpl(PiscesLxOperatorInterface):
 
         Args:
             inputs: Dictionary containing:
-                - config: POPSSDistillationConfig
-                - teacher_provider: POPSSTeacherProvider (injected by training engine)
+                - config: PiscesLxDistillationConfig
+                - teacher_provider: PiscesLxTeacherProvider (injected by training engine)
 
         Returns:
             Training result.
@@ -727,10 +727,10 @@ class _DistillationOperatorImpl(PiscesLxOperatorInterface):
         teacher_provider = inputs.get("teacher_provider")
         
         if config is None:
-            config = POPSSDistillationConfig()
+            config = PiscesLxDistillationConfig()
         
         if isinstance(config, dict):
-            config = POPSSDistillationConfig(**config)
+            config = PiscesLxDistillationConfig(**config)
         
         if teacher_provider is None:
             raise ValueError(
@@ -764,7 +764,7 @@ class _DistillationOperatorImpl(PiscesLxOperatorInterface):
 
 
 # Paper: Hinton et al., "Distilling the Knowledge in a Neural Network", NeurIPS 2014 Workshop, 2015
-class POPSSDistillationOperator:
+class PiscesLxDistillationOperator:
     """Facade for distillation training operator.
     
     The teacher model is injected by the training engine at runtime.
@@ -772,20 +772,20 @@ class POPSSDistillationOperator:
     
     Example:
         # User creates teacher provider
-        from tools.data.distill.offline_teacher_provider import POPSSTeacherProviderFactory, POPSSTeacherConfig
+        from tools.data.distill.offline_teacher_provider import PiscesLxTeacherProviderFactory, PiscesLxTeacherConfig
         
         # Teachers live OUTSIDE the training engine: they are used in the offline
         # distillation-data generation step (tools/data/distill/), and what reaches the
         # engine is training data only (docs/prompts/UPGRADE_04_ALGO.md 4.5).
-        teacher_config = POPSSTeacherConfig(
+        teacher_config = PiscesLxTeacherConfig(
             provider_type="responses",
             responses_path=DistillationCorpusPaths.for_model_size(self.config.model_size),
         )
         dataset = DistillationDataset(teacher_config.responses_path)
         
         # Training engine consumes distilled data, never a loaded teacher model
-        config = POPSSDistillationConfig(student_model_path="./models/student")
-        operator = POPSSDistillationOperator()
+        config = PiscesLxDistillationConfig(student_model_path="./models/student")
+        operator = PiscesLxDistillationOperator()
         result = operator.execute({
             "config": config,
             "teacher_provider": teacher,  # Injected here
@@ -793,13 +793,13 @@ class POPSSDistillationOperator:
     """
     
     def __init__(self):
-        self._impl = _DistillationOperatorImpl()
+        self._impl = _PiscesLxDistillationOperatorImpl()
     
     def execute(self, params: Dict[str, Any]) -> PiscesLxOperatorResult:
         """Execute distillation training with injected teacher.
         
         Args:
-            params: Must contain 'teacher_provider' key with POPSSTeacherProvider instance.
+            params: Must contain 'teacher_provider' key with PiscesLxTeacherProvider instance.
         """
         return self._impl.execute(params)
     
@@ -811,7 +811,7 @@ class POPSSDistillationOperator:
 
 
 __all__ = [
-    "POPSSDistillationConfig",
-    "POPSSDistillationDataset",
-    "POPSSDistillationOperator",
+    "PiscesLxDistillationConfig",
+    "PiscesLxDistillationDataset",
+    "PiscesLxDistillationOperator",
 ]

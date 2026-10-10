@@ -47,17 +47,17 @@ State Files Protected:
 
 Usage:
     # In action system (write access):
-    from opss.run.state_guard import POPSSStateGuard, write_authorized
+    from opss.run.state_guard import PiscesLxStateGuard, write_authorized
     
     @write_authorized
     def update_state(run_id, data):
-        guard = POPSSStateGuard()
+        guard = PiscesLxStateGuard()
         guard.write_state(run_id, data)
     
     # In external modules (read-only access):
-    from opss.run.state_guard import POPSSStateGuard
+    from opss.run.state_guard import PiscesLxStateGuard
     
-    guard = POPSSStateGuard()
+    guard = PiscesLxStateGuard()
     state = guard.read_state(run_id)  # OK - read allowed
     guard.write_state(run_id, data)   # Raises UnauthorizedWriteError
 """
@@ -74,17 +74,17 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set
 
 
-class POPSSUnauthorizedWriteError(PermissionError):
+class PiscesLxUnauthorizedWriteError(PermissionError):
     """Raised when an unauthorized module attempts to write state files."""
     pass
 
 
-class POPSSStateFileCorruptedError(Exception):
+class PiscesLxStateFileCorruptedError(Exception):
     """Raised when a state file is corrupted or tampered with."""
     pass
 
 
-class POPSSStateGuard:
+class PiscesLxStateGuard:
     """
     State File Guard for YvReActAction System Isolation.
     
@@ -104,7 +104,7 @@ class POPSSStateGuard:
         _lock: Thread lock for concurrent access.
     
     Example:
-        >>> guard = POPSSStateGuard()
+        >>> guard = PiscesLxStateGuard()
         >>> state = guard.read_state("train_001")  # Always allowed
         >>> guard.write_state("train_001", {"status": "running"})  # Only if authorized
     """
@@ -347,7 +347,7 @@ class POPSSStateGuard:
             Path to written file.
             
         Raises:
-            POPSSUnauthorizedWriteError: If caller is not authorized.
+            PiscesLxUnauthorizedWriteError: If caller is not authorized.
         """
         path = os.path.join(self._state_dir, "runs", run_id, filename)
         
@@ -355,7 +355,7 @@ class POPSSStateGuard:
         
         if not self._is_write_authorized():
             self._log_access("write", path, False, caller_info)
-            raise POPSSUnauthorizedWriteError(
+            raise PiscesLxUnauthorizedWriteError(
                 f"Unauthorized write attempt to {path} by {caller_info.get('module', 'unknown')}.{caller_info.get('function', 'unknown')}. "
                 f"Only action system modules can modify state files."
             )
@@ -401,7 +401,7 @@ class POPSSStateGuard:
         
         if not self._is_write_authorized():
             self._log_access("write", path, False, caller_info)
-            raise POPSSUnauthorizedWriteError(
+            raise PiscesLxUnauthorizedWriteError(
                 f"Unauthorized write attempt to {path} by {caller_info.get('module', 'unknown')}.{caller_info.get('function', 'unknown')}. "
                 f"Only action system modules can modify state files."
             )
@@ -487,10 +487,10 @@ def write_authorized(func: Callable) -> Callable:
     Example:
         @write_authorized
         def my_custom_writer(run_id, data):
-            guard = POPSSStateGuard()
+            guard = PiscesLxStateGuard()
             return guard.write_state(run_id, data)
     """
-    POPSSStateGuard.AUTHORIZED_FUNCTIONS.add(func.__name__)
+    PiscesLxStateGuard.AUTHORIZED_FUNCTIONS.add(func.__name__)
     
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
@@ -509,27 +509,27 @@ def readonly_access(func: Callable) -> Callable:
     Example:
         @readonly_access
         def get_task_status(run_id):
-            guard = POPSSStateGuard()
+            guard = PiscesLxStateGuard()
             return guard.read_state(run_id)
     """
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
-        guard = POPSSStateGuard()
+        guard = PiscesLxStateGuard()
         caller_info = guard._get_caller_info()
         caller_info["authorized"] = False
         
-        original_authorized = POPSSStateGuard.AUTHORIZED_FUNCTIONS.copy()
+        original_authorized = PiscesLxStateGuard.AUTHORIZED_FUNCTIONS.copy()
         try:
-            if func.__name__ in POPSSStateGuard.AUTHORIZED_FUNCTIONS:
-                POPSSStateGuard.AUTHORIZED_FUNCTIONS.discard(func.__name__)
+            if func.__name__ in PiscesLxStateGuard.AUTHORIZED_FUNCTIONS:
+                PiscesLxStateGuard.AUTHORIZED_FUNCTIONS.discard(func.__name__)
             return func(*args, **kwargs)
         finally:
-            POPSSStateGuard.AUTHORIZED_FUNCTIONS.update(original_authorized)
+            PiscesLxStateGuard.AUTHORIZED_FUNCTIONS.update(original_authorized)
     
     return wrapper
 
 
-class POPSSStateReader:
+class PiscesLxStateReader:
     """
     Read-only state reader for external modules.
     
@@ -537,13 +537,13 @@ class POPSSStateReader:
     to access action system state files. All write methods are disabled.
     
     Example:
-        >>> reader = POPSSStateReader()
+        >>> reader = PiscesLxStateReader()
         >>> state = reader.get_run_state("train_001")
         >>> gpu_info = reader.get_gpu_allocations()
     """
     
     def __init__(self, state_dir: Optional[str] = None):
-        self._guard = POPSSStateGuard(state_dir=state_dir)
+        self._guard = PiscesLxStateGuard(state_dir=state_dir)
     
     def get_run_state(self, run_id: str) -> Optional[Dict[str, Any]]:
         """Get run state (read-only)."""

@@ -65,24 +65,24 @@ Dependencies:
 
 Usage Examples:
     >>> from opss.train.multitask_uncertainty import (
-    ...     POPSSMultiTaskConfig,
-    ...     POPSSMultiTaskOperator
+    ...     PiscesLxMultiTaskConfig,
+    ...     PiscesLxMultiTaskOperator
     ... )
     
-    >>> config = POPSSMultiTaskConfig(
+    >>> config = PiscesLxMultiTaskConfig(
     ...     num_tasks=3,
     ...     initial_uncertainty=1.0,
     ...     learnable_uncertainty=True
     ... )
     
-    >>> operator = POPSSMultiTaskOperator(config)
+    >>> operator = PiscesLxMultiTaskOperator(config)
     >>> result = operator.execute({
     ...     "task_losses": [loss1, loss2, loss3]
     ... })
 
 Integration:
     This operator integrates with PiscesLxTrainingEngine through the
-    AdvancedTrainingCoordinator in opss/train/impl.py. It should be
+    PiscesLxAdvancedTrainingCoordinator in opss/train/impl.py. It should be
     executed during loss computation, after individual task losses
     are computed but before backward pass.
 
@@ -111,7 +111,7 @@ from utils.opsc.interface import (
 )
 
 
-class POPSSTaskType(Enum):
+class PiscesLxTaskType(Enum):
     """
     Classification of task types for specialized handling.
     
@@ -137,7 +137,7 @@ class POPSSTaskType(Enum):
 
 
 @dataclass
-class POPSSMultiTaskConfig(PiscesLxOperatorConfig):
+class PiscesLxMultiTaskConfig(PiscesLxOperatorConfig):
     """
     Configuration for task uncertainty-based multi-task learning.
     
@@ -173,7 +173,7 @@ class POPSSMultiTaskConfig(PiscesLxOperatorConfig):
         clamp_uncertainty: False
         
     Example:
-        >>> config = POPSSMultiTaskConfig(
+        >>> config = PiscesLxMultiTaskConfig(
         ...     num_tasks=3,
         ...     initial_uncertainty=1.0,
         ...     learnable_uncertainty=True,
@@ -185,7 +185,7 @@ class POPSSMultiTaskConfig(PiscesLxOperatorConfig):
     learnable_uncertainty: bool = True
     uncertainty_lr: float = 1.0
     task_names: List[str] = field(default_factory=list)
-    task_types: List[POPSSTaskType] = field(default_factory=list)
+    task_types: List[PiscesLxTaskType] = field(default_factory=list)
     reduction: str = "mean"
     clamp_uncertainty: bool = False
     uncertainty_min: float = 0.01
@@ -204,10 +204,10 @@ class POPSSMultiTaskConfig(PiscesLxOperatorConfig):
             self.task_names = [f"task_{i}" for i in range(self.num_tasks)]
         
         if len(self.task_types) != self.num_tasks:
-            self.task_types = [POPSSTaskType.REGRESSION] * self.num_tasks
+            self.task_types = [PiscesLxTaskType.REGRESSION] * self.num_tasks
 
 
-class POPSSMultiTaskOperator(PiscesLxOperatorInterface):
+class PiscesLxMultiTaskOperator(PiscesLxOperatorInterface):
     """
     Task uncertainty-based multi-task learning operator.
     
@@ -232,7 +232,7 @@ class POPSSMultiTaskOperator(PiscesLxOperatorInterface):
        - Training dynamics reporting
     
     Attributes:
-        config: POPSSMultiTaskConfig instance
+        config: PiscesLxMultiTaskConfig instance
         log_uncertainty: nn.Parameter tensor for log(sigma) values
         step_count: Number of calls since initialization
         uncertainty_history: List of uncertainty values over time
@@ -246,7 +246,7 @@ class POPSSMultiTaskOperator(PiscesLxOperatorInterface):
         O(num_tasks) for uncertainty parameters and statistics.
     """
     
-    def __init__(self, config: Optional[POPSSMultiTaskConfig] = None):
+    def __init__(self, config: Optional[PiscesLxMultiTaskConfig] = None):
         """
         Initialize the multi-task uncertainty operator.
         
@@ -255,7 +255,7 @@ class POPSSMultiTaskOperator(PiscesLxOperatorInterface):
                    with standard multi-task parameters is used.
         """
         super().__init__(config)
-        self.config = config or POPSSMultiTaskConfig()
+        self.config = config or PiscesLxMultiTaskConfig()
         self.log_uncertainty: Optional[torch.nn.Parameter] = None
         self.step_count: int = 0
         self.uncertainty_history: List[torch.Tensor] = []
@@ -707,7 +707,7 @@ class POPSSMultiTaskOperator(PiscesLxOperatorInterface):
         self._logger.info("Uncertainty parameters unfrozen")
 
 
-class POPSSMultiTaskFacade:
+class PiscesLxMultiTaskFacade:
     """
     Convenience facade for quick multi-task uncertainty setup.
     
@@ -715,7 +715,7 @@ class POPSSMultiTaskFacade:
     automatically handling uncertainty initialization and loss combination.
     
     Usage:
-        >>> facade = POPSSMultiTaskFacade(num_tasks=3)
+        >>> facade = PiscesLxMultiTaskFacade(num_tasks=3)
         >>> combined_loss = facade.compute_loss([loss1, loss2, loss3])
     """
     
@@ -735,13 +735,13 @@ class POPSSMultiTaskFacade:
             task_names: Optional task names for logging.
             reduction: Loss reduction method.
         """
-        config = POPSSMultiTaskConfig(
+        config = PiscesLxMultiTaskConfig(
             num_tasks=num_tasks,
             initial_uncertainty=initial_uncertainty,
             task_names=task_names or [f"task_{i}" for i in range(num_tasks)],
             reduction=reduction
         )
-        self.operator = POPSSMultiTaskOperator(config)
+        self.operator = PiscesLxMultiTaskOperator(config)
     
     def compute_loss(
         self,
@@ -773,19 +773,19 @@ class POPSSMultiTaskFacade:
         return self.operator._get_uncertainties()
 
 
-class POPSSTaskUncertaintyWeighting:
-    def __init__(self, config: Optional[POPSSMultiTaskConfig] = None):
-        self.config = config or POPSSMultiTaskConfig()
-        self._operator = POPSSMultiTaskOperator(self.config)
+class PiscesLxTaskUncertaintyWeighting:
+    def __init__(self, config: Optional[PiscesLxMultiTaskConfig] = None):
+        self.config = config or PiscesLxMultiTaskConfig()
+        self._operator = PiscesLxMultiTaskOperator(self.config)
 
     def compute(self, task_losses: List[torch.Tensor], model: Optional[nn.Module] = None) -> PiscesLxOperatorResult:
         return self._operator.execute({"task_losses": task_losses, "model": model})
 
 
 __all__ = [
-    "POPSSTaskType",
-    "POPSSMultiTaskConfig",
-    "POPSSMultiTaskOperator",
-    "POPSSMultiTaskFacade",
-    "POPSSTaskUncertaintyWeighting",
+    "PiscesLxTaskType",
+    "PiscesLxMultiTaskConfig",
+    "PiscesLxMultiTaskOperator",
+    "PiscesLxMultiTaskFacade",
+    "PiscesLxTaskUncertaintyWeighting",
 ]

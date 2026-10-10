@@ -52,7 +52,7 @@ import threading
 
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import PiscesLxDataset, DataLoader
 from tqdm import tqdm
 
 from utils.dc import PiscesLxLogger
@@ -62,7 +62,7 @@ _LOG = PiscesLxLogger("PiscesLx.Tools.Benchmark", file_path=get_log_file("Pisces
 
 
 @dataclass
-class PiscesL1BenchmarkConfig:
+class PiscesLxBenchmarkConfig:
     """Benchmark configuration."""
     
     model_path: str = ".pisceslx/ckpt"
@@ -93,7 +93,7 @@ class PiscesL1BenchmarkConfig:
     verbose: bool = True
 
 
-class PiscesL1BenchmarkDataset(Dataset):
+class PiscesLxBenchmarkDataset(PiscesLxDataset):
     """Base benchmark dataset class."""
     
     def __init__(self, data: List[Dict[str, Any]], tokenizer: Any):
@@ -113,7 +113,7 @@ class PiscesL1BenchmarkDataset(Dataset):
         raise NotImplementedError
 
 
-class MMLUDataset(PiscesL1BenchmarkDataset):
+class PiscesLxMMLUDataset(PiscesLxBenchmarkDataset):
     """MMLU benchmark dataset."""
     
     SUBJECTS = [
@@ -142,7 +142,7 @@ class MMLUDataset(PiscesL1BenchmarkDataset):
         
         Args:
             tokenizer: Tokenizer for encoding inputs.
-            split: Dataset split ('test' or 'dev').
+            split: PiscesLxDataset split ('test' or 'dev').
             subjects: List of subjects to evaluate. If None, uses all.
         """
         from datasets import load_dataset
@@ -202,7 +202,7 @@ Options:
         }
 
 
-class HumanEvalDataset(PiscesL1BenchmarkDataset):
+class PiscesLxHumanEvalDataset(PiscesLxBenchmarkDataset):
     """HumanEval benchmark dataset."""
     
     def __init__(self, tokenizer: Any):
@@ -245,7 +245,7 @@ class HumanEvalDataset(PiscesL1BenchmarkDataset):
         }
 
 
-class GSM8KDataset(PiscesL1BenchmarkDataset):
+class PiscesLxGSM8KDataset(PiscesLxBenchmarkDataset):
     """GSM8K math reasoning benchmark dataset."""
     
     def __init__(self, tokenizer: Any, split: str = "test"):
@@ -292,12 +292,12 @@ Answer: """
         }
 
 
-class PiscesL1BenchmarkEvaluator:
+class PiscesLxBenchmarkEvaluator:
     """Benchmark evaluator for PiscesLx model."""
     
     def __init__(
         self,
-        config: PiscesL1BenchmarkConfig,
+        config: PiscesLxBenchmarkConfig,
         model: nn.Module,
         tokenizer: Any,
     ):
@@ -315,13 +315,13 @@ class PiscesL1BenchmarkEvaluator:
         self.results = {}
         self.lock = threading.Lock()
         
-        _LOG.info("PiscesL1BenchmarkEvaluator initialized")
+        _LOG.info("PiscesLxBenchmarkEvaluator initialized")
     
     def evaluate_mmlu(self) -> Dict[str, float]:
         """Evaluate on MMLU benchmark."""
         _LOG.info("Evaluating MMLU...")
         
-        dataset = MMLUDataset(self.tokenizer, split="test")
+        dataset = PiscesLxMMLUDataset(self.tokenizer, split="test")
         dataloader = DataLoader(
             dataset,
             batch_size=self.config.batch_size,
@@ -381,7 +381,7 @@ class PiscesL1BenchmarkEvaluator:
         """Evaluate on HumanEval benchmark."""
         _LOG.info("Evaluating HumanEval...")
         
-        dataset = HumanEvalDataset(self.tokenizer)
+        dataset = PiscesLxHumanEvalDataset(self.tokenizer)
         dataloader = DataLoader(
             dataset,
             batch_size=self.config.batch_size,
@@ -451,7 +451,7 @@ class PiscesL1BenchmarkEvaluator:
         """Evaluate on GSM8K benchmark."""
         _LOG.info("Evaluating GSM8K...")
         
-        dataset = GSM8KDataset(self.tokenizer, split="test")
+        dataset = PiscesLxGSM8KDataset(self.tokenizer, split="test")
         dataloader = DataLoader(
             dataset,
             batch_size=self.config.batch_size,
@@ -1609,10 +1609,10 @@ Options:
 
 
 def create_benchmark_evaluator(
-    config: PiscesL1BenchmarkConfig,
+    config: PiscesLxBenchmarkConfig,
     model: nn.Module,
     tokenizer: Any,
-) -> PiscesL1BenchmarkEvaluator:
+) -> PiscesLxBenchmarkEvaluator:
     """Factory function to create benchmark evaluator.
     
     Args:
@@ -1623,14 +1623,14 @@ def create_benchmark_evaluator(
     Returns:
         Initialized benchmark evaluator.
     """
-    return PiscesL1BenchmarkEvaluator(
+    return PiscesLxBenchmarkEvaluator(
         config=config,
         model=model,
         tokenizer=tokenizer,
     )
 
 
-class POPSSBenchmarkResult:
+class PiscesLxBenchmarkResult:
     """Standardized benchmark result container."""
 
     def __init__(self, name: str):
@@ -1656,7 +1656,7 @@ class POPSSBenchmarkResult:
         }
 
 
-class POPSSBaseBenchmark(ABC):
+class PiscesLxBaseBenchmark(ABC):
     """Abstract base class for all standard benchmarks."""
 
     def __init__(self, model: nn.Module, tokenizer: Any, device: str = "cuda", temperature: float = 0.0):
@@ -1664,10 +1664,10 @@ class POPSSBaseBenchmark(ABC):
         self.tokenizer = tokenizer
         self.device = device
         self.temperature = temperature
-        self.result: Optional[POPSSBenchmarkResult] = None
+        self.result: Optional[PiscesLxBenchmarkResult] = None
 
     @abstractmethod
-    def evaluate(self) -> POPSSBenchmarkResult:
+    def evaluate(self) -> PiscesLxBenchmarkResult:
         ...
 
     def _generate(self, prompt: str, max_new_tokens: int = 512, do_sample: bool = False) -> str:
@@ -1688,7 +1688,7 @@ class POPSSBaseBenchmark(ABC):
         return self.tokenizer.decode(output[0][encoding["input_ids"].shape[1]:], skip_special_tokens=True).strip()
 
 
-class POPSSMMLUBenchmark(POPSSBaseBenchmark):
+class PiscesLxMMLUBenchmark(PiscesLxBaseBenchmark):
     """MMLU: Massive Multitask Language Understanding with 57 subjects, 5-shot evaluation."""
 
     SUBJECTS = [
@@ -1747,8 +1747,8 @@ class POPSSMMLUBenchmark(POPSSBaseBenchmark):
         prompt += "Answer: "
         return prompt
 
-    def evaluate(self) -> POPSSBenchmarkResult:
-        result = POPSSBenchmarkResult("mmlu")
+    def evaluate(self) -> PiscesLxBenchmarkResult:
+        result = PiscesLxBenchmarkResult("mmlu")
         start_time = time.time()
 
         from datasets import load_dataset
@@ -1794,7 +1794,7 @@ class POPSSMMLUBenchmark(POPSSBaseBenchmark):
         return result
 
 
-class POPSSHumanEvalBenchmark(POPSSBaseBenchmark):
+class PiscesLxHumanEvalBenchmark(PiscesLxBaseBenchmark):
     """HumanEval: Code generation with pass@1, pass@10, pass@100 metrics."""
 
     def __init__(
@@ -1850,8 +1850,8 @@ class POPSSHumanEvalBenchmark(POPSSBaseBenchmark):
             return 1.0
         return 1.0 - math.prod((n - c - i) / (n - i) for i in range(k))
 
-    def evaluate(self) -> POPSSBenchmarkResult:
-        result = POPSSBenchmarkResult("humaneval")
+    def evaluate(self) -> PiscesLxBenchmarkResult:
+        result = PiscesLxBenchmarkResult("humaneval")
         start_time = time.time()
 
         from datasets import load_dataset
@@ -1904,7 +1904,7 @@ class POPSSHumanEvalBenchmark(POPSSBaseBenchmark):
         return result
 
 
-class POPSSAIMEBenchmark(POPSSBaseBenchmark):
+class PiscesLxAIMEBenchmark(PiscesLxBaseBenchmark):
     """AIME: American Invitational Mathematics Examination, 30 problems with step-by-step solutions."""
 
     def __init__(
@@ -1959,8 +1959,8 @@ class POPSSAIMEBenchmark(POPSSBaseBenchmark):
             problems.extend(fallback_problems)
         return problems[:30]
 
-    def evaluate(self) -> POPSSBenchmarkResult:
-        result = POPSSBenchmarkResult("aime")
+    def evaluate(self) -> PiscesLxBenchmarkResult:
+        result = PiscesLxBenchmarkResult("aime")
         start_time = time.time()
 
         problems = self._load_aime_problems()
@@ -2009,7 +2009,7 @@ Step-by-step solution:
         return result
 
 
-class POPSSSWEBenchBenchmark(POPSSBaseBenchmark):
+class PiscesLxSWEBenchBenchmark(PiscesLxBaseBenchmark):
     """SWE-bench: Software engineering benchmark resolving real GitHub issues."""
 
     def __init__(
@@ -2081,8 +2081,8 @@ Issue Description:
                 except Exception:
                     pass
 
-    def evaluate(self) -> POPSSBenchmarkResult:
-        result = POPSSBenchmarkResult("swebench")
+    def evaluate(self) -> PiscesLxBenchmarkResult:
+        result = PiscesLxBenchmarkResult("swebench")
         start_time = time.time()
 
         from datasets import load_dataset
@@ -2138,7 +2138,7 @@ Issue Description:
 
 
 @dataclass
-class POPSSBenchmarkSuiteConfig:
+class PiscesLxBenchmarkSuiteConfig:
     """Configuration for the aggregated benchmark suite."""
 
     model_path: str = ".pisceslx/ckpt"
@@ -2169,29 +2169,29 @@ class POPSSBenchmarkSuiteConfig:
     verbose: bool = True
 
 
-class POPSSBenchmarkSuite:
+class PiscesLxBenchmarkSuite:
     """Aggregated benchmark suite running all standard benchmarks with a unified report."""
 
     def __init__(
         self,
-        config: POPSSBenchmarkSuiteConfig,
+        config: PiscesLxBenchmarkSuiteConfig,
         model: nn.Module,
         tokenizer: Any,
     ):
         self.config = config
         self.model = model
         self.tokenizer = tokenizer
-        self.results: Dict[str, POPSSBenchmarkResult] = {}
+        self.results: Dict[str, PiscesLxBenchmarkResult] = {}
 
-        _LOG.info("POPSSBenchmarkSuite initialized")
+        _LOG.info("PiscesLxBenchmarkSuite initialized")
 
     def run_all(self) -> Dict[str, Any]:
-        _LOG.info("POPSSBenchmarkSuite: running all benchmarks...")
+        _LOG.info("PiscesLxBenchmarkSuite: running all benchmarks...")
 
         if self.config.run_mmlu:
             _LOG.info("Starting MMLU benchmark...")
             try:
-                mmlu = POPSSMMLUBenchmark(self.model, self.tokenizer, self.config.device, self.config.temperature)
+                mmlu = PiscesLxMMLUBenchmark(self.model, self.tokenizer, self.config.device, self.config.temperature)
                 self.results["mmlu"] = mmlu.evaluate()
             except Exception as e:
                 _LOG.error(f"MMLU failed: {e}")
@@ -2199,7 +2199,7 @@ class POPSSBenchmarkSuite:
         if self.config.run_humaneval:
             _LOG.info("Starting HumanEval benchmark...")
             try:
-                humaneval = POPSSHumanEvalBenchmark(
+                humaneval = PiscesLxHumanEvalBenchmark(
                     self.model, self.tokenizer, self.config.device, self.config.temperature,
                     num_samples_per_task=self.config.humaneval_num_samples,
                     timeout_seconds=self.config.humaneval_timeout,
@@ -2211,7 +2211,7 @@ class POPSSBenchmarkSuite:
         if self.config.run_aime:
             _LOG.info("Starting AIME benchmark...")
             try:
-                aime = POPSSAIMEBenchmark(self.model, self.tokenizer, self.config.device, self.config.temperature, year=self.config.aime_year)
+                aime = PiscesLxAIMEBenchmark(self.model, self.tokenizer, self.config.device, self.config.temperature, year=self.config.aime_year)
                 self.results["aime"] = aime.evaluate()
             except Exception as e:
                 _LOG.error(f"AIME failed: {e}")
@@ -2219,7 +2219,7 @@ class POPSSBenchmarkSuite:
         if self.config.run_swebench:
             _LOG.info("Starting SWE-bench benchmark...")
             try:
-                swebench = POPSSSWEBenchBenchmark(
+                swebench = PiscesLxSWEBenchBenchmark(
                     self.model, self.tokenizer, self.config.device, self.config.temperature,
                     max_instances=self.config.swebench_max_instances,
                 )
@@ -2307,7 +2307,7 @@ class POPSSBenchmarkSuite:
         print(f"  {'Average':<20s}: {report.get('average', 0):.4f}")
         print("=" * 70 + "\n")
 
-    def get_result(self, name: str) -> Optional[POPSSBenchmarkResult]:
+    def get_result(self, name: str) -> Optional[PiscesLxBenchmarkResult]:
         return self.results.get(name)
 
 
@@ -2317,7 +2317,7 @@ def benchmark_main(args):
     from model.core.model import YvModel
     from model.config import YvConfig
 
-    config = PiscesL1BenchmarkConfig(
+    config = PiscesLxBenchmarkConfig(
         model_path=args.model_path,
         output_dir=args.output_dir,
         batch_size=args.batch_size,

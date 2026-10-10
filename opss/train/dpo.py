@@ -81,7 +81,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import PiscesLxDataset, DataLoader
 from torch.cuda.amp import GradScaler, autocast
 import transformer_engine.pytorch as te
 from transformer_engine.common.recipe import Format, DelayedScaling
@@ -95,7 +95,7 @@ from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResu
 
 
 @dataclass
-class POPSSDPOTrainingConfig:
+class PiscesLxDPOTrainingConfig:
     """
     Configuration for DPO training.
     
@@ -185,7 +185,7 @@ class POPSSDPOTrainingConfig:
 
 
 @dataclass
-class POPSSOPDConfig:
+class PiscesLxOPDConfig:
     """
     On-Policy Distillation (OPD) Configuration.
 
@@ -218,7 +218,7 @@ class POPSSOPDConfig:
 
 
 @dataclass
-class POPSSGRMConfig:
+class PiscesLxGRMConfig:
     """
     Generative Reward Model (GRM) Configuration.
 
@@ -240,9 +240,9 @@ class POPSSGRMConfig:
     grm_use_implicit_reward: bool = True
 
 
-class POPSSDPODataset(Dataset):
+class PiscesLxDPODataset(PiscesLxDataset):
     """
-    Dataset for DPO training with preference pairs.
+    PiscesLxDataset for DPO training with preference pairs.
     
     This dataset loads preference data in JSONL format where each sample
     contains a prompt, chosen response, and rejected response.
@@ -423,7 +423,7 @@ def opd_loss(
     student_logits: torch.Tensor,
     teacher_log_probs: torch.Tensor,
     student_log_probs: torch.Tensor,
-    config: POPSSOPDConfig,
+    config: PiscesLxOPDConfig,
     advantages: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, Dict[str, float]]:
     """
@@ -486,7 +486,7 @@ def opd_loss(
     return loss, metrics
 
 
-class POPSSDPOLoggingCallback:
+class PiscesLxDPOLoggingCallback:
     """
     Logging callback for DPO training.
     
@@ -534,7 +534,7 @@ class POPSSDPOLoggingCallback:
 
 
 # Paper: Rafailov et al., "Direct Preference Optimization: Your Language Model is Secretly a Reward Model", NeurIPS 2023, arXiv:2305.18290
-class POPSSDPOTrainingOperator(PiscesLxOperatorInterface):
+class PiscesLxDPOTrainingOperator(PiscesLxOperatorInterface):
     """
     Direct Preference Optimization Training Operator.
     
@@ -562,14 +562,14 @@ class POPSSDPOTrainingOperator(PiscesLxOperatorInterface):
         - Comprehensive metrics tracking
     
     Attributes:
-        config: POPSSDPOTrainingConfig instance
+        config: PiscesLxDPOTrainingConfig instance
         logger: Logger instance
         device: Training device (cuda/cpu)
         is_distributed: Whether using distributed training
     
     Example:
-        >>> config = POPSSDPOTrainingConfig(beta=0.1, learning_rate=5e-7)
-        >>> operator = POPSSDPOTrainingOperator(config)
+        >>> config = PiscesLxDPOTrainingConfig(beta=0.1, learning_rate=5e-7)
+        >>> operator = PiscesLxDPOTrainingOperator(config)
         >>> result = operator.execute({
         ...     "model": policy_model,
         ...     "ref_model": ref_model,
@@ -578,7 +578,7 @@ class POPSSDPOTrainingOperator(PiscesLxOperatorInterface):
         ... })
     """
     
-    def __init__(self, config: Optional[POPSSDPOTrainingConfig] = None):
+    def __init__(self, config: Optional[PiscesLxDPOTrainingConfig] = None):
         """
         Initialize DPO training operator.
         
@@ -586,7 +586,7 @@ class POPSSDPOTrainingOperator(PiscesLxOperatorInterface):
             config: DPO training configuration. If None, uses default config.
         """
         super().__init__()
-        self.config = config or POPSSDPOTrainingConfig()
+        self.config = config or PiscesLxDPOTrainingConfig()
         self._LOG = PiscesLxLogger("PiscesLx.Opss.Train",file_path=get_log_file("PiscesLx.Opss.Train"), enable_file=True)
         
         # Determine device
@@ -829,7 +829,7 @@ class POPSSDPOTrainingOperator(PiscesLxOperatorInterface):
             ref_model.eval()
             
             # Create dataset and dataloader
-            train_dataset = POPSSDPODataset(
+            train_dataset = PiscesLxDPODataset(
                 train_data_path,
                 tokenizer,
                 self.config.max_prompt_length,
@@ -862,7 +862,7 @@ class POPSSDPOTrainingOperator(PiscesLxOperatorInterface):
             scaler = GradScaler() if self.config.use_fp16 else None
             
             # Setup logging callback
-            logging_callback = POPSSDPOLoggingCallback(self._LOG)
+            logging_callback = PiscesLxDPOLoggingCallback(self._LOG)
             
             # Training loop
             model.train()
@@ -985,7 +985,7 @@ class POPSSDPOTrainingOperator(PiscesLxOperatorInterface):
             )
 
 
-class POPSSOPDTrainer:
+class PiscesLxOPDTrainer:
     """
     On-Policy Distillation (OPD) Trainer.
 
@@ -1001,14 +1001,14 @@ class POPSSOPDTrainer:
         - Supports both online (teacher generates) and offline (cached) modes
 
     Example:
-        >>> config = POPSSOPDConfig(
+        >>> config = PiscesLxOPDConfig(
         ...     teacher_model_path=".pisceslx/teacher/ckpt",
         ...     student_model_path=".pisceslx/student/ckpt",
         ...     opd_temperature=2.0,
         ...     opd_kl_weight=0.7,
         ...     opd_ce_weight=0.3,
         ... )
-        >>> trainer = POPSSOPDTrainer(
+        >>> trainer = PiscesLxOPDTrainer(
         ...     teacher_model=teacher,
         ...     student_model=student,
         ...     config=config,
@@ -1020,15 +1020,15 @@ class POPSSOPDTrainer:
         self,
         teacher_model: nn.Module,
         student_model: nn.Module,
-        config: Optional[POPSSOPDConfig] = None,
+        config: Optional[PiscesLxOPDConfig] = None,
         teacher_optimizer: Optional[torch.optim.Optimizer] = None,
         student_optimizer: Optional[torch.optim.Optimizer] = None,
         tokenizer=None,
-        grm_model: Optional["POPSSGenerativeRewardModel"] = None,
+        grm_model: Optional["PiscesLxGenerativeRewardModel"] = None,
     ):
         self.teacher_model = teacher_model
         self.student_model = student_model
-        self.config = config or POPSSOPDConfig()
+        self.config = config or PiscesLxOPDConfig()
         self.tokenizer = tokenizer
         self.grm_model = grm_model
 
@@ -1300,7 +1300,7 @@ class POPSSOPDTrainer:
         return checkpoint["step"]
 
 
-class POPSSGenerativeRewardModel(nn.Module):
+class PiscesLxGenerativeRewardModel(nn.Module):
     """
     Generative Reward Model (GRM) wrapping a base LM with a reward head.
 
@@ -1319,9 +1319,9 @@ class POPSSGenerativeRewardModel(nn.Module):
         Base LM → Hidden States → [Reward Head MLP] → Scalar Reward
 
     Example:
-        >>> grm = POPSSGenerativeRewardModel(
+        >>> grm = PiscesLxGenerativeRewardModel(
         ...     base_model=language_model,
-        ...     config=POPSSGRMConfig(grm_hidden_size=4096, grm_num_layers=2),
+        ...     config=PiscesLxGRMConfig(grm_hidden_size=4096, grm_num_layers=2),
         ... )
         >>> reward = grm.compute_grm_reward(prompt="Hello", response="Hi there!")
     """
@@ -1329,10 +1329,10 @@ class POPSSGenerativeRewardModel(nn.Module):
     def __init__(
         self,
         base_model: nn.Module,
-        config: Optional[POPSSGRMConfig] = None,
+        config: Optional[PiscesLxGRMConfig] = None,
     ):
         super().__init__()
-        self.config = config or POPSSGRMConfig()
+        self.config = config or PiscesLxGRMConfig()
         self.base_model = base_model
         self.hidden_size = self.config.grm_hidden_size
 
@@ -1482,13 +1482,13 @@ class POPSSGenerativeRewardModel(nn.Module):
 
 
 __all__ = [
-    "POPSSDPOTrainingConfig",
-    "POPSSDPODataset",
-    "POPSSDPOTrainingOperator",
-    "POPSSDPOLoggingCallback",
-    "POPSSOPDConfig",
-    "POPSSOPDTrainer",
-    "POPSSGRMConfig",
-    "POPSSGenerativeRewardModel",
+    "PiscesLxDPOTrainingConfig",
+    "PiscesLxDPODataset",
+    "PiscesLxDPOTrainingOperator",
+    "PiscesLxDPOLoggingCallback",
+    "PiscesLxOPDConfig",
+    "PiscesLxOPDTrainer",
+    "PiscesLxGRMConfig",
+    "PiscesLxGenerativeRewardModel",
     "opd_loss",
 ]

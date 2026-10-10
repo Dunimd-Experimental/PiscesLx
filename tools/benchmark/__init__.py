@@ -45,7 +45,7 @@ from .builders import (
 )
 from .result import PiscesLxToolsResultManager, PiscesLxToolsComparisonManager
 from .runner import PiscesLxToolsBenchmark, PiscesLxToolsBenchmarkRunner, PiscesLxToolsBenchmarkComparer
-from .benchmark import PiscesL1BenchmarkConfig, PiscesL1BenchmarkEvaluator, create_benchmark_evaluator
+from .benchmark import PiscesLxBenchmarkConfig, PiscesLxBenchmarkEvaluator, create_benchmark_evaluator
 
 from .multimodal import (
     PiscesLxToolsMultimodalConfig,
@@ -93,14 +93,14 @@ from .comparison import (
 # Standard benchmark interfaces (POPSS namespace)
 
 from .benchmark import (
-    POPSSBenchmarkResult,
-    POPSSBaseBenchmark,
-    POPSSMMLUBenchmark,
-    POPSSHumanEvalBenchmark,
-    POPSSAIMEBenchmark,
-    POPSSSWEBenchBenchmark,
-    POPSSBenchmarkSuiteConfig,
-    POPSSBenchmarkSuite,
+    PiscesLxBenchmarkResult,
+    PiscesLxBaseBenchmark,
+    PiscesLxMMLUBenchmark,
+    PiscesLxHumanEvalBenchmark,
+    PiscesLxAIMEBenchmark,
+    PiscesLxSWEBenchBenchmark,
+    PiscesLxBenchmarkSuiteConfig,
+    PiscesLxBenchmarkSuite,
 )
 
 from .performance import (
@@ -123,8 +123,8 @@ __all__ = [
     "PiscesLxToolsBenchmark",
     "PiscesLxToolsBenchmarkRunner",
     "PiscesLxToolsBenchmarkComparer",
-    "PiscesL1BenchmarkConfig",
-    "PiscesL1BenchmarkEvaluator",
+    "PiscesLxBenchmarkConfig",
+    "PiscesLxBenchmarkEvaluator",
     "create_benchmark_evaluator",
     "PiscesLxToolsMultimodalConfig",
     "PiscesLxToolsVisionEvaluator",
@@ -157,12 +157,12 @@ __all__ = [
     "PiscesLxToolsPerformanceMetrics",
     "PiscesLxToolsPerformanceBenchmarkRunner",
     "create_performance_evaluator",
-    "POPSSBenchmarkResult",
-    "POPSSBaseBenchmark",
-    "POPSSMMLUBenchmark",
-    "POPSSHumanEvalBenchmark",
-    "POPSSAIMEBenchmark",
-    "POPSSSWEBenchBenchmark",
-    "POPSSBenchmarkSuiteConfig",
-    "POPSSBenchmarkSuite",
+    "PiscesLxBenchmarkResult",
+    "PiscesLxBaseBenchmark",
+    "PiscesLxMMLUBenchmark",
+    "PiscesLxHumanEvalBenchmark",
+    "PiscesLxAIMEBenchmark",
+    "PiscesLxSWEBenchBenchmark",
+    "PiscesLxBenchmarkSuiteConfig",
+    "PiscesLxBenchmarkSuite",
 ]

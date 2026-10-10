@@ -29,7 +29,7 @@ from utils.dc import PiscesLxLogger
 from utils.paths import get_log_file
 _LOG = PiscesLxLogger("PiscesLx.Tools.Data", file_path=get_log_file("PiscesLx.Tools.Data"), enable_file=True)
 
-class MediaCleaner:
+class PiscesLxMediaCleaner:
     @staticmethod
     def clean_image(image_path: str, min_size=(224, 224)) -> Optional[str]:
         """

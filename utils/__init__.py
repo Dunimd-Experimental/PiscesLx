@@ -32,7 +32,7 @@ and other core functionality.
 For advanced operators (quantization, checkpoint, scaling, validation, concurrency),
 please use the opss module instead:
     from opss.quantize import QuantizationEngine
-    from opss.train.checkpoint import CheckpointOperator
+    from opss.train.checkpoint import PiscesLxCheckpointOperator
     from opss.scaling import PiscesLxChinchillaScaler
     from opss.validation import ValidatorOperator
     from opss.concurrency import ConcurrencyOperator

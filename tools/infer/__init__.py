@@ -37,7 +37,7 @@ self-contained, well-documented, and follows standardized interfaces.
 Key Components:
     - PiscesLxInferenceEngine: Core inference engine with multi-backend support
     - PiscesLxInferService: OpenAI-compatible backend service
-    - InferenceConfig: Comprehensive configuration management for inference parameters
+    - PiscesLxInferenceConfig: Comprehensive configuration management for inference parameters
     - InferenceOrchestrator: High-level coordinator managing the complete inference pipeline
 
 Architecture:
@@ -75,8 +75,8 @@ API Endpoints:
 
 Usage Examples:
     Basic inference:
-    >>> from tools.infer import PiscesLxInferenceEngine, InferenceConfig
-    >>> config = InferenceConfig(model_path="path/to/model")
+    >>> from tools.infer import PiscesLxInferenceEngine, PiscesLxInferenceConfig
+    >>> config = PiscesLxInferenceConfig(model_path="path/to/model")
     >>> engine = PiscesLxInferenceEngine(config)
     >>> result = engine.generate("Hello, world!")
     
@@ -109,35 +109,35 @@ See Also:
 
 from .core import PiscesLxInferenceEngine
 from .config import (
-    InferenceConfig,
-    MoEConfig,
-    ModelSpec,
-    OPSSConfig,
-    RunConfig,
-    ServiceConfig,
+    PiscesLxInferenceConfig,
+    PiscesLxMoEConfig,
+    PiscesLxModelSpec,
+    PiscesLxOPSSConfig,
+    PiscesLxRunConfig,
+    PiscesLxServiceConfig,
     MODEL_SPECS,
     get_model_spec,
     list_available_models,
 )
 from .server import PiscesLxInferService, PiscesLxBackendServer, create_service
 from .protocol import (
-    ChatCompletionRequest,
-    ChatCompletionResponse,
-    ChatCompletionChunk,
-    CompletionRequest,
-    CompletionResponse,
-    EmbeddingRequest,
-    EmbeddingResponse,
-    ImageGenerationRequest,
-    ImageGenerationResponse,
-    VideoGenerationRequest,
-    VideoGenerationResponse,
-    AgentExecuteRequest,
-    AgentExecuteResponse,
-    SwarmExecuteRequest,
-    SwarmExecuteResponse,
-    ToolExecuteRequest,
-    ToolExecuteResponse,
+    PiscesLxChatCompletionRequest,
+    PiscesLxChatCompletionResponse,
+    PiscesLxChatCompletionChunk,
+    PiscesLxCompletionRequest,
+    PiscesLxCompletionResponse,
+    PiscesLxEmbeddingRequest,
+    PiscesLxEmbeddingResponse,
+    PiscesLxImageGenerationRequest,
+    PiscesLxImageGenerationResponse,
+    PiscesLxVideoGenerationRequest,
+    PiscesLxVideoGenerationResponse,
+    PiscesLxAgentExecuteRequest,
+    PiscesLxAgentExecuteResponse,
+    PiscesLxSwarmExecuteRequest,
+    PiscesLxSwarmExecuteResponse,
+    PiscesLxToolExecuteRequest,
+    PiscesLxToolExecuteResponse,
 )
 from .model_router import PiscesLxModelRouter, PiscesLxRoutingStrategy
 from .agent_interceptor import PiscesLxAgentInterceptor, PiscesLxAgentMode
@@ -155,12 +155,12 @@ __all__ = [
     "PiscesLxInferService",
     "PiscesLxBackendServer",
     "create_service",
-    "InferenceConfig",
-    "MoEConfig",
-    "ModelSpec",
-    "OPSSConfig",
-    "RunConfig",
-    "ServiceConfig",
+    "PiscesLxInferenceConfig",
+    "PiscesLxMoEConfig",
+    "PiscesLxModelSpec",
+    "PiscesLxOPSSConfig",
+    "PiscesLxRunConfig",
+    "PiscesLxServiceConfig",
     "MODEL_SPECS",
     "get_model_spec",
     "list_available_models",
@@ -170,21 +170,21 @@ __all__ = [
     "PiscesLxAgentInterceptor",
     "PiscesLxAgentMode",
     "PiscesLxRunIntegration",
-    "ChatCompletionRequest",
-    "ChatCompletionResponse",
-    "ChatCompletionChunk",
-    "CompletionRequest",
-    "CompletionResponse",
-    "EmbeddingRequest",
-    "EmbeddingResponse",
-    "ImageGenerationRequest",
-    "ImageGenerationResponse",
-    "VideoGenerationRequest",
-    "VideoGenerationResponse",
-    "AgentExecuteRequest",
-    "AgentExecuteResponse",
-    "SwarmExecuteRequest",
-    "SwarmExecuteResponse",
-    "ToolExecuteRequest",
-    "ToolExecuteResponse",
+    "PiscesLxChatCompletionRequest",
+    "PiscesLxChatCompletionResponse",
+    "PiscesLxChatCompletionChunk",
+    "PiscesLxCompletionRequest",
+    "PiscesLxCompletionResponse",
+    "PiscesLxEmbeddingRequest",
+    "PiscesLxEmbeddingResponse",
+    "PiscesLxImageGenerationRequest",
+    "PiscesLxImageGenerationResponse",
+    "PiscesLxVideoGenerationRequest",
+    "PiscesLxVideoGenerationResponse",
+    "PiscesLxAgentExecuteRequest",
+    "PiscesLxAgentExecuteResponse",
+    "PiscesLxSwarmExecuteRequest",
+    "PiscesLxSwarmExecuteResponse",
+    "PiscesLxToolExecuteRequest",
+    "PiscesLxToolExecuteResponse",
 ]

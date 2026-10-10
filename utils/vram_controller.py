@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 
 
 @dataclass
-class VRAMProfile:
+class PiscesLxVRAMProfile:
     """Hardware VRAM profile."""
     total_gb: float = 0.0
     free_gb: float = 0.0
@@ -46,9 +46,9 @@ class VRAMProfile:
         return self.total_gb * 0.9
 
 
-def profile_gpu() -> VRAMProfile:
+def profile_gpu() -> PiscesLxVRAMProfile:
     """Profile available GPU hardware."""
-    profile = VRAMProfile()
+    profile = PiscesLxVRAMProfile()
     if not torch.cuda.is_available():
         profile.total_gb = 0
         profile.free_gb = 0
@@ -106,7 +106,7 @@ def estimate_model_vram(
 
 
 @dataclass
-class VRAMOptConfig:
+class PiscesLxVRAMOptConfig:
     """Output of VRAM optimization planning.
 
     This is what gets applied to the model config.
@@ -205,11 +205,11 @@ def _estimate_activation_gb(cfg, batch_size: int = 1, seq_len: int = 2048) -> fl
 
 def optimize_for_vram(
     cfg,
-    profile: Optional[VRAMProfile] = None,
+    profile: Optional[PiscesLxVRAMProfile] = None,
     num_params_b: Optional[float] = None,
     batch_size: int = 1,
     seq_len: int = 2048,
-) -> VRAMOptConfig:
+) -> PiscesLxVRAMOptConfig:
     """Automatically select optimal VRAM settings.
 
     Given a model config and hardware profile, selects the best set of
@@ -223,10 +223,10 @@ def optimize_for_vram(
         seq_len: Training sequence length.
 
     Returns:
-        VRAMOptConfig with optimized settings.
+        PiscesLxVRAMOptConfig with optimized settings.
     """
     profile = profile or profile_gpu()
-    opt = VRAMOptConfig()
+    opt = PiscesLxVRAMOptConfig()
 
     if num_params_b is None:
         num_params_b = _estimate_params_b(cfg)
@@ -322,7 +322,7 @@ def _estimate_params_b(cfg) -> float:
     return total / 1e9
 
 
-class YvVRAMMonitor:
+class PiscesLxVRAMMonitor:
     """Runtime VRAM monitor that dynamically adjusts optimizations.
 
     Monitors GPU VRAM usage during training and can trigger adjustments
@@ -438,14 +438,14 @@ class YvVRAMMonitor:
 
 
 # Globally shared VRAM monitor
-_monitor: Optional[YvVRAMMonitor] = None
+_monitor: Optional[PiscesLxVRAMMonitor] = None
 
 
-def get_vram_monitor(cfg=None) -> YvVRAMMonitor:
+def get_vram_monitor(cfg=None) -> PiscesLxVRAMMonitor:
     """Get or create the shared VRAM monitor."""
     global _monitor
     if _monitor is None and cfg is not None:
-        _monitor = YvVRAMMonitor(cfg)
+        _monitor = PiscesLxVRAMMonitor(cfg)
     return _monitor
 
 

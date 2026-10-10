@@ -40,14 +40,14 @@ Responsibilities:
 Architecture:
     The orchestrator acts as a high-level controller that manages:
     - PiscesLxTrainingOperator: Core training logic
-    - TrainingPipelineOperator: End-to-end pipeline management
+    - PiscesLxTrainingPipelineOperator: End-to-end pipeline management
     - Optimizer operators: GaLore, Lion, Sophia implementations
     - Quantization operators: QAT and post-training quantization
     - Multi-task operators: Task balancing and continual learning
 
 Configuration Sources:
     Configurations can be provided as:
-    - TrainingConfig object
+    - PiscesLxTrainingConfig object
     - Dictionary with configuration values
     - Path to JSON/YAML configuration file
 
@@ -93,9 +93,9 @@ from utils.opsc.interface import PiscesLxOperatorConfig
 from utils.opsc.registry import PiscesLxOperatorRegistrar
 from utils.dc import PiscesLxLogger
 
-from .config import TrainingConfig
+from .config import PiscesLxTrainingConfig
 from .core import PiscesLxTrainingOperator
-from .pipeline import TrainingPipelineOperator, CurriculumLearningOperator, PiscesLxMultiTaskTrainingOperator
+from .pipeline import PiscesLxTrainingPipelineOperator, PiscesLxCurriculumLearningOperator, PiscesLxMultiTaskTrainingOperator
 
 from utils.paths import get_cache_dir
 from utils.paths import get_log_file
@@ -112,7 +112,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
     training workflows.
     
     Attributes:
-        config: TrainingConfig instance with all parameters
+        config: PiscesLxTrainingConfig instance with all parameters
         training_operator: Core training operator
         pipeline_operator: Pipeline management operator
         is_initialized: Whether training components are initialized
@@ -127,12 +127,12 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         >>> results = orchestrator.start_training(epochs=3)
     """
     
-    def __init__(self, config: Optional[Union[PiscesLxOperatorConfig, TrainingConfig, str, Dict[str, Any]]] = None):
+    def __init__(self, config: Optional[Union[PiscesLxOperatorConfig, PiscesLxTrainingConfig, str, Dict[str, Any]]] = None):
         """
         Initialize training orchestrator.
         
         Args:
-            config: TrainingConfig, config file path, or configuration dictionary
+            config: PiscesLxTrainingConfig, config file path, or configuration dictionary
         """
         op_config = config if isinstance(config, PiscesLxOperatorConfig) else None
         super().__init__(op_config)
@@ -169,30 +169,30 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         else:
             _LOG.info("PiscesLxTrainOrchestrator initialized")
 
-    def _normalize_train_config(self, config: Optional[Union[PiscesLxOperatorConfig, TrainingConfig, str, Dict[str, Any]]]) -> TrainingConfig:
-        if isinstance(config, TrainingConfig):
+    def _normalize_train_config(self, config: Optional[Union[PiscesLxOperatorConfig, PiscesLxTrainingConfig, str, Dict[str, Any]]]) -> PiscesLxTrainingConfig:
+        if isinstance(config, PiscesLxTrainingConfig):
             return config
         
         if isinstance(config, str):
             return self._load_config_from_file(config)
         
         if isinstance(config, dict):
-            return TrainingConfig.from_dict(config)
+            return PiscesLxTrainingConfig.from_dict(config)
         
         if isinstance(config, PiscesLxOperatorConfig):
             params = getattr(config, "parameters", {}) or {}
             cfg = params.get("training_config", None)
-            if isinstance(cfg, TrainingConfig):
+            if isinstance(cfg, PiscesLxTrainingConfig):
                 return cfg
             if isinstance(cfg, str):
                 return self._load_config_from_file(cfg)
             if isinstance(cfg, dict):
-                return TrainingConfig.from_dict(cfg)
+                return PiscesLxTrainingConfig.from_dict(cfg)
             cfg_path = params.get("config_path")
             if isinstance(cfg_path, str) and cfg_path:
                 return self._load_config_from_file(cfg_path)
         
-        return TrainingConfig()
+        return PiscesLxTrainingConfig()
     
     def _init_dev_mode(self) -> None:
         """
@@ -286,13 +286,13 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         while self._check_dev_mode_pause():
             time.sleep(0.1)
     
-    def _load_config_from_file(self, config_path: str) -> TrainingConfig:
+    def _load_config_from_file(self, config_path: str) -> PiscesLxTrainingConfig:
         """Load configuration from file."""
         config_path = Path(config_path)
         if config_path.suffix.lower() == '.json':
-            return TrainingConfig.load_from_json(str(config_path))
+            return PiscesLxTrainingConfig.load_from_json(str(config_path))
         elif config_path.suffix.lower() in ['.yaml', '.yml']:
-            return TrainingConfig.load_from_yaml(str(config_path))
+            return PiscesLxTrainingConfig.load_from_yaml(str(config_path))
         else:
             raise ValueError(f"Unsupported config file format: {config_path.suffix}")
 
@@ -774,20 +774,20 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         pretrain to SFT to DPO) while preserving the model weights.
         
         Args:
-            new_stage: The target TrainingStage (can be string or TrainingStage enum)
+            new_stage: The target PiscesLxTrainingStage (can be string or PiscesLxTrainingStage enum)
             **stage_config: Additional configuration overrides for the new stage
             
         Returns:
             Self for method chaining
             
         Example:
-            >>> orchestrator.switch_stage(TrainingStage.SFT, learning_rate=5e-5)
+            >>> orchestrator.switch_stage(PiscesLxTrainingStage.SFT, learning_rate=5e-5)
             >>> orchestrator.switch_stage("alignment_dpo", beta=0.1)
         """
-        from .config import TrainingStage
+        from .config import PiscesLxTrainingStage
         
         if isinstance(new_stage, str):
-            new_stage = TrainingStage(new_stage)
+            new_stage = PiscesLxTrainingStage(new_stage)
         
         old_stage = self.stage
         _LOG.info(f"Switching training stage from {old_stage.value if old_stage else 'None'} to {new_stage.value}")
@@ -859,14 +859,14 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
 
         stage_param = params.get("stage")
         if stage_param:
-            from .config import TrainingStage
+            from .config import PiscesLxTrainingStage
             try:
                 if isinstance(stage_param, str):
-                    stage = TrainingStage(stage_param)
+                    stage = PiscesLxTrainingStage(stage_param)
                 else:
                     stage = stage_param
                 self.stage = stage
-                if self.stage == TrainingStage.ALIGNMENT_DPO or self.stage == TrainingStage.ALIGNMENT_PPO:
+                if self.stage == PiscesLxTrainingStage.ALIGNMENT_DPO or self.stage == PiscesLxTrainingStage.ALIGNMENT_PPO:
                     train_mode = "preference"
             except Exception as e:
                 _LOG.warning(f"Failed to parse stage parameter: {e}")
@@ -968,8 +968,8 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         
         if self.stage is not None:
             self.train_config.load_stage_config(self.stage)
-            from .config import TrainingStage
-            if self.stage in [TrainingStage.ALIGNMENT_DPO, TrainingStage.ALIGNMENT_PPO, TrainingStage.ALIGNMENT_ORPO]:
+            from .config import PiscesLxTrainingStage
+            if self.stage in [PiscesLxTrainingStage.ALIGNMENT_DPO, PiscesLxTrainingStage.ALIGNMENT_PPO, PiscesLxTrainingStage.ALIGNMENT_ORPO]:
                 self.train_config.output_dir = f".pisceslx/ckpt"
         
         try:
@@ -1256,9 +1256,9 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             from utils.modality_scanner import scan_dataset
             detected_modalities = scan_dataset(train_ds)
             if detected_modalities == {'text'}:
-                _LOG.info(f"Dataset {ds_name} is text-only, skipping multimodal encoders")
+                _LOG.info(f"PiscesLxDataset {ds_name} is text-only, skipping multimodal encoders")
             else:
-                _LOG.info(f"Dataset {ds_name} detected modalities: {detected_modalities}")
+                _LOG.info(f"PiscesLxDataset {ds_name} detected modalities: {detected_modalities}")
 
             if idx == 0:
                 self.initialize_training(
@@ -1294,9 +1294,9 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
                 )
                 raise
             except Exception as e:
-                from .pipeline import TrainingInterruption
-                if isinstance(e, TrainingInterruption):
-                    if e.mode == TrainingInterruption.SKIP_DATASET:
+                from .pipeline import PiscesLxTrainingInterruption
+                if isinstance(e, PiscesLxTrainingInterruption):
+                    if e.mode == PiscesLxTrainingInterruption.SKIP_DATASET:
                         _LOG.info(f"Skipping dataset {ds_name}, continuing to next")
                         results.append(
                             {
@@ -1366,7 +1366,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
 
         from model import YvConfig, YvModel
         from model.tokenizer import YvTokenizer
-        from opss.train.pref_align import POPSSPPOConfig, POPSSPreferenceAlignmentOperator
+        from opss.train.pref_align import PiscesLxPPOConfig, PiscesLxPreferenceAlignmentOperator
 
         cfg = YvConfig.from_yaml(str(model_cfg_path))
         self._apply_top_level_config(cfg)
@@ -1389,7 +1389,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
 
         base_tokenizer = YvTokenizer()
 
-        class _TorchTokenizerAdapter:
+        class _PiscesLxTorchTokenizerAdapter:
             def __init__(self, tok, max_length: int):
                 self._tok = tok
                 self._max_length = int(max_length)
@@ -1410,7 +1410,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
                     }
                 return {"input_ids": [ids], "attention_mask": [attn]}
 
-        tokenizer = _TorchTokenizerAdapter(base_tokenizer, max_length=rlhf_max_length)
+        tokenizer = _PiscesLxTorchTokenizerAdapter(base_tokenizer, max_length=rlhf_max_length)
 
         try:
             from datasets import load_dataset
@@ -1437,14 +1437,14 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         if not prompts:
             return {"status": "error", "reason": "no_prompts_in_dataset"}
 
-        op_cfg = POPSSPPOConfig(
+        op_cfg = PiscesLxPPOConfig(
             learning_rate=float(params.get("rlhf_lr") or 1e-5),
             ppo_epochs=int(rlhf_epochs),
             mini_batch_size=int(params.get("rlhf_mini_batch_size") or 1),
             max_grad_norm=float(params.get("max_grad_norm") or 1.0),
         )
 
-        op = POPSSPreferenceAlignmentOperator()
+        op = PiscesLxPreferenceAlignmentOperator()
         res = op.execute(
             {
                 "method": "ppo",
@@ -1523,13 +1523,13 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         model.eval()
         model.to("cpu")
 
-        from opss.quantize.pipeline import POPSSQuantizationPipelineOperator, QuantizationPipelineConfig
+        from opss.quantize.pipeline import PiscesLxQuantizationPipelineOperator, PiscesLxQuantizationPipelineConfig
 
         if bits not in (4, 8):
             return {"status": "error", "reason": f"unsupported_bits:{bits}"}
 
         method = "gptq" if bits == 4 else "smoothquant"
-        qcfg = QuantizationPipelineConfig(
+        qcfg = PiscesLxQuantizationPipelineConfig(
             method=method,
             bits=int(bits),
             group_size=int(params.get("group_size") or 128),
@@ -1540,7 +1540,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             enable_adaptive_allocation=bool(params.get("enable_adaptive_allocation") or False),
             validate_after_quantization=False,
         )
-        op = POPSSQuantizationPipelineOperator()
+        op = PiscesLxQuantizationPipelineOperator()
         res = op.execute({"model": model, "config": qcfg})
         if not res.is_success():
             return {"status": "error", "reason": f"quantize_failed:{res.error}"}
@@ -1626,7 +1626,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             self._setup_multitask()
         
         
-        self.pipeline = TrainingPipelineOperator(self.train_config, trainer=self.trainer)
+        self.pipeline = PiscesLxTrainingPipelineOperator(self.train_config, trainer=self.trainer)
         
         if hasattr(self.train_config, 'curriculum') and self.train_config.curriculum:
             self._setup_curriculum_learning()
@@ -1709,11 +1709,11 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         try:
             try:
                 from tools.data.distill.offline_teacher_provider import (
-                    POPSSTeacherProviderFactory,
-                    POPSSTeacherConfig,
-                    POPSSLocalTeacherProvider,
-                    POPSSServerTeacherProvider,
-                    POPSSRemoteTeacherProvider,
+                    PiscesLxTeacherProviderFactory,
+                    PiscesLxTeacherConfig,
+                    PiscesLxLocalTeacherProvider,
+                    PiscesLxServerTeacherProvider,
+                    PiscesLxRemoteTeacherProvider,
                 )
             except ImportError as _imp_err:
                 raise ImportError(
@@ -1722,7 +1722,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
                     f"reached through offline-generated data, never inside the engine."
                 ) from _imp_err
             
-            provider_config = POPSSTeacherConfig(
+            provider_config = PiscesLxTeacherConfig(
                 provider_type=teacher_type,
                 alpha=distill_alpha,
                 temperature=distill_temperature,
@@ -1730,12 +1730,12 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             
             if teacher_type == "local":
                 provider_config.model_path = teacher_path
-                self._teacher_provider = POPSSLocalTeacherProvider(provider_config)
+                self._teacher_provider = PiscesLxLocalTeacherProvider(provider_config)
                 _LOG.info(f"Local teacher provider created from: {teacher_path}")
             
             elif teacher_type == "server":
                 provider_config.server_url = teacher_path
-                self._teacher_provider = POPSSServerTeacherProvider(provider_config)
+                self._teacher_provider = PiscesLxServerTeacherProvider(provider_config)
                 _LOG.info(f"Server teacher provider created for: {teacher_path}")
             
             elif teacher_type == "remote":
@@ -1744,7 +1744,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
                     provider_config.model_name = teacher_name
                 if teacher_api_key:
                     provider_config.api_key = teacher_api_key
-                self._teacher_provider = POPSSRemoteTeacherProvider(
+                self._teacher_provider = PiscesLxRemoteTeacherProvider(
                     provider_config,
                     tokenizer=getattr(self, "_tokenizer", None),
                 )
@@ -1753,7 +1753,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             else:
                 _LOG.warning(f"Unknown teacher type: {teacher_type}, falling back to local")
                 provider_config.model_path = teacher_path
-                self._teacher_provider = POPSSLocalTeacherProvider(provider_config)
+                self._teacher_provider = PiscesLxLocalTeacherProvider(provider_config)
             
             if self.trainer is not None:
                 self.trainer.set_teacher_provider(self._teacher_provider)
@@ -1781,7 +1781,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             return
         _LOG.info(f"Building knowledge store at {store_path}")
         try:
-            from opss.knowledge.builder import POPSSKnowledgeBuilder
+            from opss.knowledge.builder import PiscesLxKnowledgeBuilder
             cfg = {
                 "store_path": store_path,
                 "slots": getattr(model_cfg, "knowledge_store_slots", None) or getattr(model_cfg, "memory_knowledge_slots", 4096),
@@ -1792,7 +1792,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
                 "index_nlist": getattr(model_cfg, "knowledge_store_index_nlist", 4096),
                 "index_m": getattr(model_cfg, "knowledge_store_index_m", 32),
             }
-            builder = POPSSKnowledgeBuilder(cfg)
+            builder = PiscesLxKnowledgeBuilder(cfg)
             builder.build()
             _LOG.info("Knowledge store build completed")
         except Exception as e:
@@ -1816,8 +1816,8 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         _LOG.info("Starting subconscious knowledge field warm-start")
         try:
             from opss.subconscious_trainer import YvSubconsciousTrainer
-            from opss.subconscious_trainer import SubconsciousTrainingConfig
-            trainer = YvSubconsciousTrainer(subconscious, config=SubconsciousTrainingConfig())
+            from opss.subconscious_trainer import PiscesLxSubconsciousTrainingConfig
+            trainer = YvSubconsciousTrainer(subconscious, config=PiscesLxSubconsciousTrainingConfig())
             sample_batch = next(iter(train_loader))
             hidden = getattr(self.trainer, "get_hidden_states", None)
             if hidden is not None:
@@ -1853,7 +1853,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
     def _setup_curriculum_learning(self):
         """Setup curriculum learning."""
         if hasattr(self.train_config, 'curriculum') and self.train_config.curriculum:
-            self.pipeline.curriculum = CurriculumLearningOperator(
+            self.pipeline.curriculum = PiscesLxCurriculumLearningOperator(
                 difficulty_schedule=self.train_config.curriculum
             )
             _LOG.info("Curriculum learning setup completed")
@@ -1904,7 +1904,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
 
         try:
             if getattr(self.train_config, 'enable_distillation', False):
-                _LOG.info("Distillation mode detected, using POPSSDistillationOperator")
+                _LOG.info("Distillation mode detected, using PiscesLxDistillationOperator")
                 return self._run_distillation_training(epochs, resume_from)
 
             train_loader = self._get_train_dataloader()
@@ -1941,7 +1941,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             raise
 
     def _run_distillation_training(self, epochs: int, resume_from: Optional[str]) -> Dict[str, Any]:
-        """Run distillation training using POPSSDistillationOperator."""
+        """Run distillation training using PiscesLxDistillationOperator."""
         _LOG.info("Starting distillation training...")
 
         teacher_provider = self._teacher_provider
@@ -1954,20 +1954,20 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         _e_direct = None
         _e_lazy = None
         try:
-            from opss.train.distill import POPSSDistillationConfig
+            from opss.train.distill import PiscesLxDistillationConfig
         except ImportError as _e:
             _e_direct = _e
             try:
-                from opss.train.distill import POPSSDistillationConfig
+                from opss.train.distill import PiscesLxDistillationConfig
             except ImportError as _e2:
                 _e_lazy = _e2
                 raise ImportError(
-                    "POPSSDistillationConfig not found. "
+                    "PiscesLxDistillationConfig not found. "
                     "Ensure opss/train/distill.py and opss/train/__init__.py are deployed. "
                     f"Direct import error: {_e_direct}. Lazy import error: {_e_lazy}."
                 )
 
-        distill_cfg = POPSSDistillationConfig(
+        distill_cfg = PiscesLxDistillationConfig(
             student_model_path=str(resume_from) if resume_from else ".pisceslx/ckpt",
             output_dir=getattr(self.train_config, 'output_dir', '.pisceslx/distill_output'),
             train_data=getattr(self.train_config.data, 'train_data_path', './data/train.jsonl'),
@@ -1984,7 +1984,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             use_gradient_checkpointing=True,
         )
 
-        from opss.train.distill_loss import POPSSDistillationLossConfig, POPSSDistillationLoss
+        from opss.train.distill_loss import PiscesLxDistillationLossConfig, PiscesLxDistillationLoss
 
         student_model = self.trainer.model if self.trainer else None
         if student_model is None:
@@ -1995,7 +1995,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             embed_attr = student_model.get_input_embeddings()
         model_vocab_size = embed_attr.weight.shape[0]
 
-        loss_config = POPSSDistillationLossConfig(
+        loss_config = PiscesLxDistillationLossConfig(
             temperature=distill_cfg.temperature,
             alpha=distill_cfg.alpha,
             beta=distill_cfg.beta,
@@ -2004,7 +2004,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             epsilon=distill_cfg.epsilon,
             ignore_index=distill_cfg.ignore_index,
         )
-        distill_loss_fn = POPSSDistillationLoss(loss_config)
+        distill_loss_fn = PiscesLxDistillationLoss(loss_config)
 
         self.trainer.set_distill_context(distill_loss_fn, model_vocab_size)
         _LOG.info("Distillation context injected into training engine")
@@ -2050,7 +2050,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         return self._build_default_dataloader(split="val")
 
     def _build_default_dataloader(self, split: str):
-        from torch.utils.data import Dataset, DataLoader
+        from torch.utils.data import PiscesLxDataset, DataLoader
 
         seq_len = int(getattr(self.train_config.data, "sequence_length", 0) or 0)
         batch_size = int(getattr(self.train_config.data, "batch_size", 1) or 1)
@@ -2064,7 +2064,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         )
         pad_to_multiple_of = 8 if use_pad_multiple else None
 
-        class PiscesLxJsonlTextDataset(Dataset):
+        class PiscesLxJsonlTextDataset(PiscesLxDataset):
             def __init__(self, samples: List[str], seq_len: int, tokenizer: Optional[Any] = None, packing: bool = False):
                 self.samples = samples
                 self.seq_len = seq_len
@@ -2142,7 +2142,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
 
         samples = self._load_text_samples(split=split)
         if not samples:
-            raise ValueError(f"No dataset samples available for split='{split}'. Configure TrainingConfig.data.datasets or pass dataloader factories.")
+            raise ValueError(f"No dataset samples available for split='{split}'. Configure PiscesLxTrainingConfig.data.datasets or pass dataloader factories.")
 
         tokenizer = getattr(self.trainer, "tokenizer", None) if self.trainer is not None else None
         dataset = PiscesLxJsonlTextDataset(
@@ -2207,7 +2207,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
                 continue
             p = Path(path)
             if not p.exists():
-                _LOG.warning("Dataset path not found", path=str(p))
+                _LOG.warning("PiscesLxDataset path not found", path=str(p))
                 continue
             if p.suffix.lower() in (".jsonl", ".json"):
                 with open(p, "r", encoding="utf-8") as f:
@@ -2334,7 +2334,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             state = json.load(f)
         
         # Restore configuration
-        self.train_config = TrainingConfig.from_dict(state['config'])
+        self.train_config = PiscesLxTrainingConfig.from_dict(state['config'])
         
         # Restore training history
         self.training_history = state.get('training_history', {})

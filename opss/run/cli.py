@@ -32,10 +32,10 @@ import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from .attacher import POPSSRunAttacher
-from .controller import POPSSRunController
-from .id_factory import POPSSRunIdFactory
-from .store import POPSSRunStore
+from .attacher import PiscesLxRunAttacher
+from .controller import PiscesLxRunController
+from .id_factory import PiscesLxRunIdFactory
+from .store import PiscesLxRunStore
 
 
 def _format_time(ts: str) -> str:
@@ -100,7 +100,7 @@ def _print_hint(msg: str):
     print(f"\033[90mHint: {msg}\033[0m")
 
 
-class POPSSRunCLI:
+class PiscesLxRunCLI:
     def __init__(self):
         self._logger = None
 
@@ -220,7 +220,7 @@ class POPSSRunCLI:
         v = str(v).strip() if v is not None else ""
         if v:
             return v
-        return POPSSRunIdFactory(prefix=prefix).new_id()
+        return PiscesLxRunIdFactory(prefix=prefix).new_id()
 
     def _build_train_forward_args(self, base_args: Any) -> List[str]:
         out: List[str] = []
@@ -296,8 +296,8 @@ class POPSSRunCLI:
 
     def _handle_submit(self, base_args: Any, ns: Any, extra: List[str]) -> int:
         run_id = self._select_run_id(base_args, ns.run_id, prefix=ns.kind)
-        store = POPSSRunStore(run_id, run_dir=(ns.run_dir or getattr(base_args, "run_dir", None)))
-        controller = POPSSRunController(store)
+        store = PiscesLxRunStore(run_id, run_dir=(ns.run_dir or getattr(base_args, "run_dir", None)))
+        controller = PiscesLxRunController(store)
         spec = {
             "run_id": run_id,
             "run_name": (ns.run_name or getattr(base_args, "run_name", None) or ""),
@@ -373,8 +373,8 @@ class POPSSRunCLI:
 
     def _handle_serve(self, base_args: Any, ns: Any, extra: List[str]) -> int:
         run_id = self._select_run_id(base_args, ns.run_id, prefix=f"serve_{ns.kind}")
-        store = POPSSRunStore(run_id, run_dir=(ns.run_dir or getattr(base_args, "run_dir", None)))
-        controller = POPSSRunController(store)
+        store = PiscesLxRunStore(run_id, run_dir=(ns.run_dir or getattr(base_args, "run_dir", None)))
+        controller = PiscesLxRunController(store)
         spec = {
             "run_id": run_id,
             "run_name": (ns.run_name or getattr(base_args, "run_name", None) or ""),
@@ -416,7 +416,7 @@ class POPSSRunCLI:
         controller.update_state({"status": "failed", "phase": "invalid_kind"})
         return 2
 
-    def _spawn_and_maybe_attach(self, controller: POPSSRunController, cmd: List[str], daemon: bool, kind: str = "task", host: str = None, port: int = None, gpu_count: int = 1, gpu_memory_mb: int = 0, priority: str = "normal") -> int:
+    def _spawn_and_maybe_attach(self, controller: PiscesLxRunController, cmd: List[str], daemon: bool, kind: str = "task", host: str = None, port: int = None, gpu_count: int = 1, gpu_memory_mb: int = 0, priority: str = "normal") -> int:
         store = controller.store
         store.ensure()
         stdout_path = store.path("stdout")
@@ -521,7 +521,7 @@ class POPSSRunCLI:
         return rc
 
     def _handle_status(self, ns: Any) -> int:
-        store = POPSSRunStore(ns.run_id, run_dir=ns.run_dir)
+        store = PiscesLxRunStore(ns.run_id, run_dir=ns.run_dir)
         state = store.read_state()
         if not state:
             print()
@@ -537,7 +537,7 @@ class POPSSRunCLI:
             except Exception:
                 state["status"] = "dead"
                 state["phase"] = "process_lost"
-                controller = POPSSRunController(store)
+                controller = PiscesLxRunController(store)
                 controller.update_state({"status": "dead", "phase": "process_lost"})
                 controller.append_event("process_lost", level="warning", payload={"pid": pid})
         
@@ -633,12 +633,12 @@ class POPSSRunCLI:
         return 0
 
     def _handle_attach(self, ns: Any) -> int:
-        store = POPSSRunStore(ns.run_id, run_dir=ns.run_dir)
-        att = POPSSRunAttacher(store)
+        store = PiscesLxRunStore(ns.run_id, run_dir=ns.run_dir)
+        att = PiscesLxRunAttacher(store)
         return int(att.attach(poll_interval_s=float(ns.poll), follow=True))
 
     def _handle_logs(self, ns: Any) -> int:
-        store = POPSSRunStore(ns.run_id, run_dir=ns.run_dir)
+        store = PiscesLxRunStore(ns.run_id, run_dir=ns.run_dir)
         p = store.path("stdout")
         if not os.path.exists(p):
             print()
@@ -659,8 +659,8 @@ class POPSSRunCLI:
         return 0
 
     def _handle_control(self, ns: Any) -> int:
-        store = POPSSRunStore(ns.run_id, run_dir=ns.run_dir)
-        controller = POPSSRunController(store)
+        store = PiscesLxRunStore(ns.run_id, run_dir=ns.run_dir)
+        controller = PiscesLxRunController(store)
         action = str(getattr(ns, "control_action", "")).strip()
         state = store.read_state()
         pid = int((state or {}).get("pid") or 0)
@@ -804,9 +804,9 @@ class POPSSRunCLI:
         return 1
 
     def _handle_queue(self, ns: Any) -> int:
-        from .queue import POPSSTaskQueue
+        from .queue import PiscesLxTaskQueue
         
-        queue = POPSSTaskQueue()
+        queue = PiscesLxTaskQueue()
         action = ns.queue_action
         
         if action == "list":
@@ -855,9 +855,9 @@ class POPSSRunCLI:
         return 1
 
     def _handle_resources(self, ns: Any) -> int:
-        from .resources import POPSSResourceLimits
+        from .resources import PiscesLxResourceLimits
         
-        limits = POPSSResourceLimits()
+        limits = PiscesLxResourceLimits()
         action = ns.resources_action
         
         if action == "status":
@@ -902,12 +902,12 @@ class POPSSRunCLI:
         return 1
 
     def _handle_recover(self, ns: Any) -> int:
-        from .recovery import POPSSTaskRecovery
-        from .controller import POPSSRunController
+        from .recovery import PiscesLxTaskRecovery
+        from .controller import PiscesLxRunController
         
-        store = POPSSRunStore(ns.run_id, run_dir=ns.run_dir)
-        controller = POPSSRunController(store)
-        recovery = POPSSTaskRecovery(controller)
+        store = PiscesLxRunStore(ns.run_id, run_dir=ns.run_dir)
+        controller = PiscesLxRunController(store)
+        recovery = PiscesLxTaskRecovery(controller)
         
         recovery.register_task(ns.run_id, ns.run_id, max_restarts=ns.max_restarts)
         
@@ -919,8 +919,8 @@ class POPSSRunCLI:
         
         checkpoint_path = ns.checkpoint
         if checkpoint_path:
-            from .recovery import POPSSCheckpointInfo
-            checkpoint = POPSSCheckpointInfo(
+            from .recovery import PiscesLxCheckpointInfo
+            checkpoint = PiscesLxCheckpointInfo(
                 checkpoint_path=checkpoint_path,
                 step=0,
                 epoch=0,
@@ -952,8 +952,8 @@ class POPSSRunCLI:
 
     def _handle_worker_dataset(self, ns: Any) -> int:
         run_id = str(ns.run_id).strip()
-        store = POPSSRunStore(run_id, run_dir=ns.run_dir)
-        controller = POPSSRunController(store)
+        store = PiscesLxRunStore(run_id, run_dir=ns.run_dir)
+        controller = PiscesLxRunController(store)
         controller.init_run(
             {
                 "run_id": run_id,

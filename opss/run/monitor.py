@@ -33,11 +33,11 @@ from typing import Any, Dict, List, Optional, Callable
 import psutil
 import pynvml
 
-from .store import POPSSRunStore
-from .controller import POPSSRunController
+from .store import PiscesLxRunStore
+from .controller import PiscesLxRunController
 
 
-class POPSSResourceSnapshot:
+class PiscesLxResourceSnapshot:
     def __init__(
         self,
         ts: str,
@@ -91,43 +91,43 @@ class POPSSResourceSnapshot:
         return d
 
 
-class POPSSResourceMonitor:
+class PiscesLxResourceMonitor:
     def __init__(
         self,
-        store: POPSSRunStore,
+        store: PiscesLxRunStore,
         interval_s: float = 5.0,
         enable_gpu: bool = True,
         enable_io: bool = True,
     ):
         self._store = store
-        self._controller = POPSSRunController(store)
+        self._controller = PiscesLxRunController(store)
         self._interval_s = max(0.5, float(interval_s))
         self._enable_gpu = bool(enable_gpu)
         self._enable_io = bool(enable_io)
         self._running = False
         self._thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
-        self._last_snapshot: Optional[POPSSResourceSnapshot] = None
-        self._history: List[POPSSResourceSnapshot] = []
+        self._last_snapshot: Optional[PiscesLxResourceSnapshot] = None
+        self._history: List[PiscesLxResourceSnapshot] = []
         self._max_history = 1000
         self._nvml_initialized = False
         self._gpu_handle = None
         self._last_io_read = 0.0
         self._last_io_write = 0.0
-        self._callbacks: List[Callable[[POPSSResourceSnapshot], None]] = []
+        self._callbacks: List[Callable[[PiscesLxResourceSnapshot], None]] = []
 
     @property
-    def last_snapshot(self) -> Optional[POPSSResourceSnapshot]:
+    def last_snapshot(self) -> Optional[PiscesLxResourceSnapshot]:
         return self._last_snapshot
 
     @property
-    def history(self) -> List[POPSSResourceSnapshot]:
+    def history(self) -> List[PiscesLxResourceSnapshot]:
         return list(self._history)
 
-    def add_callback(self, callback: Callable[[POPSSResourceSnapshot], None]) -> None:
+    def add_callback(self, callback: Callable[[PiscesLxResourceSnapshot], None]) -> None:
         self._callbacks.append(callback)
 
-    def remove_callback(self, callback: Callable[[POPSSResourceSnapshot], None]) -> None:
+    def remove_callback(self, callback: Callable[[PiscesLxResourceSnapshot], None]) -> None:
         if callback in self._callbacks:
             self._callbacks.remove(callback)
 
@@ -227,7 +227,7 @@ class POPSSResourceMonitor:
         except Exception:
             return None
 
-    def snapshot(self, pid: Optional[int] = None) -> Optional[POPSSResourceSnapshot]:
+    def snapshot(self, pid: Optional[int] = None) -> Optional[PiscesLxResourceSnapshot]:
         if pid is None:
             state = self._store.read_state()
             pid = int((state or {}).get("pid") or 0)
@@ -238,7 +238,7 @@ class POPSSResourceMonitor:
             return None
         gpu_info = self._get_gpu_info() if self._enable_gpu else {}
         ts = datetime.now(timezone.utc).isoformat()
-        snapshot = POPSSResourceSnapshot(
+        snapshot = PiscesLxResourceSnapshot(
             ts=ts,
             pid=pid,
             cpu_percent=proc_info.get("cpu_percent", 0.0),
@@ -259,7 +259,7 @@ class POPSSResourceMonitor:
                 self._history = self._history[-self._max_history :]
         return snapshot
 
-    def _emit_metrics(self, snapshot: POPSSResourceSnapshot) -> None:
+    def _emit_metrics(self, snapshot: PiscesLxResourceSnapshot) -> None:
         metric: Dict[str, Any] = {
             "type": "resource",
             "cpu_percent": snapshot.cpu_percent,
@@ -323,16 +323,16 @@ class POPSSResourceMonitor:
             return summary
 
 
-class POPSSHeartbeatMonitor:
+class PiscesLxHeartbeatMonitor:
     def __init__(
         self,
-        store: POPSSRunStore,
+        store: PiscesLxRunStore,
         interval_s: float = 10.0,
         timeout_s: float = 60.0,
         max_missed: int = 3,
     ):
         self._store = store
-        self._controller = POPSSRunController(store)
+        self._controller = PiscesLxRunController(store)
         self._interval_s = max(1.0, float(interval_s))
         self._timeout_s = max(self._interval_s * 2, float(timeout_s))
         self._max_missed = max(1, int(max_missed))
@@ -417,7 +417,7 @@ class POPSSHeartbeatMonitor:
             self._thread = None
 
 
-class POPSSRunManager:
+class PiscesLxRunManager:
     def __init__(self, runs_root: Optional[str] = None):
         if runs_root is None:
             from pathlib import Path
@@ -471,7 +471,7 @@ class POPSSRunManager:
         run_dir = self._run_dir(run_id)
         if not os.path.isdir(run_dir):
             return None
-        store = POPSSRunStore(run_id, run_dir=run_dir)
+        store = PiscesLxRunStore(run_id, run_dir=run_dir)
         state = store.read_state()
         spec = store.read_spec()
         if not state:
@@ -487,7 +487,7 @@ class POPSSRunManager:
         run_dir = self._run_dir(run_id)
         if not os.path.isdir(run_dir):
             return False
-        store = POPSSRunStore(run_id, run_dir=run_dir)
+        store = PiscesLxRunStore(run_id, run_dir=run_dir)
         state = store.read_state()
         if not force:
             status = (state or {}).get("status")
@@ -499,8 +499,8 @@ class POPSSRunManager:
         run_dir = self._run_dir(run_id)
         if not os.path.isdir(run_dir):
             return False
-        store = POPSSRunStore(run_id, run_dir=run_dir)
-        controller = POPSSRunController(store)
+        store = PiscesLxRunStore(run_id, run_dir=run_dir)
+        controller = PiscesLxRunController(store)
         state = store.read_state()
         pid = int((state or {}).get("pid") or 0)
         if pid <= 0:
@@ -520,7 +520,7 @@ class POPSSRunManager:
         }
 
 
-class POPSSRunCleaner:
+class PiscesLxRunCleaner:
     def __init__(
         self,
         runs_root: Optional[str] = None,

@@ -51,7 +51,7 @@ from configs.version import VERSION
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus, PiscesLxOperatorConfig
 
 
-class AdvancedQuantizationConfig(PiscesLxOperatorConfig):
+class PiscesLxAdvancedQuantizationConfig(PiscesLxOperatorConfig):
     """
     Configuration for advanced quantization.
     
@@ -75,7 +75,7 @@ class AdvancedQuantizationConfig(PiscesLxOperatorConfig):
     sensitivity_metric: str = "mse"
 
 
-class POPSSSensitivityAnalysisOperator(PiscesLxOperatorInterface):
+class PiscesLxSensitivityAnalysisOperator(PiscesLxOperatorInterface):
     """
     Layer Sensitivity Analysis Operator.
     
@@ -95,7 +95,7 @@ class POPSSSensitivityAnalysisOperator(PiscesLxOperatorInterface):
         >>> result = operator.execute({
         ...     "model": model,
         ...     "test_data": calibration_data,
-        ...     "config": AdvancedQuantizationConfig()
+        ...     "config": PiscesLxAdvancedQuantizationConfig()
         ... })
         >>> sensitivity_scores = result.output["sensitivity_scores"]
     """
@@ -117,7 +117,7 @@ class POPSSSensitivityAnalysisOperator(PiscesLxOperatorInterface):
             inputs: Dictionary containing analysis inputs
                 - model: Model to analyze (nn.Module)
                 - test_data: Test data for evaluation
-                - config: Analysis configuration (AdvancedQuantizationConfig)
+                - config: Analysis configuration (PiscesLxAdvancedQuantizationConfig)
         
         Returns:
             PiscesLxOperatorResult: Result containing
@@ -127,7 +127,7 @@ class POPSSSensitivityAnalysisOperator(PiscesLxOperatorInterface):
         try:
             model = inputs.get("model")
             test_data = inputs.get("test_data", [])
-            config = inputs.get("config", AdvancedQuantizationConfig())
+            config = inputs.get("config", PiscesLxAdvancedQuantizationConfig())
             
             if not model:
                 raise ValueError("Model is required for sensitivity analysis")
@@ -165,7 +165,7 @@ class POPSSSensitivityAnalysisOperator(PiscesLxOperatorInterface):
     def _analyze_sensitivity(self, 
                            model: nn.Module, 
                            test_data: List,
-                           config: AdvancedQuantizationConfig) -> Dict[str, float]:
+                           config: PiscesLxAdvancedQuantizationConfig) -> Dict[str, float]:
         """
         Analyze sensitivity of each layer to quantization.
         
@@ -303,7 +303,7 @@ class POPSSSensitivityAnalysisOperator(PiscesLxOperatorInterface):
     
     def _recommend_bit_allocation(self, 
                                  sensitivity_scores: Dict[str, float],
-                                 config: AdvancedQuantizationConfig) -> Dict[str, int]:
+                                 config: PiscesLxAdvancedQuantizationConfig) -> Dict[str, int]:
         """
         Recommend bit allocation based on sensitivity scores.
         
@@ -337,7 +337,7 @@ class POPSSSensitivityAnalysisOperator(PiscesLxOperatorInterface):
         return recommendations
 
 
-class POPSSAdaptiveBitAllocationOperator(PiscesLxOperatorInterface):
+class PiscesLxAdaptiveBitAllocationOperator(PiscesLxOperatorInterface):
     """
     Adaptive Bit Allocation Operator.
     
@@ -351,11 +351,11 @@ class POPSSAdaptiveBitAllocationOperator(PiscesLxOperatorInterface):
         3. Stop when target compression is achieved
     
     Example:
-        >>> operator = POPSSAdaptiveBitAllocationOperator()
+        >>> operator = PiscesLxAdaptiveBitAllocationOperator()
         >>> result = operator.execute({
         ...     "model": model,
         ...     "sensitivity_analysis": sensitivity_results,
-        ...     "config": AdvancedQuantizationConfig(target_compression_ratio=0.5)
+        ...     "config": PiscesLxAdvancedQuantizationConfig(target_compression_ratio=0.5)
         ... })
         >>> bit_allocation = result.output["bit_allocation"]
     """
@@ -387,7 +387,7 @@ class POPSSAdaptiveBitAllocationOperator(PiscesLxOperatorInterface):
         try:
             model = inputs.get("model")
             sensitivity_analysis = inputs.get("sensitivity_analysis", {})
-            config = inputs.get("config", AdvancedQuantizationConfig())
+            config = inputs.get("config", PiscesLxAdvancedQuantizationConfig())
             
             if not model:
                 raise ValueError("Model is required for bit allocation")
@@ -427,7 +427,7 @@ class POPSSAdaptiveBitAllocationOperator(PiscesLxOperatorInterface):
     def _optimize_bit_allocation(self,
                                 model: nn.Module,
                                 sensitivity_analysis: Dict[str, Any],
-                                config: AdvancedQuantizationConfig) -> Dict[str, int]:
+                                config: PiscesLxAdvancedQuantizationConfig) -> Dict[str, int]:
         """
         Optimize bit allocation to achieve target compression ratio.
         
@@ -600,7 +600,7 @@ def advanced_quantize(model: nn.Module,
     sensitivity_inputs = {
         "model": model,
         "test_data": test_data or [],
-        "config": AdvancedQuantizationConfig(
+        "config": PiscesLxAdvancedQuantizationConfig(
             sensitivity_analysis=True,
             target_compression_ratio=target_compression,
             preserve_layers=preserve_layers or []
@@ -617,7 +617,7 @@ def advanced_quantize(model: nn.Module,
     allocation_inputs = {
         "model": model,
         "sensitivity_analysis": sensitivity_result.output or {},
-        "config": AdvancedQuantizationConfig(target_compression_ratio=target_compression)
+        "config": PiscesLxAdvancedQuantizationConfig(target_compression_ratio=target_compression)
     }
     
     allocation_result = allocation_op.execute(allocation_inputs)
@@ -625,11 +625,11 @@ def advanced_quantize(model: nn.Module,
     if not allocation_result.is_success():
         raise RuntimeError(f"Bit allocation failed: {allocation_result.error}")
     
-    from .methods import QuantizationConfig
-    from .methods import QuantizationOperatorFactory
+    from .methods import PiscesLxQuantizationConfig
+    from .methods import PiscesLxQuantizationOperatorFactory
     
-    quant_op = QuantizationOperatorFactory.create_operator("gptq")
-    quant_config = QuantizationConfig(bits=8)
+    quant_op = PiscesLxQuantizationOperatorFactory.create_operator("gptq")
+    quant_config = PiscesLxQuantizationConfig(bits=8)
     
     quant_inputs = {
         "model": model,

@@ -71,7 +71,7 @@ if _HAS_TRITON:
             tl.store(y_row + offsets, (x / rms) * w, mask=mask)
 
 
-    class _FusedRMSNormFn(torch.autograd.Function):
+    class _PiscesLxFusedRMSNormFn(torch.autograd.Function):
 
         @staticmethod
         def forward(ctx, x, weight, eps):
@@ -122,7 +122,7 @@ if _HAS_TRITON:
         """
         if not x.is_cuda or not weight.is_cuda:
             return _pytorch_rms_norm(x, weight, eps)
-        return _FusedRMSNormFn.apply(x, weight, eps)
+        return _PiscesLxFusedRMSNormFn.apply(x, weight, eps)
 
 
     def _pytorch_rms_norm(x: torch.Tensor, weight: torch.Tensor, eps: float) -> torch.Tensor:

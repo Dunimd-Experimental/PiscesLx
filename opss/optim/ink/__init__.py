@@ -64,10 +64,10 @@ Throughput Improvement:
     - Total: ~60x throughput improvement
 
 Usage:
-    >>> from opss.optim.ink import POPSSInkOptimizer, POPSSInkConfig
+    >>> from opss.optim.ink import PiscesLxInkOptimizer, PiscesLxInkConfig
     >>> 
     >>> # Create configuration
-    >>> config = POPSSInkConfig(
+    >>> config = PiscesLxInkConfig(
     ...     lr=1e-4,
     ...     momentum_bits=8,
     ...     variance_bits=4,
@@ -82,7 +82,7 @@ Usage:
     ... )
     >>> 
     >>> # Create optimizer
-    >>> optimizer = POPSSInkOptimizer(model.parameters(), config=config)
+    >>> optimizer = PiscesLxInkOptimizer(model.parameters(), config=config)
     >>> 
     >>> # Training loop
     >>> for epoch in range(epochs):
@@ -93,42 +93,42 @@ Usage:
     ...         optimizer.step()
 
 Components:
-    - POPSSInkConfig: Configuration dataclass with all settings
-    - POPSSInkBlockQuantizer: INT8/INT4 block-wise quantization
-    - POPSSInkSparseSelector: Top-K gradient selection
-    - POPSSInkIntegrator: GaLore/FP4/ROOT integration layer
-    - POPSSInkKVCacheQuantizer: INT8/INT4 KV Cache quantization for inference
-    - POPSSInkGradientCompressor: INT8 gradient compression
-    - POPSSInkMoEManager: LRU-based MoE expert dynamic management
-    - POPSSInkCheckpointSelector: Selective activation checkpointing
-    - POPSSInkOperator: Main optimization operator (OPSC pattern)
-    - POPSSInkOptimizer: PyTorch-compatible optimizer wrapper
+    - PiscesLxInkConfig: Configuration dataclass with all settings
+    - PiscesLxInkBlockQuantizer: INT8/INT4 block-wise quantization
+    - PiscesLxInkSparseSelector: Top-K gradient selection
+    - PiscesLxInkIntegrator: GaLore/FP4/ROOT integration layer
+    - PiscesLxInkKVCacheQuantizer: INT8/INT4 KV Cache quantization for inference
+    - PiscesLxInkGradientCompressor: INT8 gradient compression
+    - PiscesLxInkMoEManager: LRU-based MoE expert dynamic management
+    - PiscesLxInkCheckpointSelector: Selective activation checkpointing
+    - PiscesLxInkOperator: Main optimization operator (OPSC pattern)
+    - PiscesLxInkOptimizer: PyTorch-compatible optimizer wrapper
 """
 
 from configs.version import VERSION
 
-from .config import POPSSInkConfig
-from .quantizer import POPSSInkBlockQuantizer
-from .sparse import POPSSInkSparseSelector
-from .integrator import POPSSInkIntegrator
-from .kv_cache import POPSSInkKVCacheQuantizer
-from .gradient import POPSSInkGradientCompressor
-from .moe import POPSSInkMoEManager
-from .checkpoint import POPSSInkCheckpointSelector
-from .operator import POPSSInkOperator
-from .optimizer import POPSSInkOptimizer
+from .config import PiscesLxInkConfig
+from .quantizer import PiscesLxInkBlockQuantizer
+from .sparse import PiscesLxInkSparseSelector
+from .integrator import PiscesLxInkIntegrator
+from .kv_cache import PiscesLxInkKVCacheQuantizer
+from .gradient import PiscesLxInkGradientCompressor
+from .moe import PiscesLxInkMoEManager
+from .checkpoint import PiscesLxInkCheckpointSelector
+from .operator import PiscesLxInkOperator
+from .optimizer import PiscesLxInkOptimizer
 
 __version__ = VERSION
 
 __all__ = [
-    "POPSSInkConfig",
-    "POPSSInkBlockQuantizer",
-    "POPSSInkSparseSelector",
-    "POPSSInkIntegrator",
-    "POPSSInkKVCacheQuantizer",
-    "POPSSInkGradientCompressor",
-    "POPSSInkMoEManager",
-    "POPSSInkCheckpointSelector",
-    "POPSSInkOperator",
-    "POPSSInkOptimizer",
+    "PiscesLxInkConfig",
+    "PiscesLxInkBlockQuantizer",
+    "PiscesLxInkSparseSelector",
+    "PiscesLxInkIntegrator",
+    "PiscesLxInkKVCacheQuantizer",
+    "PiscesLxInkGradientCompressor",
+    "PiscesLxInkMoEManager",
+    "PiscesLxInkCheckpointSelector",
+    "PiscesLxInkOperator",
+    "PiscesLxInkOptimizer",
 ]

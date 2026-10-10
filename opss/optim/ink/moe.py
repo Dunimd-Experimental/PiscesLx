@@ -50,7 +50,7 @@ import time
 from configs.version import VERSION
 
 
-class POPSSInkMoEManager:
+class PiscesLxInkMoEManager:
     """
     LRU-based MoE Expert Manager.
     
@@ -64,7 +64,7 @@ class POPSSInkMoEManager:
         device: Target device (cuda/cpu)
     
     Example:
-        >>> manager = POPSSInkMoEManager(num_experts=64, max_experts_on_gpu=8)
+        >>> manager = PiscesLxInkMoEManager(num_experts=64, max_experts_on_gpu=8)
         >>> manager.register_expert(expert_id=0, expert_module=expert_layer)
         >>> active_experts = manager.get_active_experts()
         >>> manager.record_access(expert_id=0)

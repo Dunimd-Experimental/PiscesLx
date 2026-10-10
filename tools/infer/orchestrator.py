@@ -44,9 +44,9 @@ from utils.opsc.interface import PiscesLxOperatorConfig
 from utils.opsc.registry import PiscesLxOperatorRegistrar
 from utils.dc import PiscesLxLogger
 
-from .config import InferenceConfig
+from .config import PiscesLxInferenceConfig
 from .core import PiscesLxInferenceEngine
-from .pipeline import InferencePipelineOperator, PromptEngineeringOperator
+from .pipeline import PiscesLxInferencePipelineOperator, PiscesLxPromptEngineeringOperator
 
 
 from utils.paths import get_log_file
@@ -60,7 +60,7 @@ class PiscesLxInferOrchestrator(PiscesLxBaseOperator):
     Unified management of all components in the inference pipeline.
     """
     
-    def __init__(self, config: Optional[Union[PiscesLxOperatorConfig, InferenceConfig, str, Dict[str, Any]]] = None):
+    def __init__(self, config: Optional[Union[PiscesLxOperatorConfig, PiscesLxInferenceConfig, str, Dict[str, Any]]] = None):
         op_config = config if isinstance(config, PiscesLxOperatorConfig) else None
         super().__init__(op_config)
 
@@ -131,9 +131,9 @@ class PiscesLxInferOrchestrator(PiscesLxBaseOperator):
         run_ctl = None
         if run_id:
             try:
-                from opss.run import POPSSRunController, POPSSRunStore
-                st = POPSSRunStore(run_id, run_dir=params.get("run_dir"))
-                run_ctl = POPSSRunController(st)
+                from opss.run import PiscesLxRunController, PiscesLxRunStore
+                st = PiscesLxRunStore(run_id, run_dir=params.get("run_dir"))
+                run_ctl = PiscesLxRunController(st)
                 run_ctl.init_run(
                     {
                         "run_id": run_id,
@@ -183,8 +183,8 @@ class PiscesLxInferOrchestrator(PiscesLxBaseOperator):
                 return {"status": "ok", "output": out, "backend": "vllm"}
 
         if os.path.isfile(ckpt):
-            from opss.infer.native_ruchbah import POPSSNativeInferenceOperator
-            op = POPSSNativeInferenceOperator()
+            from opss.infer.native_ruchbah import PiscesLxNativeInferenceOperator
+            op = PiscesLxNativeInferenceOperator()
             res = op.execute(
                 {
                     "ckpt": ckpt,
@@ -240,34 +240,34 @@ class PiscesLxInferOrchestrator(PiscesLxBaseOperator):
                 pass
         return {"status": "ok", "output": out, "backend": "transformers"}
 
-    def _normalize_infer_config(self, config: Optional[Union[PiscesLxOperatorConfig, InferenceConfig, str, Dict[str, Any]]]) -> InferenceConfig:
-        if isinstance(config, InferenceConfig):
+    def _normalize_infer_config(self, config: Optional[Union[PiscesLxOperatorConfig, PiscesLxInferenceConfig, str, Dict[str, Any]]]) -> PiscesLxInferenceConfig:
+        if isinstance(config, PiscesLxInferenceConfig):
             return config
         if isinstance(config, str):
             return self._load_config_from_file(config)
         if isinstance(config, dict):
-            return InferenceConfig.from_dict(config)
+            return PiscesLxInferenceConfig.from_dict(config)
         if isinstance(config, PiscesLxOperatorConfig):
             params = getattr(config, "parameters", {}) or {}
             cfg = params.get("inference_config", None)
-            if isinstance(cfg, InferenceConfig):
+            if isinstance(cfg, PiscesLxInferenceConfig):
                 return cfg
             if isinstance(cfg, str):
                 return self._load_config_from_file(cfg)
             if isinstance(cfg, dict):
-                return InferenceConfig.from_dict(cfg)
+                return PiscesLxInferenceConfig.from_dict(cfg)
             cfg_path = params.get("config_path")
             if isinstance(cfg_path, str) and cfg_path:
                 return self._load_config_from_file(cfg_path)
-        return InferenceConfig()
+        return PiscesLxInferenceConfig()
     
-    def _load_config_from_file(self, config_path: str) -> InferenceConfig:
+    def _load_config_from_file(self, config_path: str) -> PiscesLxInferenceConfig:
         """Load configuration from file."""
         config_path = Path(config_path)
         if config_path.suffix.lower() == '.json':
-            return InferenceConfig.load_from_json(str(config_path))
+            return PiscesLxInferenceConfig.load_from_json(str(config_path))
         elif config_path.suffix.lower() in ['.yaml', '.yml']:
-            return InferenceConfig.load_from_yaml(str(config_path))
+            return PiscesLxInferenceConfig.load_from_yaml(str(config_path))
         else:
             raise ValueError(f"Unsupported config file format: {config_path.suffix}")
     
@@ -302,10 +302,10 @@ class PiscesLxInferOrchestrator(PiscesLxBaseOperator):
         
         
         # 6. Initialize inference pipeline
-        self.pipeline = InferencePipelineOperator(self.infer_config)
+        self.pipeline = PiscesLxInferencePipelineOperator(self.infer_config)
         
         # 7. Initialize prompt engineering
-        self.prompt_engineer = PromptEngineeringOperator()
+        self.prompt_engineer = PiscesLxPromptEngineeringOperator()
         
         
         self.is_initialized = True
@@ -570,7 +570,7 @@ class PiscesLxInferOrchestrator(PiscesLxBaseOperator):
         with open(filepath, 'r', encoding='utf-8') as f:
             state = json.load(f)
         
-        self.infer_config = InferenceConfig.from_dict(state['config'])
+        self.infer_config = PiscesLxInferenceConfig.from_dict(state['config'])
         self.current_session = state.get('current_session', 'default')
 
         _LOG.info(f"Inference state loaded from {filepath}")

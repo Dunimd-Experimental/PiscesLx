@@ -99,7 +99,7 @@ class PiscesLxCurriculumSampler(Sampler[int]):
         Initialize the curriculum sampler.
         
         Args:
-            data_source: Dataset to sample from.
+            data_source: PiscesLxDataset to sample from.
             difficulty_scores: Difficulty score for each sample (0=easy, 1=hard).
                 If None, will try to compute from dataset.
             total_epochs: Total epochs for curriculum planning. Defaults to 10.

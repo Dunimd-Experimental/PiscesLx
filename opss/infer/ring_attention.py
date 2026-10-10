@@ -40,9 +40,9 @@ References:
     - FlashAttention (Dao et al., 2022)
 
 Usage:
-    >>> from opss.infer.ring_attention import POPSSRingAttentionOperator, POPSSRingAttentionConfig
-    >>> config = POPSSRingAttentionConfig(ring_size=8, block_size=4096)
-    >>> operator = POPSSRingAttentionOperator(config)
+    >>> from opss.infer.ring_attention import PiscesLxRingAttentionOperator, PiscesLxRingAttentionConfig
+    >>> config = PiscesLxRingAttentionConfig(ring_size=8, block_size=4096)
+    >>> operator = PiscesLxRingAttentionOperator(config)
     >>> result = operator.execute({"hidden_states": hidden_states, "attention_mask": mask})
 """
 
@@ -61,7 +61,7 @@ from utils.paths import get_log_file
 from configs.version import VERSION
 
 
-class POPSSRingTopology(Enum):
+class PiscesLxRingTopology(Enum):
     """Ring topology types for distributed attention."""
     RING = "ring"
     DOUBLE_RING = "double_ring"
@@ -69,7 +69,7 @@ class POPSSRingTopology(Enum):
 
 
 @dataclass
-class POPSSRingAttentionConfig:
+class PiscesLxRingAttentionConfig:
     """
     Configuration for Ring Attention Operator.
     
@@ -91,17 +91,17 @@ class POPSSRingAttentionConfig:
     head_dim: int = 128
     dropout: float = 0.0
     causal: bool = True
-    topology: POPSSRingTopology = POPSSRingTopology.RING
+    topology: PiscesLxRingTopology = PiscesLxRingTopology.RING
     overlap_communication: bool = True
     use_flash_attention: bool = True
     max_sequence_length: int = 1048576
     
     def __post_init__(self):
         if isinstance(self.topology, str):
-            self.topology = POPSSRingTopology(self.topology)
+            self.topology = PiscesLxRingTopology(self.topology)
 
 
-class POPSSRingAttentionOperator(PiscesLxOperatorInterface):
+class PiscesLxRingAttentionOperator(PiscesLxOperatorInterface):
     """
     Ring Attention Operator for Ultra-Long Context Processing.
     
@@ -119,8 +119,8 @@ class POPSSRingAttentionOperator(PiscesLxOperatorInterface):
         - Ring Attention: O(n / ring_size) memory per device
     
     Example:
-        >>> config = POPSSRingAttentionConfig(ring_size=8, block_size=4096)
-        >>> operator = POPSSRingAttentionOperator(config)
+        >>> config = PiscesLxRingAttentionConfig(ring_size=8, block_size=4096)
+        >>> operator = PiscesLxRingAttentionOperator(config)
         >>> output = operator.execute({
         ...     "query": query_tensor,
         ...     "key": key_tensor,
@@ -128,13 +128,13 @@ class POPSSRingAttentionOperator(PiscesLxOperatorInterface):
         ... })
     """
     
-    def __init__(self, config: Optional[POPSSRingAttentionConfig] = None):
+    def __init__(self, config: Optional[PiscesLxRingAttentionConfig] = None):
         super().__init__()
         self.name = "infer.ring_attention"
         self.version = VERSION
         self.type = "inference"
         self._LOG =PiscesLxLogger("PiscesLx.Opss.Infer",file_path=get_log_file("PiscesLx.Opss.Infer"), enable_file=True)
-        self.config = config or POPSSRingAttentionConfig()
+        self.config = config or PiscesLxRingAttentionConfig()
         
         self._ring_initialized = False
         self._rank = 0
@@ -363,7 +363,7 @@ class POPSSRingAttentionOperator(PiscesLxOperatorInterface):
         }
 
 
-class POPSSRingAttentionLayer(nn.Module):
+class PiscesLxRingAttentionLayer(nn.Module):
     """
     Ring Attention Layer for integration into transformer models.
     
@@ -371,10 +371,10 @@ class POPSSRingAttentionLayer(nn.Module):
     support for ultra-long sequences through ring communication.
     """
     
-    def __init__(self, config: POPSSRingAttentionConfig):
+    def __init__(self, config: PiscesLxRingAttentionConfig):
         super().__init__()
         self.config = config
-        self.operator = POPSSRingAttentionOperator(config)
+        self.operator = PiscesLxRingAttentionOperator(config)
         
         self.q_proj = nn.Linear(config.head_dim * config.num_heads, 
                                  config.head_dim * config.num_heads, bias=False)
@@ -409,8 +409,8 @@ class POPSSRingAttentionLayer(nn.Module):
 
 
 __all__ = [
-    "POPSSRingTopology",
-    "POPSSRingAttentionConfig",
-    "POPSSRingAttentionOperator",
-    "POPSSRingAttentionLayer",
+    "PiscesLxRingTopology",
+    "PiscesLxRingAttentionConfig",
+    "PiscesLxRingAttentionOperator",
+    "PiscesLxRingAttentionLayer",
 ]

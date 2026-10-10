@@ -53,7 +53,7 @@ def reverse_kl_divergence(
     return kl * (temperature ** 2)
 
 
-class YvOPDConfig:
+class PiscesLxOPDConfig:
     """Configuration for On-Policy Distillation.
 
     Args:
@@ -132,7 +132,7 @@ def compute_opd_loss(
     student_logits: torch.Tensor,
     teacher_logits_list: List[torch.Tensor],
     labels: torch.Tensor,
-    config: YvOPDConfig,
+    config: PiscesLxOPDConfig,
     domain_idx: int = 0,
 ) -> Dict[str, torch.Tensor]:
     """Compute OPD loss for a single domain.
@@ -201,7 +201,7 @@ def compute_opd_loss(
     }
 
 
-class YvOPDTrainer:
+class PiscesLxOPDTrainer:
     """On-Policy Distillation trainer.
 
     Orchestrates the two-stage OPD pipeline:
@@ -209,7 +209,7 @@ class YvOPDTrainer:
     2. Distills knowledge into student via self-sampled trajectories
 
     Usage:
-        >>> trainer = YvOPDTrainer(student_model, opd_config)
+        >>> trainer = PiscesLxOPDTrainer(student_model, opd_config)
         >>> trainer.add_teacher('math', math_teacher_model)
         >>> trainer.add_teacher('code', code_teacher_model)
         >>> loss = trainer.train_step(input_ids, labels)
@@ -218,10 +218,10 @@ class YvOPDTrainer:
     def __init__(
         self,
         student_model: nn.Module,
-        config: YvOPDConfig = None,
+        config: PiscesLxOPDConfig = None,
     ):
         self.student = student_model
-        self.config = config or YvOPDConfig()
+        self.config = config or PiscesLxOPDConfig()
         self.teachers: Dict[str, nn.Module] = {}
         self.teacher_logits_cache: Dict[str, torch.Tensor] = {}
         self.step = 0
@@ -286,7 +286,7 @@ class YvOPDTrainer:
 def create_opd_training_config(
     domains: List[str] = None,
     base_temperature: float = 2.0,
-) -> YvOPDConfig:
+) -> PiscesLxOPDConfig:
     """Create OPD config with sensible defaults.
 
     Args:
@@ -294,11 +294,11 @@ def create_opd_training_config(
         base_temperature: Base distillation temperature.
 
     Returns:
-        YvOPDConfig instance.
+        PiscesLxOPDConfig instance.
     """
     domains = domains or ['math', 'code', 'agent', 'instruction']
     n = len(domains)
-    return YvOPDConfig(
+    return PiscesLxOPDConfig(
         domains=domains,
         temperatures=[base_temperature] * n,
         domain_weights=[1.0 / n] * n,

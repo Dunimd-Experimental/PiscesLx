@@ -41,7 +41,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader, ConcatDataset
+from torch.utils.data import PiscesLxDataset, DataLoader, ConcatDataset
 
 from utils.dc import PiscesLxLogger
 from utils.paths import get_log_file, get_work_dir
@@ -51,7 +51,7 @@ from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResu
 
 
 @dataclass
-class MultitaskTrainingConfig:
+class PiscesLxMultitaskTrainingConfig:
     """Multitask training configuration."""
     
     # Task settings
@@ -90,10 +90,10 @@ class MultitaskTrainingConfig:
                 self.initial_task_weights[task] = 1.0
 
 
-class MultitaskDataset(Dataset):
-    """Dataset for multitask training."""
+class PiscesLxMultitaskDataset(PiscesLxDataset):
+    """PiscesLxDataset for multitask training."""
     
-    def __init__(self, task_datasets: Dict[str, Dataset], task_names: List[str]):
+    def __init__(self, task_datasets: Dict[str, PiscesLxDataset], task_names: List[str]):
         self.task_datasets = task_datasets
         self.task_names = task_names
         self._LOG = PiscesLxLogger("PiscesLx.Opss.Train",file_path=get_log_file("PiscesLx.Opss.Train"), enable_file=True)
@@ -125,7 +125,7 @@ class MultitaskDataset(Dataset):
         return self.task_datasets[self.task_names[0]][0]
 
 
-class UncertaintyWeighting:
+class PiscesLxUncertaintyWeighting:
     """Uncertainty-based task weighting for multitask learning."""
     
     def __init__(self, num_tasks: int, initial_weights: List[float] = None):
@@ -143,7 +143,7 @@ class UncertaintyWeighting:
         return weights / weights.sum() * self.num_tasks
 
 
-class MultitaskTrainingOperator(PiscesLxOperatorInterface):
+class PiscesLxMultitaskTrainingOperator(PiscesLxOperatorInterface):
     """Complete multitask training operator implementation."""
     
     def __init__(self):
@@ -163,7 +163,7 @@ class MultitaskTrainingOperator(PiscesLxOperatorInterface):
             "model": {"type": "torch.nn.Module", "required": True, "description": "Multitask capable model"},
             "tokenizer": {"type": "object", "required": True, "description": "Model tokenizer"},
             "task_data_paths": {"type": "dict", "required": True, "description": "Paths to task data"},
-            "config": {"type": "MultitaskTrainingConfig", "required": False, "description": "Multitask configuration"},
+            "config": {"type": "PiscesLxMultitaskTrainingConfig", "required": False, "description": "Multitask configuration"},
             "optimizer": {"type": "torch.optim.Optimizer", "required": False, "description": "Custom optimizer"}
         }
         
@@ -217,7 +217,7 @@ class MultitaskTrainingOperator(PiscesLxOperatorInterface):
             if custom_config:
                 config = custom_config
             else:
-                config = MultitaskTrainingConfig(
+                config = PiscesLxMultitaskTrainingConfig(
                     data_paths=task_data_paths,
                     tasks=list(task_data_paths.keys())
                 )
@@ -232,11 +232,11 @@ class MultitaskTrainingOperator(PiscesLxOperatorInterface):
             task_datasets = self._create_task_datasets(task_data_paths, tokenizer, config)
             
             # Create multitask dataset
-            multitask_dataset = MultitaskDataset(task_datasets, config.tasks)
+            multitask_dataset = PiscesLxMultitaskDataset(task_datasets, config.tasks)
             
             # Setup task weighting
             if config.use_uncertainty_weighting:
-                uncertainty_weighting = UncertaintyWeighting(
+                uncertainty_weighting = PiscesLxUncertaintyWeighting(
                     len(config.tasks), 
                     [config.initial_task_weights.get(task, 1.0) for task in config.tasks]
                 )
@@ -295,7 +295,7 @@ class MultitaskTrainingOperator(PiscesLxOperatorInterface):
             )
     
     def _create_task_datasets(self, task_data_paths: Dict[str, str], tokenizer: Any, 
-                             config: MultitaskTrainingConfig) -> Dict[str, Dataset]:
+                             config: PiscesLxMultitaskTrainingConfig) -> Dict[str, PiscesLxDataset]:
         """Create datasets for each task."""
         task_datasets = {}
         
@@ -321,22 +321,22 @@ class MultitaskTrainingOperator(PiscesLxOperatorInterface):
         
         return task_datasets
     
-    def _create_sft_dataset(self, data_path: str, tokenizer: Any, config: MultitaskTrainingConfig):
+    def _create_sft_dataset(self, data_path: str, tokenizer: Any, config: PiscesLxMultitaskTrainingConfig):
         """Create SFT dataset."""
         # Implementation would load and process SFT data
         # This is a simplified placeholder
-        class SFTPlaceholderDataset(Dataset):
+        class PiscesLxSFTPlaceholderDataset(PiscesLxDataset):
             def __init__(self, size=100):
                 self.size = size
             def __len__(self): return self.size
             def __getitem__(self, idx): 
                 return {"input_ids": torch.randint(0, 1000, (512,)), "labels": torch.randint(0, 1000, (512,))}
         
-        return SFTPlaceholderDataset(min(config.max_samples_per_task or 100, 100))
+        return PiscesLxSFTPlaceholderDataset(min(config.max_samples_per_task or 100, 100))
     
-    def _create_dpo_dataset(self, data_path: str, tokenizer: Any, config: MultitaskTrainingConfig):
+    def _create_dpo_dataset(self, data_path: str, tokenizer: Any, config: PiscesLxMultitaskTrainingConfig):
         """Create DPO dataset."""
-        class DPOPlaceholderDataset(Dataset):
+        class PiscesLxDPOPlaceholderDataset(PiscesLxDataset):
             def __init__(self, size=50):
                 self.size = size
             def __len__(self): return self.size
@@ -348,11 +348,11 @@ class MultitaskTrainingOperator(PiscesLxOperatorInterface):
                     "rejected_labels": torch.randint(0, 1000, (256,))
                 }
         
-        return DPOPlaceholderDataset(min(config.max_samples_per_task or 50, 50))
+        return PiscesLxDPOPlaceholderDataset(min(config.max_samples_per_task or 50, 50))
     
-    def _create_classification_dataset(self, data_path: str, tokenizer: Any, config: MultitaskTrainingConfig):
+    def _create_classification_dataset(self, data_path: str, tokenizer: Any, config: PiscesLxMultitaskTrainingConfig):
         """Create classification dataset."""
-        class ClassificationPlaceholderDataset(Dataset):
+        class PiscesLxClassificationPlaceholderDataset(PiscesLxDataset):
             def __init__(self, size=75):
                 self.size = size
             def __len__(self): return self.size
@@ -363,22 +363,22 @@ class MultitaskTrainingOperator(PiscesLxOperatorInterface):
                     "attention_mask": torch.ones(128)
                 }
         
-        return ClassificationPlaceholderDataset(min(config.max_samples_per_task or 75, 75))
+        return PiscesLxClassificationPlaceholderDataset(min(config.max_samples_per_task or 75, 75))
     
-    def _create_generic_dataset(self, data_path: str, tokenizer: Any, config: MultitaskTrainingConfig):
+    def _create_generic_dataset(self, data_path: str, tokenizer: Any, config: PiscesLxMultitaskTrainingConfig):
         """Create generic dataset."""
-        class GenericPlaceholderDataset(Dataset):
+        class PiscesLxGenericPlaceholderDataset(PiscesLxDataset):
             def __init__(self, size=50):
                 self.size = size
             def __len__(self): return self.size
             def __getitem__(self, idx):
                 return {"input_ids": torch.randint(0, 1000, (256,)), "labels": torch.randint(0, 1000, (256,))}
         
-        return GenericPlaceholderDataset(min(config.max_samples_per_task or 50, 50))
+        return PiscesLxGenericPlaceholderDataset(min(config.max_samples_per_task or 50, 50))
     
-    def _run_multitask_training(self, model: nn.Module, dataset: Dataset, 
-                               config: MultitaskTrainingConfig, optimizer: torch.optim.Optimizer,
-                               uncertainty_weighting: Optional[UncertaintyWeighting], 
+    def _run_multitask_training(self, model: nn.Module, dataset: PiscesLxDataset, 
+                               config: PiscesLxMultitaskTrainingConfig, optimizer: torch.optim.Optimizer,
+                               uncertainty_weighting: Optional[PiscesLxUncertaintyWeighting], 
                                device: torch.device) -> Dict[str, Any]:
         """Execute multitask training loop."""
         dataloader = DataLoader(
@@ -468,7 +468,7 @@ class MultitaskTrainingOperator(PiscesLxOperatorInterface):
         return metrics
     
     def _calculate_task_losses(self, batch: Dict[str, Any], outputs: Any, 
-                              config: MultitaskTrainingConfig) -> Dict[str, torch.Tensor]:
+                              config: PiscesLxMultitaskTrainingConfig) -> Dict[str, torch.Tensor]:
         """Calculate losses for each task in the batch."""
         task_losses = {}
         task = batch.get('task', 'generic')
@@ -495,4 +495,4 @@ class MultitaskTrainingOperator(PiscesLxOperatorInterface):
 
 
 # Export operator
-__all__ = ['MultitaskTrainingOperator', 'MultitaskTrainingConfig']
+__all__ = ['PiscesLxMultitaskTrainingOperator', 'PiscesLxMultitaskTrainingConfig']

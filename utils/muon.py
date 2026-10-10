@@ -27,7 +27,7 @@ import torch
 import math
 
 
-class MuonParameterError(ValueError):
+class PiscesLxMuonParameterError(ValueError):
     """Exception raised for invalid parameters in Muon optimizer.
 
     This exception is used when input parameters do not meet the requirements
@@ -50,11 +50,11 @@ def _hybrid_newton_schulz(G: torch.Tensor, steps: int = 10) -> torch.Tensor:
         Orthogonalized matrix O ~= (G G^T)^{-1/2} G
 
     Raises:
-        MuonParameterError: If input tensor does not have exactly 2 dimensions.
+        PiscesLxMuonParameterError: If input tensor does not have exactly 2 dimensions.
     """
     # Structured parameter validation
     if G.ndim != 2:
-        raise MuonParameterError(
+        raise PiscesLxMuonParameterError(
             f"Muon requires 2D parameter tensor, but got {G.ndim}D tensor with shape {G.shape}. "
             f"Expected shape: (n, m) where n and m are positive integers. "
             f"This error typically occurs when the optimizer is applied to incompatible "
@@ -94,7 +94,7 @@ def _hybrid_newton_schulz(G: torch.Tensor, steps: int = 10) -> torch.Tensor:
     return O * scale
 
 
-class YvMuon(torch.optim.Optimizer):
+class PiscesLxMuon(torch.optim.Optimizer):
     """Muon optimizer — orthogonalized momentum for MoE training.
 
     Features:
@@ -120,7 +120,7 @@ class YvMuon(torch.optim.Optimizer):
         ...                if p.ndim >= 2 and 'embed' not in n and 'norm' not in n]
         >>> adamw_params = [p for n, p in model.named_parameters()
         ...                 if p.ndim < 2 or 'embed' in n or 'norm' in n]
-        >>> optimizer = YvMuon([
+        >>> optimizer = PiscesLxMuon([
         ...     {'params': muon_params},
         ...     {'params': adamw_params, 'use_muon': False, 'lr': 1e-5},
         ... ], lr=2e-4)
@@ -257,7 +257,7 @@ def create_muon_optimizer(
         adamw_lr: LR for AdamW groups. Default: 1e-5.
 
     Returns:
-        YvMuon optimizer instance.
+        PiscesLxMuon optimizer instance.
     """
     muon_lr = muon_lr or lr
     muon_params = []
@@ -277,4 +277,4 @@ def create_muon_optimizer(
         {'params': adamw_params, 'use_muon': False, 'lr': adamw_lr},
     ]
 
-    return YvMuon(param_groups, lr=lr, weight_decay=weight_decay)
+    return PiscesLxMuon(param_groups, lr=lr, weight_decay=weight_decay)

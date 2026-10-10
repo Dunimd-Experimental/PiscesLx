@@ -43,7 +43,7 @@ from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResu
 from configs.version import VERSION
 
 @dataclass
-class QuantizationConfig(PiscesLxOperatorConfig):
+class PiscesLxQuantizationConfig(PiscesLxOperatorConfig):
     """Quantization method configuration."""
     name: str = "quantize.methods.config"
     bits: int = 4
@@ -54,7 +54,7 @@ class QuantizationConfig(PiscesLxOperatorConfig):
     num_calibration_samples: int = 128
 
 
-class GPTQHessianComputer:
+class PiscesLxGPTQHessianComputer:
     """
     Hessian matrix computation for GPTQ quantization.
     
@@ -118,7 +118,7 @@ class GPTQHessianComputer:
 
 
 # Paper: Frantar et al., "GPTQ: Accurate Post-Training Quantization for Generative Pre-Trained Transformers", ICLR 2023, arXiv:2210.17323
-class GPTQQuantizer:
+class PiscesLxGPTQQuantizer:
     """
     GPTQ (Gradient Post-Training Quantization) Implementation.
     
@@ -320,7 +320,7 @@ class GPTQQuantizer:
 
 
 # Paper: Lin et al., "AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration", MLSys 2024, arXiv:2306.00978
-class AWQQuantizer:
+class PiscesLxAWQQuantizer:
     """
     AWQ (Activation-aware Weight Quantization) Implementation.
     
@@ -556,7 +556,7 @@ class AWQQuantizer:
 
 
 # Paper: Xiao et al., "SmoothQuant: Accurate and Efficient Post-Training Quantization for Large Language Models", ICML 2023, arXiv:2211.10438
-class SmoothQuantizer:
+class PiscesLxSmoothQuantizer:
     """
     SmoothQuant Implementation.
     
@@ -845,7 +845,7 @@ class SmoothQuantizer:
             target.smoothing_scale = quant_info.get("smoothing_scale")
 
 
-class POPSSBlockWiseINT4Quantizer:
+class PiscesLxBlockWiseINT4Quantizer:
     """
     Block-wise INT4 quantizer with configurable block size.
 
@@ -963,7 +963,7 @@ class POPSSBlockWiseINT4Quantizer:
         self.quantized_state = {}
 
 
-class POPSSKVCacheQuantizer:
+class PiscesLxKVCacheQuantizer:
     """
     KV cache quantizer for INT4/FP8 quantization during attention.
 
@@ -992,7 +992,7 @@ class POPSSKVCacheQuantizer:
         self.block_size = block_size
         self.device = device
         self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer", file_path=get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
-        self.int4_quantizer = POPSSBlockWiseINT4Quantizer(block_size, device)
+        self.int4_quantizer = PiscesLxBlockWiseINT4Quantizer(block_size, device)
         self.cache_state: Dict[str, Dict[str, torch.Tensor]] = {}
 
     def _quantize_fp8_per_channel(self, tensor: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -1172,7 +1172,7 @@ class POPSSKVCacheQuantizer:
         self.cache_state.clear()
 
 
-class POPSSGPTQOperator(PiscesLxOperatorInterface):
+class PiscesLxGPTQOperator(PiscesLxOperatorInterface):
     """GPTQ quantization operator."""
     
     def __init__(self):
@@ -1192,12 +1192,12 @@ class POPSSGPTQOperator(PiscesLxOperatorInterface):
         try:
             model = inputs.get("model")
             calibration_data = inputs.get("calibration_data", [])
-            config = inputs.get("config", QuantizationConfig(method="gptq"))
+            config = inputs.get("config", PiscesLxQuantizationConfig(method="gptq"))
             
             if model is None:
                 raise ValueError("Model is required for GPTQ quantization")
             
-            quantizer = GPTQQuantizer(
+            quantizer = PiscesLxGPTQQuantizer(
                 bits=config.bits,
                 group_size=config.group_size,
                 damp_percent=config.damp_percent,
@@ -1229,7 +1229,7 @@ class POPSSGPTQOperator(PiscesLxOperatorInterface):
             )
 
 
-class AWQOperator(PiscesLxOperatorInterface):
+class PiscesLxAWQOperator(PiscesLxOperatorInterface):
     """AWQ quantization operator."""
     
     def __init__(self):
@@ -1249,12 +1249,12 @@ class AWQOperator(PiscesLxOperatorInterface):
         try:
             model = inputs.get("model")
             calibration_data = inputs.get("calibration_data", [])
-            config = inputs.get("config", QuantizationConfig(method="awq"))
+            config = inputs.get("config", PiscesLxQuantizationConfig(method="awq"))
             
             if model is None:
                 raise ValueError("Model is required for AWQ quantization")
             
-            quantizer = AWQQuantizer(
+            quantizer = PiscesLxAWQQuantizer(
                 bits=config.bits,
                 group_size=config.group_size,
                 symmetric=config.symmetric,
@@ -1286,7 +1286,7 @@ class AWQOperator(PiscesLxOperatorInterface):
             )
 
 
-class POPSSSmoothQuantOperator(PiscesLxOperatorInterface):
+class PiscesLxSmoothQuantOperator(PiscesLxOperatorInterface):
     """SmoothQuant operator."""
     
     def __init__(self):
@@ -1306,12 +1306,12 @@ class POPSSSmoothQuantOperator(PiscesLxOperatorInterface):
         try:
             model = inputs.get("model")
             calibration_data = inputs.get("calibration_data", [])
-            config = inputs.get("config", QuantizationConfig())
+            config = inputs.get("config", PiscesLxQuantizationConfig())
             
             if model is None:
                 raise ValueError("Model is required for SmoothQuant")
             
-            quantizer = SmoothQuantizer(
+            quantizer = PiscesLxSmoothQuantizer(
                 smoothing_factor=getattr(config, 'smoothing_factor', 0.85),
                 group_size=config.group_size,
                 bits=config.bits,
@@ -1344,17 +1344,17 @@ class POPSSSmoothQuantOperator(PiscesLxOperatorInterface):
             )
 
 
-class QuantizationOperatorFactory:
+class PiscesLxQuantizationOperatorFactory:
     """Factory for creating quantization operators."""
     
     @staticmethod
     def create_operator(method: str) -> PiscesLxOperatorInterface:
         """Create quantization operator by method name."""
         method_map = {
-            "gptq": POPSSGPTQOperator,
-            "awq": AWQOperator,
-            "smoothquant": POPSSSmoothQuantOperator,
-            "smooth_quant": POPSSSmoothQuantOperator,
+            "gptq": PiscesLxGPTQOperator,
+            "awq": PiscesLxAWQOperator,
+            "smoothquant": PiscesLxSmoothQuantOperator,
+            "smooth_quant": PiscesLxSmoothQuantOperator,
         }
         
         method_lower = method.lower().replace("-", "").replace("_", "")
@@ -1379,7 +1379,7 @@ class QuantizationOperatorFactory:
 # HyperQuant (2606.23406): Unified PTQ with Hadamard + Lattice + Rice
 # ═══════════════════════════════════════════════════════════════════
 
-class HyperQuantizer(nn.Module):
+class PiscesLxHyperQuantizer(nn.Module):
     """Unified PTQ pipeline for weights + KV cache.
 
     Based on arXiv:2606.23406 (June 2026):
@@ -1447,7 +1447,7 @@ class HyperQuantizer(nn.Module):
 # TWLA (ICML 2026): W1.58A4 Ternary Quantization
 # ═══════════════════════════════════════════════════════════════════
 
-class TWLAQuantizer:
+class PiscesLxTWLAQuantizer:
     """W1.58A4 PTQ: ternary weights + 4-bit activations.
 
     Based on arXiv:2606.13054 (ICML 2026).
@@ -1491,7 +1491,7 @@ class TWLAQuantizer:
 # STAR-KV (2606.08382): Adaptive Low-Rank KV Compression
 # ═══════════════════════════════════════════════════════════════════
 
-class STARKVCompression:
+class PiscesLxSTARKVCompression:
     """Adaptive low-rank KV cache compression with differentiable thresholding.
 
     Based on arXiv:2606.08382 (June 2026).

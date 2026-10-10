@@ -36,7 +36,7 @@ import torch.nn.functional as F
 from typing import Optional, Tuple
 
 from .norms import YvYaRNRotaryEmbedding
-from opss.infer.fused_mla import FusedMLAProjector
+from opss.infer.fused_mla import PiscesLxFusedMLAProjector
 
 
 # Paper: DeepSeek-V2 (arXiv:2405.04434, 2024) MLA + embedding gating extension
@@ -53,8 +53,8 @@ class YvEGMLA(nn.Module):
         head_dim (int): Dimension per head.
         kv_lora_rank (int): Low-rank dimension for KV compression.
         q_lora_rank (int): Low-rank dimension for Q compression.
-        use_fused (bool): Whether to use FusedMLAProjector.
-        fused_mla (FusedMLAProjector): Fused projection (if use_fused).
+        use_fused (bool): Whether to use PiscesLxFusedMLAProjector.
+        fused_mla (PiscesLxFusedMLAProjector): Fused projection (if use_fused).
 
     Example:
         >>> egmla = YvEGMLA(hidden_size=4096, num_heads=32, kv_lora_rank=512)
@@ -83,7 +83,7 @@ class YvEGMLA(nn.Module):
         self.use_fused = use_fused
 
         if use_fused:
-            self.fused_mla = FusedMLAProjector(
+            self.fused_mla = PiscesLxFusedMLAProjector(
                 hidden_size=hidden_size,
                 n_head=num_heads,
                 n_kv_head=self.num_kv_heads,
@@ -137,7 +137,7 @@ class YvEGMLA(nn.Module):
         """Migrate separate linear weights to fused projector in-place."""
         if self.use_fused:
             return
-        self.fused_mla = FusedMLAProjector.from_separate(
+        self.fused_mla = PiscesLxFusedMLAProjector.from_separate(
             kv_compress=self.kv_compress,
             embedding_gate=self.embedding_gate,
             k_decompress=self.k_decompress,

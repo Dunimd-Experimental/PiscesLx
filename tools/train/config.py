@@ -33,11 +33,11 @@ dataclasses, enabling type-safe, validated, and serializable configuration objec
 Configuration Hierarchy:
     The configuration system follows a hierarchical structure:
     
-    TrainingConfig (Root)
-    ├── OptimizerConfig: Optimizer hyperparameters and GaLore settings
-    ├── SchedulerConfig: Learning rate scheduling and warmup configuration
-    ├── DataConfig: Data loading, batching, and preprocessing settings
-    └── QuantizationConfig: Quantization-aware training parameters
+    PiscesLxTrainingConfig (Root)
+    ├── PiscesLxOptimizerConfig: Optimizer hyperparameters and GaLore settings
+    ├── PiscesLxSchedulerConfig: Learning rate scheduling and warmup configuration
+    ├── PiscesLxDataConfig: Data loading, batching, and preprocessing settings
+    └── PiscesLxQuantizationConfig: Quantization-aware training parameters
 
 Design Principles:
     - Type Safety: All configurations use Python dataclasses with type hints
@@ -55,9 +55,9 @@ Key Features:
 
 Usage Examples:
     Basic Configuration:
-        >>> from tools.train.config import TrainingConfig
+        >>> from tools.train.config import PiscesLxTrainingConfig
         >>> 
-        >>> config = TrainingConfig(
+        >>> config = PiscesLxTrainingConfig(
         ...     model_name="gpt-7b",
         ...     output_dir="./checkpoints",
         ...     max_steps=100000,
@@ -65,18 +65,18 @@ Usage Examples:
         ... )
 
     Advanced Configuration with GaLore:
-        >>> from tools.train.config import OptimizerConfig, SchedulerConfig
+        >>> from tools.train.config import PiscesLxOptimizerConfig, PiscesLxSchedulerConfig
         >>> 
-        >>> config = TrainingConfig(
+        >>> config = PiscesLxTrainingConfig(
         ...     model_name="llama-70b",
-        ...     optimizer=OptimizerConfig(
+        ...     optimizer=PiscesLxOptimizerConfig(
         ...         name="adamw",
         ...         learning_rate=5e-5,
         ...         use_galore=True,
         ...         galore_rank=512,
         ...         galore_update_proj_gap=200
         ...     ),
-        ...     scheduler=SchedulerConfig(
+        ...     scheduler=PiscesLxSchedulerConfig(
         ...         name="cosine",
         ...         warmup_steps=2000,
         ...         min_lr_ratio=0.1
@@ -88,13 +88,13 @@ Usage Examples:
         >>> config.save_to_json("config.json")
         >>> 
         >>> # Load configuration
-        >>> loaded_config = TrainingConfig.load_from_json("config.json")
+        >>> loaded_config = PiscesLxTrainingConfig.load_from_json("config.json")
 
 Integration with Training System:
     The configuration objects are passed to various operators in the training system:
-    - PiscesLxTrainingOperator: Uses TrainingConfig for initialization
+    - PiscesLxTrainingOperator: Uses PiscesLxTrainingConfig for initialization
     - TrainingOrchestrator: Centralizes configuration management
-    - TrainingPipelineOperator: Accesses training hyperparameters
+    - PiscesLxTrainingPipelineOperator: Accesses training hyperparameters
     - Optimizer Operators: Read optimizer-specific settings
 
 Version Compatibility:
@@ -117,7 +117,7 @@ from configs.version import VERSION
 TRAIN_CONFIG_DIR = Path(__file__).parent.parent.parent / "configs" / "train"
 
 
-class TrainingStage(str, Enum):
+class PiscesLxTrainingStage(str, Enum):
     """
     Training Stage Enumeration
     
@@ -152,12 +152,12 @@ class TrainingStage(str, Enum):
     RL_MEMSEP = "rl_memsep"
 
 
-def get_stage_config_path(stage: TrainingStage) -> Path:
+def get_stage_config_path(stage: PiscesLxTrainingStage) -> Path:
     """
     Get the configuration file path for a training stage.
     
     Args:
-        stage: TrainingStage enum value
+        stage: PiscesLxTrainingStage enum value
         
     Returns:
         Path to the stage configuration file
@@ -165,12 +165,12 @@ def get_stage_config_path(stage: TrainingStage) -> Path:
     return TRAIN_CONFIG_DIR / f"{stage.value}.yaml"
 
 
-def load_stage_config(stage: TrainingStage) -> Dict[str, Any]:
+def load_stage_config(stage: PiscesLxTrainingStage) -> Dict[str, Any]:
     """
     Load configuration for a training stage from file.
     
     Args:
-        stage: TrainingStage enum value
+        stage: PiscesLxTrainingStage enum value
         
     Returns:
         Configuration dictionary
@@ -221,8 +221,8 @@ GLOBAL_DEFAULTS: Dict[str, Any] = {
     "modality_scheduler": {"enabled": False},
 }
 
-STAGE_DEFAULTS: Dict[TrainingStage, Dict[str, Any]] = {
-    TrainingStage.PRETRAIN: {
+STAGE_DEFAULTS: Dict[PiscesLxTrainingStage, Dict[str, Any]] = {
+    PiscesLxTrainingStage.PRETRAIN: {
         "learning_rate": 2e-4,
         "weight_decay": 0.01,
         "batch_size": 512,
@@ -236,7 +236,7 @@ STAGE_DEFAULTS: Dict[TrainingStage, Dict[str, Any]] = {
         "multitask": {"enabled": False},
         "packing": True,
     },
-    TrainingStage.CONTINUED_PRETRAIN: {
+    PiscesLxTrainingStage.CONTINUED_PRETRAIN: {
         "learning_rate": 1e-4,
         "weight_decay": 0.01,
         "batch_size": 256,
@@ -249,7 +249,7 @@ STAGE_DEFAULTS: Dict[TrainingStage, Dict[str, Any]] = {
         "kfac": {"enabled": False},
         "multitask": {"enabled": False},
     },
-    TrainingStage.SFT: {
+    PiscesLxTrainingStage.SFT: {
         "learning_rate": 5e-5,
         "weight_decay": 0.01,
         "batch_size": 128,
@@ -262,7 +262,7 @@ STAGE_DEFAULTS: Dict[TrainingStage, Dict[str, Any]] = {
         "kfac": {"enabled": True},
         "multitask": {"enabled": False},
     },
-    TrainingStage.ALIGNMENT_DPO: {
+    PiscesLxTrainingStage.ALIGNMENT_DPO: {
         "learning_rate": 1e-6,
         "weight_decay": 0.0,
         "batch_size": 32,
@@ -276,7 +276,7 @@ STAGE_DEFAULTS: Dict[TrainingStage, Dict[str, Any]] = {
         "kfac": {"enabled": False},
         "multitask": {"enabled": False},
     },
-    TrainingStage.ALIGNMENT_PPO: {
+    PiscesLxTrainingStage.ALIGNMENT_PPO: {
         "learning_rate": 1e-6,
         "weight_decay": 0.0,
         "batch_size": 16,
@@ -291,7 +291,7 @@ STAGE_DEFAULTS: Dict[TrainingStage, Dict[str, Any]] = {
         "kfac": {"enabled": False},
         "multitask": {"enabled": False},
     },
-    TrainingStage.ALIGNMENT_ORPO: {
+    PiscesLxTrainingStage.ALIGNMENT_ORPO: {
         "learning_rate": 5e-6,
         "weight_decay": 0.0,
         "batch_size": 32,
@@ -304,7 +304,7 @@ STAGE_DEFAULTS: Dict[TrainingStage, Dict[str, Any]] = {
         "kfac": {"enabled": False},
         "multitask": {"enabled": False},
     },
-    TrainingStage.SPECIALIZED: {
+    PiscesLxTrainingStage.SPECIALIZED: {
         "learning_rate": 1e-5,
         "weight_decay": 0.01,
         "batch_size": 64,
@@ -321,7 +321,7 @@ STAGE_DEFAULTS: Dict[TrainingStage, Dict[str, Any]] = {
 
 
 @dataclass
-class OptimizerConfig:
+class PiscesLxOptimizerConfig:
     """
     Optimizer Configuration
     
@@ -346,10 +346,10 @@ class OptimizerConfig:
     
     Example:
         >>> # Standard AdamW
-        >>> config = OptimizerConfig(name="adamw", learning_rate=1e-4)
+        >>> config = PiscesLxOptimizerConfig(name="adamw", learning_rate=1e-4)
         >>> 
         >>> # GaLore-enabled training for large models
-        >>> config = OptimizerConfig(
+        >>> config = PiscesLxOptimizerConfig(
         ...     name="adamw",
         ...     learning_rate=5e-5,
         ...     use_galore=True,
@@ -389,7 +389,7 @@ class OptimizerConfig:
 
 
 @dataclass
-class SchedulerConfig:
+class PiscesLxSchedulerConfig:
     """
     Learning Rate Scheduler Configuration
     
@@ -415,14 +415,14 @@ class SchedulerConfig:
         
     Example:
         >>> # Cosine schedule with warmup
-        >>> config = SchedulerConfig(
+        >>> config = PiscesLxSchedulerConfig(
         ...     name="cosine",
         ...     warmup_steps=1000,
         ...     min_lr_ratio=0.1
         ... )
         >>> 
         >>> # Linear decay without warmup
-        >>> config = SchedulerConfig(
+        >>> config = PiscesLxSchedulerConfig(
         ...     name="linear",
         ...     warmup_steps=0,
         ...     min_lr_ratio=0.0
@@ -436,7 +436,7 @@ class SchedulerConfig:
 
 
 @dataclass
-class DataConfig:
+class PiscesLxDataConfig:
     """
     Data Loading Configuration
     
@@ -457,9 +457,9 @@ class DataConfig:
         - prefetch_factor: Higher values (2-4) reduce data loading bottlenecks
         - batch_size: Consider gradient_accumulation_steps for effective batch size
     
-    Multi-Dataset Training:
+    Multi-PiscesLxDataset Training:
         The datasets list supports training on multiple datasets simultaneously:
-        >>> config = DataConfig(
+        >>> config = PiscesLxDataConfig(
         ...     batch_size=32,
         ...     datasets=[
         ...         {"name": "dataset1", "path": "./data1", "weight": 0.6},
@@ -469,7 +469,7 @@ class DataConfig:
     
     Example:
         >>> # Standard configuration for GPU training
-        >>> config = DataConfig(
+        >>> config = PiscesLxDataConfig(
         ...     batch_size=16,
         ...     sequence_length=2048,
         ...     num_workers=4,
@@ -486,7 +486,7 @@ class DataConfig:
 
 
 @dataclass
-class QuantizationConfig:
+class PiscesLxQuantizationConfig:
     """
     Quantization Configuration
     
@@ -517,7 +517,7 @@ class QuantizationConfig:
     
     Example:
         >>> # NF4 quantization for QLoRA fine-tuning
-        >>> config = QuantizationConfig(
+        >>> config = PiscesLxQuantizationConfig(
         ...     enable_quantization=True,
         ...     quant_method="nf4",
         ...     bits=4,
@@ -525,7 +525,7 @@ class QuantizationConfig:
         ... )
         >>> 
         >>> # INT8 quantization for inference
-        >>> config = QuantizationConfig(
+        >>> config = PiscesLxQuantizationConfig(
         ...     enable_quantization=True,
         ...     quant_method="int8",
         ...     bits=8,
@@ -541,7 +541,7 @@ class QuantizationConfig:
 
 
 @dataclass
-class LoRAConfig:
+class PiscesLxLoRAConfig:
     enabled: bool = False
     r: int = 8
     lora_alpha: int = 16
@@ -552,7 +552,7 @@ class LoRAConfig:
 
 
 @dataclass
-class EvolutionConfig:
+class PiscesLxEvolutionConfig:
     """
     Evolution Training Configuration
     
@@ -614,7 +614,7 @@ class EvolutionConfig:
         }
     
     @classmethod
-    def from_dict(cls, config_dict: Dict[str, Any]) -> 'EvolutionConfig':
+    def from_dict(cls, config_dict: Dict[str, Any]) -> 'PiscesLxEvolutionConfig':
         return cls(
             enabled=config_dict.get("enabled", False),
             seed_size=config_dict.get("seed_size", "0.5B"),
@@ -636,7 +636,7 @@ class EvolutionConfig:
 
 
 @dataclass
-class TrainingConfig:
+class PiscesLxTrainingConfig:
     """
     Complete Training Configuration
     
@@ -665,13 +665,13 @@ class TrainingConfig:
         gradient_accumulation_steps: Steps to accumulate gradients before update
         
         # Component Configurations
-        optimizer: OptimizerConfig instance
-        scheduler: SchedulerConfig instance
-        data: DataConfig instance
-        quantization: QuantizationConfig instance
+        optimizer: PiscesLxOptimizerConfig instance
+        scheduler: PiscesLxSchedulerConfig instance
+        data: PiscesLxDataConfig instance
+        quantization: PiscesLxQuantizationConfig instance
         
         # Training Stage
-        stage: TrainingStage enumeration for stage-aware training
+        stage: PiscesLxTrainingStage enumeration for stage-aware training
         
         # Special Training Modes
         enable_dpo: Enable Direct Preference Optimization
@@ -705,14 +705,14 @@ class TrainingConfig:
     local_rank: int = -1
     gradient_accumulation_steps: int = 4
     
-    optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
-    scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
-    data: DataConfig = field(default_factory=DataConfig)
-    quantization: QuantizationConfig = field(default_factory=QuantizationConfig)
-    lora: LoRAConfig = field(default_factory=LoRAConfig)
-    evolution: EvolutionConfig = field(default_factory=EvolutionConfig)
+    optimizer: PiscesLxOptimizerConfig = field(default_factory=PiscesLxOptimizerConfig)
+    scheduler: PiscesLxSchedulerConfig = field(default_factory=PiscesLxSchedulerConfig)
+    data: PiscesLxDataConfig = field(default_factory=PiscesLxDataConfig)
+    quantization: PiscesLxQuantizationConfig = field(default_factory=PiscesLxQuantizationConfig)
+    lora: PiscesLxLoRAConfig = field(default_factory=PiscesLxLoRAConfig)
+    evolution: PiscesLxEvolutionConfig = field(default_factory=PiscesLxEvolutionConfig)
     
-    stage: Optional[TrainingStage] = None
+    stage: Optional[PiscesLxTrainingStage] = None
     
     loss_type: str = "lm"
     response_only_loss: bool = False
@@ -782,7 +782,7 @@ class TrainingConfig:
         """Post initialization - do not auto-load config file."""
         pass
     
-    def load_stage_config(self, stage: TrainingStage):
+    def load_stage_config(self, stage: PiscesLxTrainingStage):
         """
         Load configuration from stage config file.
         
@@ -931,7 +931,7 @@ class TrainingConfig:
             if "model_name" in out:
                 self.model_name = out["model_name"]
     
-    def switch_stage(self, new_stage: TrainingStage, **kwargs):
+    def switch_stage(self, new_stage: PiscesLxTrainingStage, **kwargs):
         """
         Switch to a new training stage.
         
@@ -956,7 +956,7 @@ class TrainingConfig:
             components (optimizer, scheduler, data, quantization) expanded.
             
         Example:
-            >>> config = TrainingConfig(model_name="test")
+            >>> config = PiscesLxTrainingConfig(model_name="test")
             >>> config_dict = config.to_dict()
             >>> print(config_dict["model_name"])  # "test"
             >>> print(config_dict["optimizer"]["name"])  # "adamw"
@@ -1048,7 +1048,7 @@ class TrainingConfig:
         }
     
     @classmethod
-    def from_dict(cls, config_dict: Dict[str, Any]) -> 'TrainingConfig':
+    def from_dict(cls, config_dict: Dict[str, Any]) -> 'PiscesLxTrainingConfig':
         """
         Create configuration object from dictionary.
         
@@ -1059,7 +1059,7 @@ class TrainingConfig:
             config_dict: Dictionary containing configuration values
             
         Returns:
-            TrainingConfig instance with values from dictionary
+            PiscesLxTrainingConfig instance with values from dictionary
             
         Example:
             >>> config_dict = {
@@ -1067,7 +1067,7 @@ class TrainingConfig:
             ...     "max_steps": 50000,
             ...     "optimizer": {"learning_rate": 5e-5}
             ... }
-            >>> config = TrainingConfig.from_dict(config_dict)
+            >>> config = PiscesLxTrainingConfig.from_dict(config_dict)
         """
         config = cls()
         
@@ -1139,7 +1139,7 @@ class TrainingConfig:
             config.lora.task_type = lora_dict.get("task_type", config.lora.task_type)
         
         if "evolution" in config_dict:
-            config.evolution = EvolutionConfig.from_dict(config_dict["evolution"])
+            config.evolution = PiscesLxEvolutionConfig.from_dict(config_dict["evolution"])
         
         # Special mode configuration
         if "special_modes" in config_dict:
@@ -1153,7 +1153,7 @@ class TrainingConfig:
         if "stage" in config_dict:
             stage_dict = config_dict["stage"]
             stage_value = stage_dict.get("current", "pretrain")
-            config.stage = TrainingStage(stage_value)
+            config.stage = PiscesLxTrainingStage(stage_value)
             config.loss_type = stage_dict.get("loss_type", config.loss_type)
             config.response_only_loss = stage_dict.get("response_only_loss", config.response_only_loss)
             config.beta = stage_dict.get("beta", config.beta)
@@ -1164,7 +1164,7 @@ class TrainingConfig:
             config.lambda_orpo = stage_dict.get("lambda_orpo", config.lambda_orpo)
             config.packing = stage_dict.get("packing", config.packing)
         elif "stage" in config_dict and isinstance(config_dict["stage"], str):
-            config.stage = TrainingStage(config_dict["stage"])
+            config.stage = PiscesLxTrainingStage(config_dict["stage"])
         
         # Advanced operators configuration
         if "advanced_operators" in config_dict:
@@ -1188,14 +1188,14 @@ class TrainingConfig:
             filepath: Path to the output JSON file
             
         Example:
-            >>> config = TrainingConfig(model_name="my-model")
+            >>> config = PiscesLxTrainingConfig(model_name="my-model")
             >>> config.save_to_json("config.json")
         """
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(self.to_dict(), f, indent=2, ensure_ascii=False)
     
     @classmethod
-    def load_from_json(cls, filepath: str) -> 'TrainingConfig':
+    def load_from_json(cls, filepath: str) -> 'PiscesLxTrainingConfig':
         """
         Load configuration from JSON file.
         
@@ -1206,10 +1206,10 @@ class TrainingConfig:
             filepath: Path to the input JSON file
             
         Returns:
-            TrainingConfig instance loaded from file
+            PiscesLxTrainingConfig instance loaded from file
             
         Example:
-            >>> config = TrainingConfig.load_from_json("config.json")
+            >>> config = PiscesLxTrainingConfig.load_from_json("config.json")
             >>> print(config.model_name)
         """
         with open(filepath, 'r', encoding='utf-8') as f:
@@ -1217,7 +1217,7 @@ class TrainingConfig:
         return cls.from_dict(config_dict)
 
     @classmethod
-    def load_from_yaml(cls, filepath: str) -> 'TrainingConfig':
+    def load_from_yaml(cls, filepath: str) -> 'PiscesLxTrainingConfig':
         with open(filepath, 'r', encoding='utf-8') as f:
             config_dict = yaml.safe_load(f) or {}
         

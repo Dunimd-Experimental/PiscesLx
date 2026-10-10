@@ -39,17 +39,17 @@ Quantization Methods:
     - BitNet v2: 1.58-bit quantization
 
 Operator Classes:
-    POPSSQuantizationEngineOperator: Main operator for model quantization
-    POPSSGPTQOperator: GPTQ quantization implementation
+    PiscesLxQuantizationEngineOperator: Main operator for model quantization
+    PiscesLxGPTQOperator: GPTQ quantization implementation
     POPSSAWQOperator: AWQ quantization operator
-    POPSSSmoothQuantOperator: SmoothQuant operator
-    POPSSQuantizationPipelineOperator: Full quantization pipeline
+    PiscesLxSmoothQuantOperator: SmoothQuant operator
+    PiscesLxQuantizationPipelineOperator: Full quantization pipeline
 
 Usage:
-    from opss.quantize import POPSSQuantizationPipelineOperator, POPSSQuantizationPipelineConfig
+    from opss.quantize import PiscesLxQuantizationPipelineOperator, POPSSQuantizationPipelineConfig
 
     config = POPSSQuantizationPipelineConfig(method="gptq", bits=4, group_size=128)
-    operator = POPSSQuantizationPipelineOperator()
+    operator = PiscesLxQuantizationPipelineOperator()
     result = operator.execute({
         "model": model,
         "config": config,
@@ -58,32 +58,32 @@ Usage:
     quantized_model = result.output["model"]
 """
 
-from .methods import (QuantizationConfig, QuantizationOperatorFactory, POPSSBlockWiseINT4Quantizer, POPSSKVCacheQuantizer,)
+from .methods import (PiscesLxQuantizationConfig, PiscesLxQuantizationOperatorFactory, PiscesLxBlockWiseINT4Quantizer, PiscesLxKVCacheQuantizer,)
 from .calibration import (
-    CalibrationConfig,
-    POPSSCalibrationDataLoaderOperator,
-    POPSSActivationCollectorOperator,
+    PiscesLxCalibrationConfig,
+    PiscesLxCalibrationDataLoaderOperator,
+    PiscesLxActivationCollectorOperator,
 )
-from .advanced import AdvancedQuantizationConfig, POPSSSensitivityAnalysisOperator, POPSSAdaptiveBitAllocationOperator
-from .pipeline import QuantizationPipelineConfig, POPSSQuantizationPipelineOperator
-from .engine import QuantizationEngineConfig, POPSSQuantizationEngineOperator, FP8Format, ScaleMethod, POPSSFP8QuantizationEngine
+from .advanced import PiscesLxAdvancedQuantizationConfig, PiscesLxSensitivityAnalysisOperator, PiscesLxAdaptiveBitAllocationOperator
+from .pipeline import PiscesLxQuantizationPipelineConfig, PiscesLxQuantizationPipelineOperator
+from .engine import PiscesLxQuantizationEngineConfig, PiscesLxQuantizationEngineOperator, PiscesLxFP8Format, PiscesLxScaleMethod, PiscesLxFP8QuantizationEngine
 
 __all__ = [
-    "QuantizationConfig",
+    "PiscesLxQuantizationConfig",
     "POPSSQuantizationOperatorFactory",
-    "CalibrationConfig",
-    "POPSSCalibrationDataLoaderOperator",
-    "POPSSActivationCollectorOperator",
-    "AdvancedQuantizationConfig",
-    "POPSSSensitivityAnalysisOperator",
-    "POPSSAdaptiveBitAllocationOperator",
-    "QuantizationPipelineConfig",
-    "POPSSQuantizationPipelineOperator",
-    "QuantizationEngineConfig",
-    "POPSSQuantizationEngineOperator",
-    "FP8Format",
-    "ScaleMethod",
-    "POPSSFP8QuantizationEngine",
-    "POPSSBlockWiseINT4Quantizer",
-    "POPSSKVCacheQuantizer",
+    "PiscesLxCalibrationConfig",
+    "PiscesLxCalibrationDataLoaderOperator",
+    "PiscesLxActivationCollectorOperator",
+    "PiscesLxAdvancedQuantizationConfig",
+    "PiscesLxSensitivityAnalysisOperator",
+    "PiscesLxAdaptiveBitAllocationOperator",
+    "PiscesLxQuantizationPipelineConfig",
+    "PiscesLxQuantizationPipelineOperator",
+    "PiscesLxQuantizationEngineConfig",
+    "PiscesLxQuantizationEngineOperator",
+    "PiscesLxFP8Format",
+    "PiscesLxScaleMethod",
+    "PiscesLxFP8QuantizationEngine",
+    "PiscesLxBlockWiseINT4Quantizer",
+    "PiscesLxKVCacheQuantizer",
 ]

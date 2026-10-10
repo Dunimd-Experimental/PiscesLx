@@ -64,7 +64,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 
 @dataclass
-class POPSSGPUInfo:
+class PiscesLxGPUInfo:
     """GPU information structure."""
     gpu_id: int
     name: str
@@ -81,7 +81,7 @@ class POPSSGPUInfo:
 
 
 @dataclass
-class POPSSGPUAllocation:
+class PiscesLxGPUAllocation:
     """GPU allocation record."""
     task_id: str
     gpu_ids: List[int]
@@ -130,9 +130,9 @@ class POPSSGPUScheduler:
         Args:
             state_dir: Directory for persistent state storage.
         """
-        self._gpu_pool: Dict[int, POPSSGPUAllocation] = {}
-        self._allocations: Dict[str, POPSSGPUAllocation] = {}
-        self._gpu_info: Dict[int, POPSSGPUInfo] = {}
+        self._gpu_pool: Dict[int, PiscesLxGPUAllocation] = {}
+        self._allocations: Dict[str, PiscesLxGPUAllocation] = {}
+        self._gpu_info: Dict[int, PiscesLxGPUInfo] = {}
         self._lock = threading.RLock()
         
         if state_dir is None:
@@ -153,7 +153,7 @@ class POPSSGPUScheduler:
                 data = json.load(f)
             
             for task_id, alloc_data in data.get("allocations", {}).items():
-                self._allocations[task_id] = POPSSGPUAllocation(
+                self._allocations[task_id] = PiscesLxGPUAllocation(
                     task_id=alloc_data["task_id"],
                     gpu_ids=alloc_data["gpu_ids"],
                     allocated_at=alloc_data["allocated_at"],
@@ -234,7 +234,7 @@ class POPSSGPUScheduler:
                 
                 try:
                     gpu_id = int(parts[0])
-                    gpu_info = POPSSGPUInfo(
+                    gpu_info = PiscesLxGPUInfo(
                         gpu_id=gpu_id,
                         name=parts[1],
                         total_memory_mb=int(float(parts[2])),
@@ -266,7 +266,7 @@ class POPSSGPUScheduler:
         self._refresh_gpu_info()
         return len(self._gpu_info)
     
-    def get_gpu_info(self, gpu_id: Optional[int] = None) -> Dict[int, POPSSGPUInfo]:
+    def get_gpu_info(self, gpu_id: Optional[int] = None) -> Dict[int, PiscesLxGPUInfo]:
         """
         Get GPU information.
         
@@ -354,7 +354,7 @@ class POPSSGPUScheduler:
                         raise ValueError(f"GPU {gid} is not available")
             
             now = datetime.now(timezone.utc).isoformat()
-            allocation = POPSSGPUAllocation(
+            allocation = PiscesLxGPUAllocation(
                 task_id=task_id,
                 gpu_ids=gpu_ids,
                 allocated_at=now,
@@ -416,7 +416,7 @@ class POPSSGPUScheduler:
                 return self._allocations[task_id].gpu_ids
             return []
     
-    def get_allocation_info(self, task_id: str) -> Optional[POPSSGPUAllocation]:
+    def get_allocation_info(self, task_id: str) -> Optional[PiscesLxGPUAllocation]:
         """
         Get allocation information for a task.
         
@@ -429,7 +429,7 @@ class POPSSGPUScheduler:
         with self._lock:
             return self._allocations.get(task_id)
     
-    def get_all_allocations(self) -> Dict[str, POPSSGPUAllocation]:
+    def get_all_allocations(self) -> Dict[str, PiscesLxGPUAllocation]:
         """
         Get all current allocations.
         

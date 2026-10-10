@@ -57,7 +57,7 @@ from utils.opsc.interface import (
 
 
 @dataclass
-class POPSSGaLoreConfig(PiscesLxOperatorConfig):
+class PiscesLxGaLoreConfig(PiscesLxOperatorConfig):
     """
     Configuration for GaLore optimizer.
     
@@ -103,7 +103,7 @@ class POPSSGaLoreConfig(PiscesLxOperatorConfig):
 
 
 # Paper: Zhao et al., "GaLore: Memory-Efficient LLM Training by Gradient Low-Rank Projection", ICML 2024, arXiv:2403.03507
-class POPSSGaLoreOperator(PiscesLxOperatorInterface):
+class PiscesLxGaLoreOperator(PiscesLxOperatorInterface):
     """
     GaLore Optimizer Operator - Memory-efficient training via gradient low-rank projection.
     
@@ -118,8 +118,8 @@ class POPSSGaLoreOperator(PiscesLxOperatorInterface):
         4. Periodically updating the projection matrix
     
     Example:
-        >>> config = POPSSGaLoreConfig(rank=64, update_proj_gap=100)
-        >>> operator = POPSSGaLoreOperator()
+        >>> config = PiscesLxGaLoreConfig(rank=64, update_proj_gap=100)
+        >>> operator = PiscesLxGaLoreOperator()
         >>> result = operator.execute({
         ...     "model": model,
         ...     "gradients": gradients,
@@ -152,7 +152,7 @@ class POPSSGaLoreOperator(PiscesLxOperatorInterface):
         return {
             "model": {"type": "nn.Module", "required": True},
             "gradients": {"type": "dict", "required": False},
-            "config": {"type": "POPSSGaLoreConfig", "required": False},
+            "config": {"type": "PiscesLxGaLoreConfig", "required": False},
             "optimizer_state": {"type": "dict", "required": False},
         }
 
@@ -178,7 +178,7 @@ class POPSSGaLoreOperator(PiscesLxOperatorInterface):
             inputs: Dictionary containing optimization inputs
                 - model: The model to optimize (nn.Module)
                 - gradients: Dictionary mapping parameter names to gradients
-                - config: GaLore configuration (POPSSGaLoreConfig)
+                - config: GaLore configuration (PiscesLxGaLoreConfig)
                 - optimizer_state: Optional existing optimizer state
             
         Returns:
@@ -193,7 +193,7 @@ class POPSSGaLoreOperator(PiscesLxOperatorInterface):
         try:
             model = inputs.get("model")
             gradients = inputs.get("gradients", {})
-            config = inputs.get("config", POPSSGaLoreConfig())
+            config = inputs.get("config", PiscesLxGaLoreConfig())
             optimizer_state = inputs.get("optimizer_state", {})
 
             if model is None:
@@ -232,7 +232,7 @@ class POPSSGaLoreOperator(PiscesLxOperatorInterface):
                 },
             )
     
-    def _initialize_galore_state(self, model: nn.Module, config: POPSSGaLoreConfig) -> Dict[str, Any]:
+    def _initialize_galore_state(self, model: nn.Module, config: PiscesLxGaLoreConfig) -> Dict[str, Any]:
         """
         Initialize GaLore optimizer state.
         
@@ -269,7 +269,7 @@ class POPSSGaLoreOperator(PiscesLxOperatorInterface):
     def _perform_galore_step(self, 
                            model: nn.Module, 
                            gradients: Dict[str, torch.Tensor],
-                           config: POPSSGaLoreConfig,
+                           config: PiscesLxGaLoreConfig,
                            state: Dict[str, Any]) -> Tuple[nn.Module, Dict[str, Any], Dict[str, Any]]:
         """
         Perform single GaLore optimization step.
@@ -329,7 +329,7 @@ class POPSSGaLoreOperator(PiscesLxOperatorInterface):
         last_update = state["last_update_steps"][param_name]
         return (state["step"] - last_update) >= state["update_proj_gap"]
     
-    def _compute_projection_matrix(self, gradient: torch.Tensor, rank: int, config: Optional[POPSSGaLoreConfig] = None) -> torch.Tensor:
+    def _compute_projection_matrix(self, gradient: torch.Tensor, rank: int, config: Optional[PiscesLxGaLoreConfig] = None) -> torch.Tensor:
         """
         Compute low-rank projection matrix for gradient with optional INT4 quantization.
         
@@ -388,7 +388,7 @@ class POPSSGaLoreOperator(PiscesLxOperatorInterface):
     def _apply_galore_transform(self, 
                               gradient: torch.Tensor, 
                               proj_matrix: Optional[torch.Tensor],
-                              config: POPSSGaLoreConfig) -> torch.Tensor:
+                              config: PiscesLxGaLoreConfig) -> torch.Tensor:
         """
         Apply GaLore gradient transformation.
         
@@ -442,7 +442,7 @@ class POPSSGaLoreOperator(PiscesLxOperatorInterface):
         Returns:
             True if configuration is valid, False otherwise
         """
-        if not isinstance(config, POPSSGaLoreConfig):
+        if not isinstance(config, PiscesLxGaLoreConfig):
             return False
             
         return (config.rank > 0 and 
@@ -450,7 +450,7 @@ class POPSSGaLoreOperator(PiscesLxOperatorInterface):
                 config.scale > 0)
 
 
-class POPSSGaLoreOptimizerAdapter:
+class PiscesLxGaLoreOptimizerAdapter:
     """
     GaLore Optimizer Adapter for integration with existing training pipelines.
     
@@ -458,22 +458,22 @@ class POPSSGaLoreOptimizerAdapter:
     in standard training loops without modifying existing code significantly.
     
     Example:
-        >>> config = POPSSGaLoreConfig(rank=64)
-        >>> adapter = POPSSGaLoreOptimizerAdapter(config)
+        >>> config = PiscesLxGaLoreConfig(rank=64)
+        >>> adapter = PiscesLxGaLoreOptimizerAdapter(config)
         >>> for batch in dataloader:
         ...     loss = model(batch)
         ...     loss.backward()
         ...     model, stats = adapter.step(model, gradients)
     """
     
-    def __init__(self, config: POPSSGaLoreConfig):
+    def __init__(self, config: PiscesLxGaLoreConfig):
         """
         Initialize the GaLore adapter.
         
         Args:
             config: GaLore configuration
         """
-        self.operator = POPSSGaLoreOperator()
+        self.operator = PiscesLxGaLoreOperator()
         self.config = config
         self.state = {}
         

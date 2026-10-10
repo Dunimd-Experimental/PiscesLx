@@ -49,7 +49,7 @@ from dataclasses import dataclass
 from configs.version import VERSION
 
 
-class POPSSInkCheckpointSelector:
+class PiscesLxInkCheckpointSelector:
     """
     Selective Activation Checkpoint Selector.
     
@@ -62,7 +62,7 @@ class POPSSInkCheckpointSelector:
         enable_transformer: Whether to apply to transformer layers
     
     Example:
-        >>> selector = POPSSInkCheckpointSelector(checkpoint_ratio=0.5)
+        >>> selector = PiscesLxInkCheckpointSelector(checkpoint_ratio=0.5)
         >>> selector.analyze_model(model)
         >>> checkpoint_layers = selector.get_checkpoint_layers()
         >>> selector.apply_checkpoint(model)

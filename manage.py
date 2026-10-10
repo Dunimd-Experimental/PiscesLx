@@ -69,7 +69,7 @@ Available Commands:
           * Process control (pause/resume/cancel)
           * Log retrieval and management
     
-    **Dataset Commands:**
+    **PiscesLxDataset Commands:**
         - download: Download and prepare training datasets
     
     **Benchmark Commands:**
@@ -425,7 +425,7 @@ def main():
         - serve: tools/infer/server.py - OpenAI-compatible backend service
         - check: tools/check.py - System validation
         - monitor: tools/monitor/orchestrator.py - System monitoring
-        - download: tools/data/download/ - Dataset management
+        - download: tools/data/download/ - PiscesLxDataset management
         - benchmark: tools/benchmark/orchestrator.py - Evaluation
         - mcp: opss/mcp/mcps/ - MCP tool management
         - cache: tools/cache/ - Cache management
@@ -603,8 +603,8 @@ def main():
     parser.add_argument(
         '--dataset', 
         default='',  # Empty means use default from config
-        type=str,  # Dataset name as string
-        help='Dataset name for training'
+        type=str,  # PiscesLxDataset name as string
+        help='PiscesLxDataset name for training'
     )
     
     # -------------------------------------------------------------------------
@@ -707,7 +707,7 @@ def main():
     # Contains preference pairs for reward model training
     parser.add_argument(
         '--rlhf_dataset', 
-        type=str,  # Dataset path as string
+        type=str,  # PiscesLxDataset path as string
         default=None,  # None means use default dataset
         help='RLHF human feedback dataset'
     )
@@ -1484,14 +1484,14 @@ def main():
                 )
 
         if not run_id:
-            from opss.run.id_factory import POPSSRunIdFactory
-            run_id = POPSSRunIdFactory(prefix="train").new_id()
+            from opss.run.id_factory import PiscesLxRunIdFactory
+            run_id = PiscesLxRunIdFactory(prefix="train").new_id()
 
-        from opss.run.store import POPSSRunStore
-        from opss.run.controller import POPSSRunController
+        from opss.run.store import PiscesLxRunStore
+        from opss.run.controller import PiscesLxRunController
 
-        store = POPSSRunStore(run_id, run_dir=run_dir)
-        controller = POPSSRunController(store)
+        store = PiscesLxRunStore(run_id, run_dir=run_dir)
+        controller = PiscesLxRunController(store)
 
         spec = {
             "run_id": run_id,
@@ -1539,10 +1539,10 @@ def main():
     # Supports submit, status, control, and log operations
     elif args.command == 'action':
         # Import the run CLI class for action sub-commands
-        from opss.run import POPSSRunCLI
+        from opss.run import PiscesLxRunCLI
         
         # Create CLI instance
-        cli = POPSSRunCLI()
+        cli = PiscesLxRunCLI()
         
         # Build argv for the sub-command
         # Try to get arguments from sys.argv first, fall back to unknown

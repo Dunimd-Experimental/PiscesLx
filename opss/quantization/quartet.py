@@ -68,7 +68,7 @@ def fp4_quantize(x: torch.Tensor) -> torch.Tensor:
     return rounded
 
 
-class YvQuartetLinear(nn.Linear):
+class PiscesLxQuartetLinear(nn.Linear):
     """Linear layer with FP4 weight storage.
 
     Stores weights in FP4 format but computes in FP16/BF16.
@@ -123,7 +123,7 @@ class YvQuartetLinear(nn.Linear):
         return F.linear(input, weight_compute, self.bias)
 
 
-class YvQuartetTrainer:
+class PiscesLxQuartetTrainer:
     """Trainer for end-to-end FP4 training.
 
     Converts model linear layers to FP4 and handles training.
@@ -136,9 +136,9 @@ class YvQuartetTrainer:
     def _convert_to_fp4(self) -> None:
         """Convert all linear layers in model to FP4."""
         for name, module in self.model.named_modules():
-            if isinstance(module, nn.Linear) and not isinstance(module, YvQuartetLinear):
+            if isinstance(module, nn.Linear) and not isinstance(module, PiscesLxQuartetLinear):
                 # Create FP4 replacement
-                fp4_layer = YvQuartetLinear(
+                fp4_layer = PiscesLxQuartetLinear(
                     module.in_features,
                     module.out_features,
                     bias=module.bias is not None,

@@ -43,7 +43,7 @@ from utils.opsc.registry import PiscesLxOperatorRegistrar
 from utils.dc import PiscesLxLogger
 
 from .core import PiscesLxInferenceEngine
-from .config import InferenceConfig
+from .config import PiscesLxInferenceConfig
 
 
 from utils.paths import get_log_file
@@ -51,13 +51,13 @@ _LOG = PiscesLxLogger("PiscesLx.Tools.Infer", file_path=get_log_file("PiscesLx.T
 
 
 @PiscesLxOperatorRegistrar()
-class InferencePipelineOperator(PiscesLxTransformOperator):
+class PiscesLxInferencePipelineOperator(PiscesLxTransformOperator):
     """
     Inference Pipeline Operator.
     Manages complete end-to-end inference pipeline.
     """
     
-    def __init__(self, config: Optional[Union[PiscesLxOperatorConfig, InferenceConfig, str, Dict[str, Any]]] = None):
+    def __init__(self, config: Optional[Union[PiscesLxOperatorConfig, PiscesLxInferenceConfig, str, Dict[str, Any]]] = None):
         op_config = config if isinstance(config, PiscesLxOperatorConfig) else None
         super().__init__(op_config)
         self.infer_config = self._normalize_infer_config(config)
@@ -65,33 +65,33 @@ class InferencePipelineOperator(PiscesLxTransformOperator):
         self.callbacks = []
         self.request_queue = []
 
-    def _normalize_infer_config(self, config: Optional[Union[PiscesLxOperatorConfig, InferenceConfig, str, Dict[str, Any]]]) -> InferenceConfig:
-        if isinstance(config, InferenceConfig):
+    def _normalize_infer_config(self, config: Optional[Union[PiscesLxOperatorConfig, PiscesLxInferenceConfig, str, Dict[str, Any]]]) -> PiscesLxInferenceConfig:
+        if isinstance(config, PiscesLxInferenceConfig):
             return config
         if isinstance(config, str):
             if config.lower().endswith(".json"):
-                return InferenceConfig.load_from_json(config)
+                return PiscesLxInferenceConfig.load_from_json(config)
             if config.lower().endswith((".yaml", ".yml")):
                 with open(config, "r", encoding="utf-8") as f:
-                    return InferenceConfig.from_dict(yaml.safe_load(f) or {})
+                    return PiscesLxInferenceConfig.from_dict(yaml.safe_load(f) or {})
             raise ValueError(f"Unsupported config file format: {config}")
         if isinstance(config, dict):
-            return InferenceConfig.from_dict(config)
+            return PiscesLxInferenceConfig.from_dict(config)
         if isinstance(config, PiscesLxOperatorConfig):
             params = getattr(config, "parameters", {}) or {}
             cfg = params.get("inference_config", None)
-            if isinstance(cfg, InferenceConfig):
+            if isinstance(cfg, PiscesLxInferenceConfig):
                 return cfg
             if isinstance(cfg, str):
                 if cfg.lower().endswith(".json"):
-                    return InferenceConfig.load_from_json(cfg)
+                    return PiscesLxInferenceConfig.load_from_json(cfg)
                 if cfg.lower().endswith((".yaml", ".yml")):
                     with open(cfg, "r", encoding="utf-8") as f:
-                        return InferenceConfig.from_dict(yaml.safe_load(f) or {})
+                        return PiscesLxInferenceConfig.from_dict(yaml.safe_load(f) or {})
                 raise ValueError(f"Unsupported config file format: {cfg}")
             if isinstance(cfg, dict):
-                return InferenceConfig.from_dict(cfg)
-        return InferenceConfig()
+                return PiscesLxInferenceConfig.from_dict(cfg)
+        return PiscesLxInferenceConfig()
 
     def transform(self, data: Any) -> Any:
         if isinstance(data, dict):
@@ -303,7 +303,7 @@ class InferencePipelineOperator(PiscesLxTransformOperator):
 
 
 @PiscesLxOperatorRegistrar()
-class PromptEngineeringOperator(PiscesLxTransformOperator):
+class PiscesLxPromptEngineeringOperator(PiscesLxTransformOperator):
     """
     Prompt Engineering Operator.
     Implements advanced prompt optimization and template management.
@@ -475,7 +475,7 @@ class PromptEngineeringOperator(PiscesLxTransformOperator):
 
 
 @PiscesLxOperatorRegistrar()
-class ResultProcessorOperator(PiscesLxTransformOperator):
+class PiscesLxResultProcessorOperator(PiscesLxTransformOperator):
     """
     Result Processor Operator.
     Implements post-processing and formatting of inference results.

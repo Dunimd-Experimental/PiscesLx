@@ -32,8 +32,8 @@ with one Triton kernel that reads (p, g, m, v), computes the full update,
 and writes (p, m, v) in a single pass.
 
 Usage:
-    >>> from opss.kernels.fused_adamw import FusedAdamW
-    >>> optimizer = FusedAdamW(model.parameters(), lr=1e-4, weight_decay=0.01)
+    >>> from opss.kernels.fused_adamw import PiscesLxFusedAdamW
+    >>> optimizer = PiscesLxFusedAdamW(model.parameters(), lr=1e-4, weight_decay=0.01)
     >>> # Fully compatible with optimizer.state_dict(), checkpointing, etc.
     >>> # Falls back to torch.optim.AdamW when Triton is unavailable.
 """
@@ -171,7 +171,7 @@ if _HAS_TRITON:
             )
 
 
-    class FusedAdamW(Optimizer):
+    class PiscesLxFusedAdamW(Optimizer):
         """Triton-fused AdamW optimizer.
 
         Drop-in replacement for torch.optim.AdamW. The entire parameter update
@@ -233,7 +233,7 @@ if _HAS_TRITON:
                         continue
                     grad = p.grad
                     if grad.is_sparse:
-                        raise RuntimeError("FusedAdamW does not support sparse gradients")
+                        raise RuntimeError("PiscesLxFusedAdamW does not support sparse gradients")
 
                     state = self.state[p]
 
@@ -277,8 +277,8 @@ if _HAS_TRITON:
 
 else:
 
-    class FusedAdamW(Optimizer):
-        """Fallback FusedAdamW — delegates to torch.optim.AdamW when Triton is unavailable."""
+    class PiscesLxFusedAdamW(Optimizer):
+        """Fallback PiscesLxFusedAdamW — delegates to torch.optim.AdamW when Triton is unavailable."""
 
         def __init__(
             self,
@@ -291,7 +291,7 @@ else:
             maximize: bool = False,
         ):
             import warnings
-            warnings.warn("Triton not available — FusedAdamW falling back to torch.optim.AdamW")
+            warnings.warn("Triton not available — PiscesLxFusedAdamW falling back to torch.optim.AdamW")
             self._impl = torch.optim.AdamW(
                 params, lr=lr, betas=betas, eps=eps,
                 weight_decay=weight_decay, amsgrad=amsgrad, maximize=maximize,

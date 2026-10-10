@@ -50,7 +50,7 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 
 import torch
-from torch.utils.data import Dataset, DataLoader, IterableDataset
+from torch.utils.data import PiscesLxDataset, DataLoader, IterableDataset
 from torch.utils.data.dataset import T_co
 import numpy as np
 
@@ -61,7 +61,7 @@ _LOG = PiscesLxLogger("PiscesLx.Tools.Data", file_path=get_log_file("PiscesLx.To
 
 
 @dataclass
-class PiscesL1DataConfig:
+class PiscesLxDataConfig:
     """Data module configuration."""
     
     train_data: Dict[str, Any] = field(default_factory=dict)
@@ -149,12 +149,12 @@ class PiscesL1DataConfig:
         })
 
 
-class PiscesL1BaseDataset(Dataset):
+class PiscesLxBaseDataset(PiscesLxDataset):
     """Base dataset class for PiscesLx."""
     
     def __init__(
         self,
-        config: PiscesL1DataConfig,
+        config: PiscesLxDataConfig,
         tokenizer: Any,
         split: str = "train",
     ):
@@ -163,7 +163,7 @@ class PiscesL1BaseDataset(Dataset):
         Args:
             config: Data configuration.
             tokenizer: Tokenizer for encoding text.
-            split: Dataset split ('train', 'val', 'test').
+            split: PiscesLxDataset split ('train', 'val', 'test').
         """
         self.config = config
         self.tokenizer = tokenizer
@@ -346,7 +346,7 @@ class PiscesL1BaseDataset(Dataset):
         raise NotImplementedError
 
 
-class PiscesL1TextDataset(PiscesL1BaseDataset):
+class PiscesLxTextDataset(PiscesLxBaseDataset):
     """Text dataset for language modeling."""
     
     def __getitem__(self, idx: int) -> Dict[str, Any]:
@@ -385,12 +385,12 @@ class PiscesL1TextDataset(PiscesL1BaseDataset):
         }
 
 
-class PiscesL1MultimodalDataset(PiscesL1BaseDataset):
+class PiscesLxMultimodalDataset(PiscesLxBaseDataset):
     """Multimodal dataset supporting text, image, audio, and video."""
     
     def __init__(
         self,
-        config: PiscesL1DataConfig,
+        config: PiscesLxDataConfig,
         tokenizer: Any,
         split: str = "train",
         vision_encoder: Any = None,
@@ -401,7 +401,7 @@ class PiscesL1MultimodalDataset(PiscesL1BaseDataset):
         Args:
             config: Data configuration.
             tokenizer: Text tokenizer.
-            split: Dataset split.
+            split: PiscesLxDataset split.
             vision_encoder: Optional vision encoder for image processing.
             audio_encoder: Optional audio encoder for audio processing.
         """
@@ -553,7 +553,7 @@ class PiscesL1MultimodalDataset(PiscesL1BaseDataset):
         }
 
 
-class PiscesL1StreamingDataset(IterableDataset):
+class PiscesLxStreamingDataset(IterableDataset):
     """Streaming dataset for large-scale data processing."""
     
     def __init__(
@@ -644,12 +644,12 @@ class PiscesL1StreamingDataset(IterableDataset):
         }
 
 
-class PiscesL1DataModule:
+class PiscesLxDataModule:
     """Unified DataModule for PiscesLx training."""
     
     def __init__(
         self,
-        config: PiscesL1DataConfig,
+        config: PiscesLxDataConfig,
         tokenizer: Any,
         vision_encoder: Any = None,
         audio_encoder: Any = None,
@@ -671,7 +671,7 @@ class PiscesL1DataModule:
         self._val_dataset = None
         self._test_dataset = None
         
-        logger.info("PiscesL1DataModule initialized")
+        logger.info("PiscesLxDataModule initialized")
     
     def setup(self, stage: str = "fit") -> None:
         """Setup datasets for different stages."""
@@ -684,10 +684,10 @@ class PiscesL1DataModule:
         if stage in ("test", "predict"):
             self._test_dataset = self._create_dataset("test")
     
-    def _create_dataset(self, split: str) -> Dataset:
+    def _create_dataset(self, split: str) -> PiscesLxDataset:
         """Create dataset for given split."""
         if self.config.multimodal_fusion:
-            return PiscesL1MultimodalDataset(
+            return PiscesLxMultimodalDataset(
                 config=self.config,
                 tokenizer=self.tokenizer,
                 split=split,
@@ -695,7 +695,7 @@ class PiscesL1DataModule:
                 audio_encoder=self.audio_encoder,
             )
         else:
-            return PiscesL1TextDataset(
+            return PiscesLxTextDataset(
                 config=self.config,
                 tokenizer=self.tokenizer,
                 split=split,
@@ -751,15 +751,15 @@ class PiscesL1DataModule:
         self._val_dataset = None
         self._test_dataset = None
         
-        logger.info("PiscesL1DataModule teardown complete")
+        logger.info("PiscesLxDataModule teardown complete")
 
 
 def create_datamodule(
-    config: PiscesL1DataConfig,
+    config: PiscesLxDataConfig,
     tokenizer: Any,
     vision_encoder: Any = None,
     audio_encoder: Any = None,
-) -> PiscesL1DataModule:
+) -> PiscesLxDataModule:
     """Factory function to create DataModule.
     
     Args:
@@ -771,7 +771,7 @@ def create_datamodule(
     Returns:
         Initialized DataModule.
     """
-    return PiscesL1DataModule(
+    return PiscesLxDataModule(
         config=config,
         tokenizer=tokenizer,
         vision_encoder=vision_encoder,
@@ -783,7 +783,7 @@ def datamodule_main(args):
     """Main entry point for data module testing."""
     from transformers import AutoTokenizer
     
-    config = PiscesL1DataConfig(
+    config = PiscesLxDataConfig(
         batch_size=4,
         max_seq_length=2048,
     )

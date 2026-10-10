@@ -28,7 +28,7 @@ import time
 from typing import Optional
 
 
-class POPSSFileLock:
+class PiscesLxFileLock:
     def __init__(self, lock_path: str, timeout_s: float = 10.0, poll_interval_s: float = 0.05):
         self._lock_path = str(lock_path)
         self._timeout_s = float(timeout_s)

@@ -40,7 +40,7 @@ import torch.nn.functional as F
 from typing import Optional, Tuple
 
 
-class FusedMLAProjector(nn.Module):
+class PiscesLxFusedMLAProjector(nn.Module):
     """Fused MLA projection: merges compress+gate and paired decompress into single matmuls.
 
     Architecture:
@@ -105,8 +105,8 @@ class FusedMLAProjector(nn.Module):
         q_compress: Optional[nn.Linear] = None,
         q_decompress: Optional[nn.Linear] = None,
         q_proj: Optional[nn.Linear] = None,
-    ) -> FusedMLAProjector:
-        """Create FusedMLAProjector from individual nn.Linear layers by migrating weights."""
+    ) -> PiscesLxFusedMLAProjector:
+        """Create PiscesLxFusedMLAProjector from individual nn.Linear layers by migrating weights."""
         hs = kv_compress.in_features
         hs_q = (q_proj or q_decompress).out_features
         n_h = (q_proj or q_decompress).in_features

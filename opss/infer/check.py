@@ -39,7 +39,7 @@ Key Features:
     - Thread-safe execution with standardized result format
 
 Operator Class:
-    POPSSGPUCheckOperator: Main operator for GPU health checking
+    PiscesLxGPUCheckOperator: Main operator for GPU health checking
 
 Input Format:
     {
@@ -72,8 +72,8 @@ GPU Information Dictionary:
     }
 
 Usage Examples:
-    >>> from opss.infer.check import POPSSGPUCheckOperator
-    >>> operator = POPSSGPUCheckOperator()
+    >>> from opss.infer.check import PiscesLxGPUCheckOperator
+    >>> operator = PiscesLxGPUCheckOperator()
     >>> result = operator.execute({})
     >>> print(result.output["status"])
     healthy
@@ -99,7 +99,7 @@ from configs.version import VERSION
 
 
 @dataclass
-class GPUInfo:
+class PiscesLxGPUInfo:
     """Data class representing individual GPU information."""
     device_id: int
     name: str
@@ -110,14 +110,14 @@ class GPUInfo:
 
 
 @dataclass
-class GPUMemoryInfo:
+class PiscesLxGPUMemoryInfo:
     """Data class representing GPU memory statistics."""
     allocated_gb: float
     cached_gb: float
     total_gb: float
 
 
-class POPSSGPUCheckOperator(PiscesLxBaseOperator):
+class PiscesLxGPUCheckOperator(PiscesLxBaseOperator):
     """
     GPU Health Check Operator for Inference System
     
@@ -147,7 +147,7 @@ class POPSSGPUCheckOperator(PiscesLxBaseOperator):
         - Protected by base class RLock for concurrent execution
     
     Example:
-        >>> operator = POPSSGPUCheckOperator()
+        >>> operator = PiscesLxGPUCheckOperator()
         >>> result = operator.execute({})
         >>> if result.is_success():
         ...     print(f"GPU Status: {result.output['status']}")

@@ -38,7 +38,7 @@ from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResu
 _LOG = PiscesLxLogger("PiscesLx.Opss.Infer", file_path=get_log_file("PiscesLx.Opss.Infer"), enable_file=True)
 
 
-class POPSSNativeInferenceOperator(PiscesLxOperatorInterface):
+class PiscesLxNativeInferenceOperator(PiscesLxOperatorInterface):
     def __init__(self):
         super().__init__()
         self.name = "infer.native_ruchbah"

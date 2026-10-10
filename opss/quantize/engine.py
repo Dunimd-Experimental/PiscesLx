@@ -52,7 +52,7 @@ from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResu
 from utils.opsc.interface import PiscesLxOperatorConfig
 
 
-class QuantizationMethod(Enum):
+class PiscesLxQuantizationMethod(Enum):
     """Supported quantization methods."""
     GPTQ = "gptq"
     AWQ = "awq"
@@ -63,7 +63,7 @@ class QuantizationMethod(Enum):
 
 
 @dataclass
-class QuantizationEngineConfig(PiscesLxOperatorConfig):
+class PiscesLxQuantizationEngineConfig(PiscesLxOperatorConfig):
     """Quantization engine configuration."""
     name: str = "quantize.engine.config"
     method: str = "gptq"
@@ -84,7 +84,7 @@ class QuantizationEngineConfig(PiscesLxOperatorConfig):
 
 
 @dataclass
-class QuantizationResult:
+class PiscesLxQuantizationResult:
     """Quantization result data structure."""
     model_path: str
     quantized_model_path: str
@@ -100,7 +100,7 @@ class QuantizationResult:
     metadata: Dict[str, Any]
 
 
-class YvQuantizationEngine:
+class PiscesLxQuantizationEngine:
     """
     Complete quantization engine for neural network compression.
     
@@ -113,13 +113,13 @@ class YvQuantizationEngine:
     - Model export with metadata
     """
     
-    def __init__(self, config: Optional[QuantizationEngineConfig] = None):
+    def __init__(self, config: Optional[PiscesLxQuantizationEngineConfig] = None):
         """Initialize quantization engine.
         
         Args:
             config: Quantization configuration. Uses defaults if None.
         """
-        self.config = config or QuantizationEngineConfig()
+        self.config = config or PiscesLxQuantizationEngineConfig()
         self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer",file_path=get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
         self.device = self._setup_device()
         
@@ -151,25 +151,25 @@ class YvQuantizationEngine:
         """Initialize available quantization method implementations."""
         try:
             from .methods import (
-                GPTQQuantizer,
-                AWQQuantizer,
-                SmoothQuantizer,
+                PiscesLxGPTQQuantizer,
+                PiscesLxAWQQuantizer,
+                PiscesLxSmoothQuantizer,
             )
             self.quantization_methods = {
-                QuantizationMethod.GPTQ.value: GPTQQuantizer(
+                PiscesLxQuantizationMethod.GPTQ.value: PiscesLxGPTQQuantizer(
                     bits=self.config.bits,
                     group_size=self.config.group_size,
                     damp_percent=self.config.damp_percent,
                     desc_act=self.config.desc_act,
                     device=self.device,
                 ),
-                QuantizationMethod.AWQ.value: AWQQuantizer(
+                PiscesLxQuantizationMethod.AWQ.value: PiscesLxAWQQuantizer(
                     bits=self.config.bits,
                     group_size=self.config.group_size,
                     symmetric=self.config.symmetric,
                     device=self.device,
                 ),
-                QuantizationMethod.SMOOTHQUANT.value: SmoothQuantizer(
+                PiscesLxQuantizationMethod.SMOOTHQUANT.value: PiscesLxSmoothQuantizer(
                     smoothing_factor=0.85,
                     group_size=self.config.group_size,
                     bits=self.config.bits,
@@ -368,7 +368,7 @@ class YvQuantizationEngine:
         self,
         model: nn.Module,
         calibration_data: Optional[List[Dict[str, torch.Tensor]]] = None,
-    ) -> Tuple[nn.Module, QuantizationResult]:
+    ) -> Tuple[nn.Module, PiscesLxQuantizationResult]:
         """
         Quantize model using configured method.
         
@@ -388,9 +388,9 @@ class YvQuantizationEngine:
         if self.config.method in self.quantization_methods:
             quantizer = self.quantization_methods[self.config.method]
             quantized_model = quantizer.quantize_model(model, calibration_data)
-        elif self.config.method == QuantizationMethod.BITSANDBYTES.value:
+        elif self.config.method == PiscesLxQuantizationMethod.BITSANDBYTES.value:
             quantized_model = self._apply_bitsandbytes_quantization(model)
-        elif self.config.method == QuantizationMethod.DYNAMIC.value:
+        elif self.config.method == PiscesLxQuantizationMethod.DYNAMIC.value:
             quantized_model = self._apply_dynamic_quantization(model)
         else:
             raise ValueError(f"Unsupported quantization method: {self.config.method}")
@@ -410,7 +410,7 @@ class YvQuantizationEngine:
             method_count = self.stats["methods_used"].get(self.config.method, 0)
             self.stats["methods_used"][self.config.method] = method_count + 1
         
-        result = QuantizationResult(
+        result = PiscesLxQuantizationResult(
             model_path="",
             quantized_model_path="",
             method=self.config.method,
@@ -616,7 +616,7 @@ class YvQuantizationEngine:
         self._LOG.info("Quantization engine cleanup complete")
 
 
-class POPSSQuantizationEngineOperator(PiscesLxOperatorInterface):
+class PiscesLxQuantizationEngineOperator(PiscesLxOperatorInterface):
     """Quantization engine operator for model compression."""
     
     def __init__(self):
@@ -625,7 +625,7 @@ class POPSSQuantizationEngineOperator(PiscesLxOperatorInterface):
         self.version = VERSION
         self.type = "quantize"
         self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer",file_path=get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
-        self.engine: Optional[YvQuantizationEngine] = None
+        self.engine: Optional[PiscesLxQuantizationEngine] = None
     
     @property
     def description(self) -> str:
@@ -637,7 +637,7 @@ class POPSSQuantizationEngineOperator(PiscesLxOperatorInterface):
             "model_path": {"type": "str", "required": False, "description": "Path to model checkpoint"},
             "model": {"type": "Module", "required": False, "description": "Model object"},
             "calibration_data": {"type": "list", "required": False, "description": "Calibration data"},
-            "config": {"type": "QuantizationEngineConfig", "required": False, "description": "Quantization config"},
+            "config": {"type": "PiscesLxQuantizationEngineConfig", "required": False, "description": "Quantization config"},
             "action": {"type": "str", "required": False, "description": "YvReActAction: quantize, analyze, export"},
         }
     
@@ -645,7 +645,7 @@ class POPSSQuantizationEngineOperator(PiscesLxOperatorInterface):
     def output_schema(self) -> Dict[str, Any]:
         return {
             "quantized_model": {"type": "Module", "description": "Quantized model"},
-            "result": {"type": "QuantizationResult", "description": "Quantization result"},
+            "result": {"type": "PiscesLxQuantizationResult", "description": "Quantization result"},
             "model_path": {"type": "str", "description": "Output model path"},
         }
     
@@ -657,13 +657,13 @@ class POPSSQuantizationEngineOperator(PiscesLxOperatorInterface):
             config = inputs.get("config")
             
             if config is None:
-                config = QuantizationEngineConfig(
+                config = PiscesLxQuantizationEngineConfig(
                     method=inputs.get("method", "gptq"),
                     bits=inputs.get("bits", 4),
                     group_size=inputs.get("group_size", 128),
                 )
             
-            self.engine = YvQuantizationEngine(config)
+            self.engine = PiscesLxQuantizationEngine(config)
             
             if action == "quantize":
                 return self._execute_quantize(inputs, start_time)
@@ -793,19 +793,19 @@ class POPSSQuantizationEngineOperator(PiscesLxOperatorInterface):
             self.engine = None
 
 
-class FP8Format(Enum):
+class PiscesLxFP8Format(Enum):
     """Supported FP8 quantization formats."""
     E4M3 = "e4m3"
     E5M2 = "e5m2"
 
 
-class ScaleMethod(Enum):
+class PiscesLxScaleMethod(Enum):
     """Supported scaling methods for quantization."""
     PER_TENSOR = "per_tensor"
     PER_CHANNEL = "per_channel"
 
 
-class POPSSFP8QuantizationEngine:
+class PiscesLxFP8QuantizationEngine:
     """
     FP8/INT4 quantization engine for high-performance inference.
 
@@ -833,16 +833,16 @@ class POPSSFP8QuantizationEngine:
             "total_kv_cache_quantizations": 0,
         }
 
-    def _get_fp8_max(self, fp8_format: FP8Format) -> float:
-        if fp8_format == FP8Format.E4M3:
+    def _get_fp8_max(self, fp8_format: PiscesLxFP8Format) -> float:
+        if fp8_format == PiscesLxFP8Format.E4M3:
             return self.E4M3_MAX
         return self.E5M2_MAX
 
     def quantize_to_fp8(
         self,
         tensor: torch.Tensor,
-        fp8_format: FP8Format = FP8Format.E4M3,
-        scale_method: ScaleMethod = ScaleMethod.PER_TENSOR,
+        fp8_format: PiscesLxFP8Format = PiscesLxFP8Format.E4M3,
+        scale_method: PiscesLxScaleMethod = PiscesLxScaleMethod.PER_TENSOR,
         scale_key: Optional[str] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -859,7 +859,7 @@ class POPSSFP8QuantizationEngine:
         """
         fp8_max = self._get_fp8_max(fp8_format)
 
-        if scale_method == ScaleMethod.PER_TENSOR:
+        if scale_method == PiscesLxScaleMethod.PER_TENSOR:
             amax = tensor.abs().max()
             scale = amax / fp8_max
             scale = torch.clamp(scale, min=1e-12)
@@ -965,7 +965,7 @@ class POPSSFP8QuantizationEngine:
         self,
         tensors: List[torch.Tensor],
         scale_keys: List[str],
-        fp8_format: FP8Format = FP8Format.E4M3,
+        fp8_format: PiscesLxFP8Format = PiscesLxFP8Format.E4M3,
     ) -> Dict[str, torch.Tensor]:
         """
         Calibrate quantization scales using reference tensors.
@@ -1005,7 +1005,7 @@ class POPSSFP8QuantizationEngine:
     def get_delayed_scale(
         self,
         key: str,
-        fp8_format: FP8Format = FP8Format.E4M3,
+        fp8_format: PiscesLxFP8Format = PiscesLxFP8Format.E4M3,
         history_length: int = 512,
     ) -> torch.Tensor:
         """
@@ -1049,8 +1049,8 @@ class POPSSFP8QuantizationEngine:
             Dictionary with quantized key, value, and scales
         """
         if quantize_type == "fp8":
-            q_key, k_scale = self.quantize_to_fp8(key, FP8Format.E4M3, ScaleMethod.PER_CHANNEL)
-            q_value, v_scale = self.quantize_to_fp8(value, FP8Format.E4M3, ScaleMethod.PER_CHANNEL)
+            q_key, k_scale = self.quantize_to_fp8(key, PiscesLxFP8Format.E4M3, PiscesLxScaleMethod.PER_CHANNEL)
+            q_value, v_scale = self.quantize_to_fp8(value, PiscesLxFP8Format.E4M3, PiscesLxScaleMethod.PER_CHANNEL)
             self.stats["total_kv_cache_quantizations"] += 1
             return {
                 "key": q_key,

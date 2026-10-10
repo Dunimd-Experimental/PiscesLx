@@ -2543,8 +2543,8 @@ class YvModelForCausalLM(YvModel):
         # Self-Play: self-generation 鈫?self-critique 鈫?self-training
         self.self_play_trainer = None
         if getattr(cfg, 'use_self_play', False):
-            from opss.train.self_play import POPSSSelfPlayTrainer
-            self.self_play_trainer = POPSSSelfPlayTrainer(
+            from opss.train.self_play import PiscesLxSelfPlayTrainer
+            self.self_play_trainer = PiscesLxSelfPlayTrainer(
                 model=self,
                 num_rounds=getattr(cfg, 'self_play_num_rounds', 3),
                 num_samples=getattr(cfg, 'self_play_num_samples', 4),

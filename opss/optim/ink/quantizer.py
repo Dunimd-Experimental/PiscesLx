@@ -67,7 +67,7 @@ from typing import Tuple, Optional, Union
 from configs.version import VERSION
 
 
-class POPSSInkBlockQuantizer:
+class PiscesLxInkBlockQuantizer:
     """
     Block-wise Quantizer for Optimizer State Compression.
     
@@ -87,7 +87,7 @@ class POPSSInkBlockQuantizer:
         variance_block_size: Block size for variance quantization
     
     Example:
-        >>> quantizer = POPSSInkBlockQuantizer(
+        >>> quantizer = PiscesLxInkBlockQuantizer(
         ...     momentum_bits=8,
         ...     variance_bits=4,
         ...     momentum_block_size=128,

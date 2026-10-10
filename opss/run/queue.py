@@ -38,11 +38,11 @@ Key Features:
     - Task dependency support
 
 Usage:
-    from opss.run.queue import POPSSTaskQueue, POPSSTask
+    from opss.run.queue import PiscesLxTaskQueue, PiscesLxTask
     
-    queue = POPSSTaskQueue()
+    queue = PiscesLxTaskQueue()
     
-    task = POPSSTask(
+    task = PiscesLxTask(
         task_id="train_001",
         task_type="train",
         priority="normal",
@@ -64,7 +64,7 @@ from typing import Any, Dict, List, Optional, Set
 
 
 @dataclass
-class POPSSTask:
+class PiscesLxTask:
     """Task definition for the queue."""
     task_id: str
     task_type: str
@@ -97,7 +97,7 @@ class POPSSTask:
         }
     
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "POPSSTask":
+    def from_dict(cls, data: Dict[str, Any]) -> "PiscesLxTask":
         """Create from dictionary."""
         return cls(
             task_id=data["task_id"],
@@ -113,7 +113,7 @@ class POPSSTask:
         )
 
 
-class POPSSTaskQueue:
+class PiscesLxTaskQueue:
     """
     Priority Task Queue for LLM Training and Inference.
     
@@ -129,8 +129,8 @@ class POPSSTaskQueue:
         _state_file: Path to persistent state file.
     
     Example:
-        >>> queue = POPSSTaskQueue()
-        >>> task = POPSSTask("train_001", "train", priority="high")
+        >>> queue = PiscesLxTaskQueue()
+        >>> task = PiscesLxTask("train_001", "train", priority="high")
         >>> queue.enqueue(task)
         >>> queue.size()
         1
@@ -147,12 +147,12 @@ class POPSSTaskQueue:
         Args:
             state_dir: Directory for persistent state storage.
         """
-        self._queues: Dict[str, List[POPSSTask]] = {
+        self._queues: Dict[str, List[PiscesLxTask]] = {
             "high": [],
             "normal": [],
             "low": [],
         }
-        self._task_index: Dict[str, POPSSTask] = {}
+        self._task_index: Dict[str, PiscesLxTask] = {}
         self._completed: Set[str] = set()
         self._running: Set[str] = set()
         self._lock = threading.RLock()
@@ -177,7 +177,7 @@ class POPSSTaskQueue:
                 if priority not in self._queues:
                     continue
                 for task_data in task_list:
-                    task = POPSSTask.from_dict(task_data)
+                    task = PiscesLxTask.from_dict(task_data)
                     self._queues[priority].append(task)
                     self._task_index[task.task_id] = task
             
@@ -205,7 +205,7 @@ class POPSSTaskQueue:
     
     def enqueue(
         self,
-        task: POPSSTask,
+        task: PiscesLxTask,
         priority: Optional[str] = None,
     ) -> int:
         """
@@ -248,7 +248,7 @@ class POPSSTaskQueue:
     def dequeue(
         self,
         available_resources: Optional[Dict[str, Any]] = None,
-    ) -> Optional[POPSSTask]:
+    ) -> Optional[PiscesLxTask]:
         """
         Get the next ready task from the queue.
         
@@ -275,7 +275,7 @@ class POPSSTaskQueue:
             
             return None
     
-    def peek(self) -> Optional[POPSSTask]:
+    def peek(self) -> Optional[PiscesLxTask]:
         """
         View the next task without removing it.
         
@@ -289,7 +289,7 @@ class POPSSTaskQueue:
                         return task
             return None
     
-    def _dependencies_satisfied(self, task: POPSSTask) -> bool:
+    def _dependencies_satisfied(self, task: PiscesLxTask) -> bool:
         """Check if all task dependencies are satisfied."""
         for dep_id in task.dependencies:
             if dep_id not in self._completed:
@@ -298,7 +298,7 @@ class POPSSTaskQueue:
     
     def _check_resources(
         self,
-        task: POPSSTask,
+        task: PiscesLxTask,
         available: Dict[str, Any],
     ) -> bool:
         """Check if resources are available for the task."""
@@ -393,7 +393,7 @@ class POPSSTaskQueue:
             self._save_state()
             return False
     
-    def get_task(self, task_id: str) -> Optional[POPSSTask]:
+    def get_task(self, task_id: str) -> Optional[PiscesLxTask]:
         """
         Get a task by ID.
         
@@ -480,7 +480,7 @@ class POPSSTaskQueue:
             self._save_state()
             return count
     
-    def get_all_tasks(self) -> List[POPSSTask]:
+    def get_all_tasks(self) -> List[PiscesLxTask]:
         """
         Get all tasks in the queue.
         

@@ -81,7 +81,7 @@ from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResu
 
 from configs.version import VERSION
 
-class POPSSMoERoutingStrategy(Enum):
+class PiscesLxMoERoutingStrategy(Enum):
     """MoE routing strategy enumeration."""
     TOP_K = "top_k"
     EXPERT_CHOICE = "expert_choice"
@@ -90,7 +90,7 @@ class POPSSMoERoutingStrategy(Enum):
 
 
 @dataclass
-class POPSSMoERuntimeConfig:
+class PiscesLxMoERuntimeConfig:
     """
     MoE runtime inference configuration.
     
@@ -154,10 +154,10 @@ class POPSSMoERuntimeConfig:
     priority_threshold: float = 0.5
     drop_tokens: bool = True
     
-    expert_selection_strategy: POPSSMoERoutingStrategy = POPSSMoERoutingStrategy.TOP_K
+    expert_selection_strategy: PiscesLxMoERoutingStrategy = PiscesLxMoERoutingStrategy.TOP_K
     
     @classmethod
-    def from_model_config(cls, model_config: Any) -> "POPSSMoERuntimeConfig":
+    def from_model_config(cls, model_config: Any) -> "PiscesLxMoERuntimeConfig":
         """
         Create runtime config from model configuration.
         
@@ -192,7 +192,7 @@ class POPSSMoERuntimeConfig:
         return cls(**config_dict)
     
     @classmethod
-    def from_json(cls, config_path: str) -> "POPSSMoERuntimeConfig":
+    def from_json(cls, config_path: str) -> "PiscesLxMoERuntimeConfig":
         """
         Load runtime config from JSON file.
         
@@ -200,7 +200,7 @@ class POPSSMoERuntimeConfig:
             config_path: Path to JSON configuration file
         
         Returns:
-            POPSSMoERuntimeConfig instance
+            PiscesLxMoERuntimeConfig instance
         """
         with open(config_path, 'r', encoding='utf-8') as f:
             config_dict = json.load(f)
@@ -210,7 +210,7 @@ class POPSSMoERuntimeConfig:
         """Convert config to dictionary."""
         result = {}
         for field_name, field_value in self.__dataclass_fields__.items():
-            if field_value.type == POPSSMoERoutingStrategy:
+            if field_value.type == PiscesLxMoERoutingStrategy:
                 result[field_name] = field_value.value
             else:
                 result[field_name] = getattr(self, field_name)
@@ -218,7 +218,7 @@ class POPSSMoERuntimeConfig:
 
 
 @dataclass
-class ExpertStats:
+class PiscesLxExpertStats:
     """Statistics for a single expert."""
     expert_id: int
     call_count: int = 0
@@ -238,7 +238,7 @@ class ExpertStats:
             self.avg_latency_ms = alpha * latency_ms + (1 - alpha) * self.avg_latency_ms
 
 
-class ExpertCacheEntry:
+class PiscesLxExpertCacheEntry:
     """Cache entry for expert computation reuse."""
     
     def __init__(
@@ -278,7 +278,7 @@ class ExpertCacheEntry:
         }
 
 
-class ExpertCacheManager:
+class PiscesLxExpertCacheManager:
     """
     Expert computation cache manager for MoE inference.
     
@@ -300,7 +300,7 @@ class ExpertCacheManager:
         enable_frequency_weighting: bool = True,
         eviction_policy: str = "lru",
     ):
-        self.cache: OrderedDict[str, ExpertCacheEntry] = OrderedDict()
+        self.cache: OrderedDict[str, PiscesLxExpertCacheEntry] = OrderedDict()
         self.frequency_map: Dict[str, int] = {}
         self.max_cache_size = max_cache_size
         self.enable_frequency_weighting = enable_frequency_weighting
@@ -393,7 +393,7 @@ class ExpertCacheManager:
                 self._update_frequency(cache_key, 1)
                 return True
             
-            entry = ExpertCacheEntry(
+            entry = PiscesLxExpertCacheEntry(
                 input_hash=input_hash,
                 expert_indices=expert_indices,
                 outputs=outputs,
@@ -450,7 +450,7 @@ class ExpertCacheManager:
             self._LOG.info("Expert cache cleared")
 
 
-class BatchExpertSharing:
+class PiscesLxBatchExpertSharing:
     """
     Batch expert sharing manager for cross-request optimization.
     
@@ -633,8 +633,8 @@ class LoadBalancer:
         self.utilization_threshold = utilization_threshold
         self.enable_adaptive_weighting = enable_adaptive_weighting
         
-        self.expert_stats: Dict[int, ExpertStats] = {
-            i: ExpertStats(expert_id=i) for i in range(num_experts)
+        self.expert_stats: Dict[int, PiscesLxExpertStats] = {
+            i: PiscesLxExpertStats(expert_id=i) for i in range(num_experts)
         }
         self.expert_calls: List[int] = []
         self.lock = threading.Lock()
@@ -780,7 +780,7 @@ class LoadBalancer:
             }
 
 
-class POPSSMoERuntimeOperator(PiscesLxOperatorInterface):
+class PiscesLxMoERuntimeOperator(PiscesLxOperatorInterface):
     """
     MoE Runtime Inference Operator
     
@@ -793,12 +793,12 @@ class POPSSMoERuntimeOperator(PiscesLxOperatorInterface):
     
     Attributes:
         config: MoERuntimeConfig for runtime behavior
-        expert_cache: ExpertCacheManager for computation caching
+        expert_cache: PiscesLxExpertCacheManager for computation caching
         load_balancer: LoadBalancer for utilization tracking
-        batch_sharing: BatchExpertSharing for cross-request optimization
+        batch_sharing: PiscesLxBatchExpertSharing for cross-request optimization
         
     Example:
-        >>> operator = POPSSMoERuntimeOperator()
+        >>> operator = PiscesLxMoERuntimeOperator()
         >>> result = operator.execute({
         ...     'hidden_states': hidden_states,
         ...     'action': 'route',
@@ -811,12 +811,12 @@ class POPSSMoERuntimeOperator(PiscesLxOperatorInterface):
         - model.config.YvConfig: Model configuration with MoE parameters
     """
     
-    def __init__(self, config: Optional[POPSSMoERuntimeConfig] = None):
+    def __init__(self, config: Optional[PiscesLxMoERuntimeConfig] = None):
         """
         Initialize the MoE runtime operator.
         
         Args:
-            config: Optional POPSSMoERuntimeConfig instance (uses default if not provided)
+            config: Optional PiscesLxMoERuntimeConfig instance (uses default if not provided)
         """
         super().__init__()
         self.name = "infer.moe_runtime"
@@ -824,7 +824,7 @@ class POPSSMoERuntimeOperator(PiscesLxOperatorInterface):
         self.type = "inference"
         self._LOG = PiscesLxLogger("pisceslx.ops.infer.moe_runtime")
         
-        self.config = config or POPSSMoERuntimeConfig()
+        self.config = config or PiscesLxMoERuntimeConfig()
         self.num_experts = 64
         self.expert_capacity = 64
         
@@ -844,12 +844,12 @@ class POPSSMoERuntimeOperator(PiscesLxOperatorInterface):
     
     def _initialize_components(self):
         """Initialize internal components based on configuration."""
-        self.expert_cache = ExpertCacheManager(
+        self.expert_cache = PiscesLxExpertCacheManager(
             max_cache_size=self.config.expert_cache_size,
             eviction_policy="lru",
         )
         
-        self.batch_sharing = BatchExpertSharing(
+        self.batch_sharing = PiscesLxBatchExpertSharing(
             similarity_threshold=0.85,
             prefix_overlap_threshold=0.7,
             max_batch_size=16,
@@ -1385,17 +1385,17 @@ class POPSSMoERuntimeOperator(PiscesLxOperatorInterface):
         self._LOG.info("MoE Runtime Operator cleaned up")
 
 
-def create_moe_runtime_operator(config: Optional[POPSSMoERuntimeConfig] = None) -> 'POPSSMoERuntimeOperator':
+def create_moe_runtime_operator(config: Optional[PiscesLxMoERuntimeConfig] = None) -> 'PiscesLxMoERuntimeOperator':
     """
     Factory function to create MoE runtime operator.
     
     Args:
-        config: Optional POPSSMoERuntimeConfig instance
+        config: Optional PiscesLxMoERuntimeConfig instance
     
     Returns:
-        Configured POPSSMoERuntimeOperator instance
+        Configured PiscesLxMoERuntimeOperator instance
     """
-    return POPSSMoERuntimeOperator(config=config)
+    return PiscesLxMoERuntimeOperator(config=config)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -1403,7 +1403,7 @@ def create_moe_runtime_operator(config: Optional[POPSSMoERuntimeConfig] = None) 
 # Expert Selection, and KV Cache Bit-Width Decisions
 # ═══════════════════════════════════════════════════════════════════
 
-class TriRouteDecision(nn.Module):
+class PiscesLxTriRouteDecision(nn.Module):
     """TriRoute: joint attention mode + expert selection + KV bit-width.
 
     A lightweight learned router that simultaneously decides:
@@ -1463,7 +1463,7 @@ class TriRouteDecision(nn.Module):
 # BrownoutMoE (2607.04164): Structure-Aware Expert Grouping via RL
 # ═══════════════════════════════════════════════════════════════════
 
-class BrownoutExpertGroup:
+class PiscesLxBrownoutExpertGroup:
     """A single expert group for BrownoutMoE.
 
     Tracks group-level statistics and supports dynamic group dropout
@@ -1488,7 +1488,7 @@ class BrownoutExpertGroup:
         self.active = True
 
 
-class BrownoutMoEGrouper:
+class PiscesLxBrownoutMoEGrouper:
     """RL-based expert grouping for MoE inference.
 
     Based on arXiv:2607.04164 (July 2026): learns a grouping policy
@@ -1512,11 +1512,11 @@ class BrownoutMoEGrouper:
         self.threshold = group_importance_threshold
 
         # Group assignments: learned index -> list of expert ids
-        self.groups: List[BrownoutExpertGroup] = []
+        self.groups: List[PiscesLxBrownoutExpertGroup] = []
         for gid in range(num_groups):
             start = gid * group_size
             end = min(start + group_size, num_experts)
-            self.groups.append(BrownoutExpertGroup(gid, list(range(start, end))))
+            self.groups.append(PiscesLxBrownoutExpertGroup(gid, list(range(start, end))))
 
         # Recent group-wise importance buffer
         self._importance_buffer: List[float] = [0.0] * num_groups
@@ -1575,13 +1575,13 @@ class BrownoutMoEGrouper:
 # Switching
 # ═══════════════════════════════════════════════════════════════════
 
-class MoebiusParallelismMode(Enum):
+class PiscesLxMoebiusParallelismMode(Enum):
     EP = "expert_parallel"
     TP = "tensor_parallel"
     HYBRID = "hybrid"
 
 
-class MoebiusParallelismSwitch:
+class PiscesLxMoebiusParallelismSwitch:
     """Runtime EP↔TP switching without restart.
 
     Based on arXiv:2606.26607 (June 2026).
@@ -1595,7 +1595,7 @@ class MoebiusParallelismSwitch:
     """
     def __init__(self, world_size: int = 1):
         self.world_size = world_size
-        self.current_mode = MoebiusParallelismMode.EP if world_size > 1 else MoebiusParallelismMode.TP
+        self.current_mode = PiscesLxMoebiusParallelismMode.EP if world_size > 1 else PiscesLxMoebiusParallelismMode.TP
         self._switch_count = 0
         self._switch_latency_sum = 0.0
 
@@ -1608,13 +1608,13 @@ class MoebiusParallelismSwitch:
         if self.world_size <= 1:
             return False
         current = self.current_mode
-        if current == MoebiusParallelismMode.EP:
+        if current == PiscesLxMoebiusParallelismMode.EP:
             return batch_tokens > 1024 and num_experts > 16
-        elif current == MoebiusParallelismMode.TP:
+        elif current == PiscesLxMoebiusParallelismMode.TP:
             return batch_tokens < 256 and num_experts > 64
         return False
 
-    def switch(self, new_mode: MoebiusParallelismMode) -> float:
+    def switch(self, new_mode: PiscesLxMoebiusParallelismMode) -> float:
         """Simulate a switch, recording latency. Returns elapsed."""
         import time as _time
         start = _time.time()
@@ -1631,12 +1631,12 @@ class MoebiusParallelismSwitch:
 
 
 __all__ = [
-    'POPSSMoERuntimeOperator',
-    'POPSSMoERuntimeConfig',
-    'POPSSMoERoutingStrategy',
-    'TriRouteDecision',
-    'BrownoutExpertGroup',
-    'BrownoutMoEGrouper',
-    'MoebiusParallelismMode',
-    'MoebiusParallelismSwitch',
+    'PiscesLxMoERuntimeOperator',
+    'PiscesLxMoERuntimeConfig',
+    'PiscesLxMoERoutingStrategy',
+    'PiscesLxTriRouteDecision',
+    'PiscesLxBrownoutExpertGroup',
+    'PiscesLxBrownoutMoEGrouper',
+    'PiscesLxMoebiusParallelismMode',
+    'PiscesLxMoebiusParallelismSwitch',
 ]

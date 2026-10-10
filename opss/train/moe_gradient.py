@@ -80,18 +80,18 @@ Dependencies:
 
 Usage Examples:
     >>> from opss.train.moe_gradient import (
-    ...     POPSSMoEGradientConfig,
-    ...     POPSSMoEGradientOperator
+    ...     PiscesLxMoEGradientConfig,
+    ...     PiscesLxMoEGradientOperator
     ... )
     
-    >>> config = POPSSMoEGradientConfig(
+    >>> config = PiscesLxMoEGradientConfig(
     ...     expert_clip_threshold=0.1,
     ...     expert_norm_factor=1e-4,
     ...     enable_adaptive_clip=True,
     ...     enable_gradient_normalization=True
     ... )
     
-    >>> operator = POPSSMoEGradientOperator(config)
+    >>> operator = PiscesLxMoEGradientOperator(config)
     >>> result = operator.execute({
     ...     "model": model,
     ...     "gradients": gradients_dict
@@ -99,7 +99,7 @@ Usage Examples:
 
 Integration:
     This operator integrates with PiscesLxTrainingEngine through the
-    AdvancedTrainingCoordinator in opss/train/impl.py. It should be
+    PiscesLxAdvancedTrainingCoordinator in opss/train/impl.py. It should be
     executed after backward pass and before optimizer.step().
 
 See Also:
@@ -128,7 +128,7 @@ from utils.opsc.interface import (
 )
 
 
-class POPSSMoEExpertType(Enum):
+class PiscesLxMoEExpertType(Enum):
     """
     Classification of MoE expert parameter types.
     
@@ -151,7 +151,7 @@ class POPSSMoEExpertType(Enum):
 
 
 @dataclass
-class POPSSMoEGradientConfig(PiscesLxOperatorConfig):
+class PiscesLxMoEGradientConfig(PiscesLxOperatorConfig):
     """
     Configuration for MoE expert gradient optimization.
     
@@ -191,7 +191,7 @@ class POPSSMoEGradientConfig(PiscesLxOperatorConfig):
         warmup_steps: 100
         
     Example:
-        >>> config = POPSSMoEGradientConfig(
+        >>> config = PiscesLxMoEGradientConfig(
         ...     expert_clip_threshold=0.1,
         ...     enable_adaptive_clip=True,
         ...     load_balancing_weight=0.01
@@ -222,7 +222,7 @@ class POPSSMoEGradientConfig(PiscesLxOperatorConfig):
         self.version = VERSION
 
 
-class POPSSMoEGradientOperator(PiscesLxOperatorInterface):
+class PiscesLxMoEGradientOperator(PiscesLxOperatorInterface):
     """
     MoE expert gradient optimization operator.
     
@@ -253,7 +253,7 @@ class POPSSMoEGradientOperator(PiscesLxOperatorInterface):
        - Tracks expert utilization rates
     
     Attributes:
-        config: POPSSMoEGradientConfig instance
+        config: PiscesLxMoEGradientConfig instance
         clip_history: List of recent gradient norms for adaptive clipping
         expert_params: List of identified expert parameter names
         non_expert_params: List of non-expert parameter names
@@ -268,7 +268,7 @@ class POPSSMoEGradientOperator(PiscesLxOperatorInterface):
         O(clip_history_window) for adaptive clipping history.
     """
     
-    def __init__(self, config: Optional[POPSSMoEGradientConfig] = None):
+    def __init__(self, config: Optional[PiscesLxMoEGradientConfig] = None):
         """
         Initialize the MoE gradient optimization operator.
         
@@ -277,7 +277,7 @@ class POPSSMoEGradientOperator(PiscesLxOperatorInterface):
                    with standard MoE parameters is used.
         """
         super().__init__(config)
-        self.config = config or POPSSMoEGradientConfig()
+        self.config = config or PiscesLxMoEGradientConfig()
         self.expert_params: List[str] = []
         self.non_expert_params: List[str] = []
         self.gating_params: List[str] = []
@@ -430,7 +430,7 @@ class POPSSMoEGradientOperator(PiscesLxOperatorInterface):
     def _detect_expert_parameter(
         self,
         param_name: str
-    ) -> Tuple[bool, POPSSMoEExpertType]:
+    ) -> Tuple[bool, PiscesLxMoEExpertType]:
         """
         Detect if a parameter is an MoE expert parameter.
         
@@ -438,36 +438,36 @@ class POPSSMoEGradientOperator(PiscesLxOperatorInterface):
             param_name: Name of the parameter to check.
             
         Returns:
-            Tuple of (is_expert: bool, expert_type: POPSSMoEExpertType).
+            Tuple of (is_expert: bool, expert_type: PiscesLxMoEExpertType).
         """
         name_lower = param_name.lower()
         
         for pattern in self.config.exclude_patterns:
             if pattern in name_lower:
-                return False, POPSSMoEExpertType.UNIFIED
+                return False, PiscesLxMoEExpertType.UNIFIED
         
         if any(pattern in name_lower for pattern in ['gate', 'routing', 'router']):
             self.gating_params.append(param_name)
-            return False, POPSSMoEExpertType.UNIFIED
+            return False, PiscesLxMoEExpertType.UNIFIED
         
         expert_patterns = self.config.detect_expert_patterns
         if any(pattern in name_lower for pattern in expert_patterns):
             if any(p in name_lower for p in ['w1', 'gate_proj', 'up_proj', 'expert_w1']):
-                return True, POPSSMoEExpertType.FFN
+                return True, PiscesLxMoEExpertType.FFN
             elif any(p in name_lower for p in ['w2', 'down_proj', 'expert_w2']):
-                return True, POPSSMoEExpertType.FFN
+                return True, PiscesLxMoEExpertType.FFN
             elif any(p in name_lower for p in ['w3', 'expert_w3']):
-                return True, POPSSMoEExpertType.FFN
+                return True, PiscesLxMoEExpertType.FFN
             elif any(p in name_lower for p in ['attn', 'attention', 'head']):
-                return True, POPSSMoEExpertType.ATTENTION
+                return True, PiscesLxMoEExpertType.ATTENTION
             elif any(p in name_lower for p in ['embed', 'embedding']):
-                return True, POPSSMoEExpertType.EMBEDDING
+                return True, PiscesLxMoEExpertType.EMBEDDING
             elif any(p in name_lower for p in ['cross', 'multimodal']):
-                return True, POPSSMoEExpertType.CROSS_MODAL
+                return True, PiscesLxMoEExpertType.CROSS_MODAL
             else:
-                return True, POPSSMoEExpertType.FFN
+                return True, PiscesLxMoEExpertType.FFN
         
-        return False, POPSSMoEExpertType.UNIFIED
+        return False, PiscesLxMoEExpertType.UNIFIED
     
     def _classify_parameters(self, model: nn.Module) -> Dict[str, List[str]]:
         """
@@ -956,7 +956,7 @@ class POPSSMoEGradientOperator(PiscesLxOperatorInterface):
         self._logger.info("MoE gradient operator state reset")
 
 
-class POPSSMoEGradientFacade:
+class PiscesLxMoEGradientFacade:
     """
     Convenience facade for quick MoE gradient optimization setup.
     
@@ -964,7 +964,7 @@ class POPSSMoEGradientFacade:
     automatically handling model analysis and gradient processing.
     
     Usage:
-        >>> facade = POPSSMoEGradientFacade()
+        >>> facade = PiscesLxMoEGradientFacade()
         >>> result = facade.process(model, step=current_step)
         >>> loss = result.output['total_auxiliary_loss']
     """
@@ -985,13 +985,13 @@ class POPSSMoEGradientFacade:
             load_balancing_weight: Weight for load balancing loss
             **kwargs: Additional configuration passed to config
         """
-        config = POPSSMoEGradientConfig(
+        config = PiscesLxMoEGradientConfig(
             expert_clip_threshold=expert_clip_threshold,
             enable_adaptive_clip=enable_adaptive_clip,
             load_balancing_weight=load_balancing_weight,
             **kwargs
         )
-        self.operator = POPSSMoEGradientOperator(config)
+        self.operator = PiscesLxMoEGradientOperator(config)
     
     def process(
         self,
@@ -1039,7 +1039,7 @@ class POPSSMoEGradientFacade:
         return {}
 
 
-class POPSSExpertGradientClipper:
+class PiscesLxExpertGradientClipper:
     def __init__(self, max_norm: float = 1.0, norm_type: float = 2.0):
         self.max_norm = float(max_norm)
         self.norm_type = float(norm_type)
@@ -1049,9 +1049,9 @@ class POPSSExpertGradientClipper:
 
 
 __all__ = [
-    "POPSSMoEExpertType",
-    "POPSSMoEGradientConfig",
-    "POPSSMoEGradientOperator",
-    "POPSSMoEGradientFacade",
-    "POPSSExpertGradientClipper",
+    "PiscesLxMoEExpertType",
+    "PiscesLxMoEGradientConfig",
+    "PiscesLxMoEGradientOperator",
+    "PiscesLxMoEGradientFacade",
+    "PiscesLxExpertGradientClipper",
 ]

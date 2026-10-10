@@ -37,7 +37,7 @@ Routing Strategies:
 
 Architecture:
     PiscesLxModelRouter
-    ├── Route model_id to ModelSpec
+    ├── Route model_id to PiscesLxModelSpec
     ├── Validate model availability
     ├── Manage model instances
     └── Handle fallback logic
@@ -56,7 +56,7 @@ import re
 from utils.dc import PiscesLxLogger
 from utils.paths import get_log_file
 
-from .config import ModelSpec, MODEL_SPECS, get_model_spec
+from .config import PiscesLxModelSpec, MODEL_SPECS, get_model_spec
 
 
 class PiscesLxRoutingStrategy(Enum):
@@ -80,7 +80,7 @@ class PiscesLxRouteResult:
         fallback_chain: Fallback models if primary fails
         metadata: Additional routing metadata
     """
-    model_spec: ModelSpec
+    model_spec: PiscesLxModelSpec
     model_id: str
     model_size: str
     strategy: PiscesLxRoutingStrategy
@@ -301,7 +301,7 @@ class PiscesLxModelRouter:
         
         self._model_load[result.model_size] = self._model_load.get(result.model_size, 0) + 1
     
-    def get_model_spec(self, model_id: str) -> ModelSpec:
+    def get_model_spec(self, model_id: str) -> PiscesLxModelSpec:
         """
         Get model specification for a model ID.
         
@@ -309,7 +309,7 @@ class PiscesLxModelRouter:
             model_id: Model identifier
         
         Returns:
-            ModelSpec for the model
+            PiscesLxModelSpec for the model
         """
         result = self.resolve(model_id)
         return result.model_spec

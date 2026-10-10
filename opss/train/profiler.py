@@ -46,7 +46,7 @@ from configs.version import VERSION
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorConfig
 
 
-class ProfilingConfig(PiscesLxOperatorConfig):
+class PiscesLxProfilingConfig(PiscesLxOperatorConfig):
     """
     Configuration for training performance profiling.
     
@@ -64,7 +64,7 @@ class ProfilingConfig(PiscesLxOperatorConfig):
     detailed_ops: bool = True
 
 
-class ProfilingOperator(PiscesLxOperatorInterface):
+class PiscesLxProfilingOperator(PiscesLxOperatorInterface):
     """
     Training Performance Profiling Operator.
     
@@ -80,8 +80,8 @@ class ProfilingOperator(PiscesLxOperatorInterface):
         5. Bottleneck identification and recommendations
     
     Example:
-        >>> config = ProfilingConfig(profile_steps=20, profile_memory=True)
-        >>> operator = ProfilingOperator()
+        >>> config = PiscesLxProfilingConfig(profile_steps=20, profile_memory=True)
+        >>> operator = PiscesLxProfilingOperator()
         >>> result = operator.execute({
         ...     "model": model,
         ...     "dataloader": train_loader,
@@ -109,7 +109,7 @@ class ProfilingOperator(PiscesLxOperatorInterface):
             inputs: Dictionary containing profiling inputs
                 - model: The model to profile (nn.Module)
                 - dataloader: Training data loader
-                - config: Profiling configuration (ProfilingConfig)
+                - config: Profiling configuration (PiscesLxProfilingConfig)
                 - forward_fn: Optional custom forward function
         
         Returns:
@@ -126,7 +126,7 @@ class ProfilingOperator(PiscesLxOperatorInterface):
         try:
             model = inputs.get("model")
             dataloader = inputs.get("dataloader")
-            config = inputs.get("config", ProfilingConfig())
+            config = inputs.get("config", PiscesLxProfilingConfig())
             forward_fn = inputs.get("forward_fn", self._default_forward)
             
             if not model or not dataloader:
@@ -160,7 +160,7 @@ class ProfilingOperator(PiscesLxOperatorInterface):
     def _profile_model(self, 
                       model: torch.nn.Module,
                       dataloader,
-                      config: ProfilingConfig,
+                      config: PiscesLxProfilingConfig,
                       forward_fn) -> Dict[str, Any]:
         """
         Profile model performance.
@@ -531,7 +531,7 @@ class ProfilingOperator(PiscesLxOperatorInterface):
         Returns:
             True if configuration is valid, False otherwise
         """
-        if not isinstance(config, ProfilingConfig):
+        if not isinstance(config, PiscesLxProfilingConfig):
             return False
             
         return (config.warmup_steps >= 0 and 
@@ -567,8 +567,8 @@ def profile_training(model: torch.nn.Module,
         >>> results = profile_training(model, train_loader, profile_steps=20)
         >>> print(f"Average forward time: {results['timing_analysis']['avg_forward_time']:.4f}s")
     """
-    operator = ProfilingOperator()
-    config = ProfilingConfig(
+    operator = PiscesLxProfilingOperator()
+    config = PiscesLxProfilingConfig(
         profile_memory=profile_memory,
         profile_time=profile_time,
         profile_steps=profile_steps

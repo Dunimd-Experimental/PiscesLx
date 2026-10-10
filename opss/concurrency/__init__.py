@@ -64,17 +64,17 @@ class PiscesLxCoreTimeoutError(TimeoutError):
     pass
 
 
-class POPSSTimeoutError(PiscesLxCoreTimeoutError):
+class PiscesLxTimeoutError(PiscesLxCoreTimeoutError):
     """Timeout error for concurrency operations."""
     pass
 
 
-class POPSSConcurrencyError(RuntimeError):
+class PiscesLxConcurrencyError(RuntimeError):
     """Concurrency error for failed operations."""
     pass
 
 
-class POPSSTaskPriority(Enum):
+class PiscesLxTaskPriority(Enum):
     """Task priority levels."""
     CRITICAL = 0
     HIGH = 1
@@ -83,7 +83,7 @@ class POPSSTaskPriority(Enum):
     BACKGROUND = 4
 
 
-class POPSSConcurrencyBackend(Enum):
+class PiscesLxConcurrencyBackend(Enum):
     """Concurrency backend types."""
     THREADING = "threading"
     MULTIPROCESSING = "multiprocessing"
@@ -91,19 +91,19 @@ class POPSSConcurrencyBackend(Enum):
 
 
 @dataclass
-class POPSSConcurrencyConfig:
+class PiscesLxConcurrencyConfig:
     """Configuration for concurrency operations."""
     max_workers: int = 4
     max_memory_mb: Optional[int] = None
     timeout_seconds: float = 300.0
     retry_attempts: int = 3
     retry_delay: float = 1.0
-    backend: POPSSConcurrencyBackend = POPSSConcurrencyBackend.THREADING
+    backend: PiscesLxConcurrencyBackend = PiscesLxConcurrencyBackend.THREADING
     enable_profiling: bool = False
 
 
 @dataclass
-class POPSSRetryConfig:
+class PiscesLxRetryConfig:
     """Configuration for retry operations."""
     max_attempts: int = 3
     base_delay: float = 0.2
@@ -115,7 +115,7 @@ class POPSSRetryConfig:
     circuit_breaker_timeout: float = 300.0
 
 
-class POPSSTimeoutOperator:
+class PiscesLxTimeoutOperator:
     """
     Timeout Context Manager.
     
@@ -153,7 +153,7 @@ class POPSSTimeoutOperator:
             self._timer = None
         
         if self._timeout_occurred and self.raise_on_timeout:
-            raise POPSSTimeoutError(
+            raise PiscesLxTimeoutError(
                 "operation timed out",
                 context={"seconds": self.seconds}
             )
@@ -168,19 +168,19 @@ class POPSSTimeoutOperator:
         return self._timeout_occurred
 
 
-class POPSSRetryOperator:
+class PiscesLxRetryOperator:
     """
     Retry Operator with Exponential Backoff and Circuit Breaker.
     
     Provides robust retry logic for unreliable operations.
     
     Usage:
-        retry = POPSSRetryOperator(max_attempts=3, base_delay=1.0)
+        retry = PiscesLxRetryOperator(max_attempts=3, base_delay=1.0)
         result = retry.execute(unreliable_function)
     """
     
-    def __init__(self, config: Optional[POPSSRetryConfig] = None):
-        self.config = config or POPSSRetryConfig()
+    def __init__(self, config: Optional[PiscesLxRetryConfig] = None):
+        self.config = config or PiscesLxRetryConfig()
         self._failure_count = 0
         self._circuit_open = False
         self._last_failure_time = 0.0
@@ -188,7 +188,7 @@ class POPSSRetryOperator:
     def execute(self, func: Callable[[], Any]) -> Any:
         """Execute function with retry logic."""
         if self._is_circuit_open():
-            raise POPSSConcurrencyError("Circuit breaker is open")
+            raise PiscesLxConcurrencyError("Circuit breaker is open")
         
         attempt = 0
         delay = self.config.base_delay
@@ -206,7 +206,7 @@ class POPSSRetryOperator:
                 self._record_failure()
                 
                 if attempt == self.config.max_attempts - 1:
-                    raise POPSSConcurrencyError(
+                    raise PiscesLxConcurrencyError(
                         "retry attempts exhausted",
                         context={"attempts": self.config.max_attempts, "final_delay": delay}
                     )
@@ -218,7 +218,7 @@ class POPSSRetryOperator:
                 
                 attempt += 1
         
-        raise POPSSConcurrencyError("unexpected retry failure")
+        raise PiscesLxConcurrencyError("unexpected retry failure")
     
     def _is_circuit_open(self) -> bool:
         if not self._circuit_open:
@@ -236,20 +236,20 @@ class POPSSRetryOperator:
             self._circuit_open = True
 
 
-class POPSSParallelOperator:
+class PiscesLxParallelOperator:
     """
     Parallel Execution Operator.
     
     Provides parallel execution using ThreadPool or ProcessPool.
     
     Usage:
-        parallel = POPSSParallelOperator(max_workers=4, backend="threading")
+        parallel = PiscesLxParallelOperator(max_workers=4, backend="threading")
         results = parallel.map(process_item, items)
     """
     
     def __init__(
         self,
-        backend: POPSSConcurrencyBackend = POPSSConcurrencyBackend.THREADING,
+        backend: PiscesLxConcurrencyBackend = PiscesLxConcurrencyBackend.THREADING,
         max_workers: Optional[int] = None,
         chunk_size: int = 1,
         timeout: Optional[float] = None
@@ -267,12 +267,12 @@ class POPSSParallelOperator:
         if self.max_workers is None:
             self.max_workers = min(len(items), 16)
         
-        if self.backend == POPSSConcurrencyBackend.THREADING:
+        if self.backend == PiscesLxConcurrencyBackend.THREADING:
             return self._execute_threaded(func, items)
-        elif self.backend == POPSSConcurrencyBackend.MULTIPROCESSING:
+        elif self.backend == PiscesLxConcurrencyBackend.MULTIPROCESSING:
             return self._execute_multiprocess(func, items)
         else:
-            raise POPSSConcurrencyError(f"Unsupported backend: {self.backend}")
+            raise PiscesLxConcurrencyError(f"Unsupported backend: {self.backend}")
     
     def _execute_threaded(self, func: Callable[[Any], Any], items: Sequence[Any]) -> List[Any]:
         results = []
@@ -283,7 +283,7 @@ class POPSSParallelOperator:
                 try:
                     results.append(future.result(timeout=self.timeout))
                 except Exception as e:
-                    raise POPSSConcurrencyError(f"threaded execution failed: {e}")
+                    raise PiscesLxConcurrencyError(f"threaded execution failed: {e}")
         return results
     
     def _execute_multiprocess(self, func: Callable[[Any], Any], items: Sequence[Any]) -> List[Any]:
@@ -296,15 +296,15 @@ class POPSSParallelOperator:
         return results
 
 
-class POPSSAsyncOperator:
+class PiscesLxAsyncOperator:
     """
     Async Task Operator with Priority Queue.
     
     Provides async task management with priority support.
     
     Usage:
-        async_manager = POPSSAsyncOperator(max_concurrent=100)
-        await async_manager.submit(coro, priority=POPSSTaskPriority.HIGH)
+        async_manager = PiscesLxAsyncOperator(max_concurrent=100)
+        await async_manager.submit(coro, priority=PiscesLxTaskPriority.HIGH)
     """
     
     def __init__(self, max_concurrent: int = 100, max_queue_size: int = 1000):
@@ -317,11 +317,11 @@ class POPSSAsyncOperator:
     async def submit(
         self,
         coro: Callable[[], Any],
-        priority: POPSSTaskPriority = POPSSTaskPriority.NORMAL
+        priority: PiscesLxTaskPriority = PiscesLxTaskPriority.NORMAL
     ) -> Any:
         """Submit async task."""
         if self._shutdown:
-            raise POPSSConcurrencyError("Async manager is shutdown")
+            raise PiscesLxConcurrencyError("Async manager is shutdown")
         
         async def wrapped():
             async with self._semaphore:
@@ -350,7 +350,7 @@ class POPSSAsyncOperator:
         return len(self._running_tasks)
 
 
-class POPSSConcurrencyOperator(PiscesLxOperatorInterface):
+class PiscesLxConcurrencyOperator(PiscesLxOperatorInterface):
     """
     Concurrency Operator.
     
@@ -371,11 +371,11 @@ class POPSSConcurrencyOperator(PiscesLxOperatorInterface):
         Result of the concurrency operation
     """
     
-    def __init__(self, config: Optional[POPSSConcurrencyConfig] = None):
+    def __init__(self, config: Optional[PiscesLxConcurrencyConfig] = None):
         super().__init__()
         self.name = "concurrency"
         self.version = VERSION
-        self.config = config or POPSSConcurrencyConfig()
+        self.config = config or PiscesLxConcurrencyConfig()
         self._LOG = PiscesLxLogger("pisceslx.ops.concurrency")
     
     @property
@@ -440,7 +440,7 @@ class POPSSConcurrencyOperator(PiscesLxOperatorInterface):
                 output={"timed_out": False}
             )
         
-        with POPSSTimeoutOperator(seconds) as timeout:
+        with PiscesLxTimeoutOperator(seconds) as timeout:
             result = func()
         
         return PiscesLxOperatorResult(
@@ -458,7 +458,7 @@ class POPSSConcurrencyOperator(PiscesLxOperatorInterface):
                 output={"attempts": 0}
             )
         
-        retry = POPSSRetryOperator(POPSSRetryConfig(max_attempts=max_attempts))
+        retry = PiscesLxRetryOperator(PiscesLxRetryConfig(max_attempts=max_attempts))
         result = retry.execute(func)
         
         return PiscesLxOperatorResult(
@@ -471,7 +471,7 @@ class POPSSConcurrencyOperator(PiscesLxOperatorInterface):
         func = inputs.get("func", lambda x: x)
         max_workers = inputs.get("max_workers", 4)
         
-        parallel = POPSSParallelOperator(max_workers=max_workers)
+        parallel = PiscesLxParallelOperator(max_workers=max_workers)
         results = parallel.map(func, items)
         
         return PiscesLxOperatorResult(
@@ -482,21 +482,21 @@ class POPSSConcurrencyOperator(PiscesLxOperatorInterface):
     def _async_operation(self, inputs: Dict[str, Any]) -> PiscesLxOperatorResult:
         return PiscesLxOperatorResult(
             status=PiscesLxOperatorStatus.SUCCESS,
-            output={"message": "Use POPSSAsyncOperator directly for async operations"}
+            output={"message": "Use PiscesLxAsyncOperator directly for async operations"}
         )
 
 
 __all__ = [
     "PiscesLxCoreTimeoutError",
-    "POPSSTimeoutError",
-    "POPSSConcurrencyError",
-    "POPSSTaskPriority",
-    "POPSSConcurrencyBackend",
-    "POPSSConcurrencyConfig",
-    "POPSSRetryConfig",
-    "POPSSTimeoutOperator",
-    "POPSSRetryOperator",
-    "POPSSParallelOperator",
-    "POPSSAsyncOperator",
-    "POPSSConcurrencyOperator",
+    "PiscesLxTimeoutError",
+    "PiscesLxConcurrencyError",
+    "PiscesLxTaskPriority",
+    "PiscesLxConcurrencyBackend",
+    "PiscesLxConcurrencyConfig",
+    "PiscesLxRetryConfig",
+    "PiscesLxTimeoutOperator",
+    "PiscesLxRetryOperator",
+    "PiscesLxParallelOperator",
+    "PiscesLxAsyncOperator",
+    "PiscesLxConcurrencyOperator",
 ]

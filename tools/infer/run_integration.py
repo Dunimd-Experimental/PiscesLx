@@ -30,13 +30,13 @@ This module provides integration with OPSS Run components for comprehensive
 runtime management of the inference service.
 
 OPSS Run Components:
-    - POPSSRunCLI: Command-line interface for run management
-    - POPSSRunController: Run lifecycle control
-    - POPSSRunStore: Persistent storage for run data
-    - POPSSResourceMonitor: CPU/Memory/GPU/IO monitoring
-    - POPSSHeartbeatMonitor: Run heartbeat monitoring
-    - POPSSRunManager: Run listing and management
-    - POPSSRunAttacher: Real-time run attachment
+    - PiscesLxRunCLI: Command-line interface for run management
+    - PiscesLxRunController: Run lifecycle control
+    - PiscesLxRunStore: Persistent storage for run data
+    - PiscesLxResourceMonitor: CPU/Memory/GPU/IO monitoring
+    - PiscesLxHeartbeatMonitor: Run heartbeat monitoring
+    - PiscesLxRunManager: Run listing and management
+    - PiscesLxRunAttacher: Real-time run attachment
 
 Architecture:
     PiscesLxRunIntegration
@@ -58,9 +58,9 @@ Architecture:
 
 Usage:
     >>> from tools.infer.run_integration import PiscesLxRunIntegration
-    >>> from tools.infer.config import RunConfig
+    >>> from tools.infer.config import PiscesLxRunConfig
     >>> 
-    >>> config = RunConfig(run_id="infer_001")
+    >>> config = PiscesLxRunConfig(run_id="infer_001")
     >>> run = PiscesLxRunIntegration(config)
     >>> run.initialize()
     >>> 
@@ -79,7 +79,7 @@ import threading
 from utils.dc import PiscesLxLogger
 from utils.paths import get_log_file
 
-from .config import RunConfig
+from .config import PiscesLxRunConfig
 
 
 @dataclass
@@ -126,7 +126,7 @@ class PiscesLxRunIntegration:
         - Comprehensive error handling
     
     Example:
-        >>> config = RunConfig(run_id="infer_001", enable_resource_monitor=True)
+        >>> config = PiscesLxRunConfig(run_id="infer_001", enable_resource_monitor=True)
         >>> run = PiscesLxRunIntegration(config)
         >>> run.initialize()
         >>> 
@@ -140,7 +140,7 @@ class PiscesLxRunIntegration:
         >>> stats = run.get_resource_stats()
     """
     
-    def __init__(self, config: RunConfig):
+    def __init__(self, config: PiscesLxRunConfig):
         """
         Initialize Run integration.
         
@@ -208,14 +208,14 @@ class PiscesLxRunIntegration:
     def _init_run_store(self):
         """Initialize Run Store."""
         try:
-            from opss.run.store import POPSSRunStore
-            from opss.run.id_factory import POPSSRunIdFactory
+            from opss.run.store import PiscesLxRunStore
+            from opss.run.id_factory import PiscesLxRunIdFactory
             
             run_id = self.config.run_id
             if not run_id:
-                run_id = POPSSRunIdFactory.generate("infer")
+                run_id = PiscesLxRunIdFactory.generate("infer")
             
-            self._run_store = POPSSRunStore(run_id)
+            self._run_store = PiscesLxRunStore(run_id)
             self.config.run_id = run_id
             
             self._LOG.info(f"Run Store initialized with run_id: {run_id}")
@@ -230,9 +230,9 @@ class PiscesLxRunIntegration:
     def _init_controller(self, spec: Dict[str, Any]):
         """Initialize Run Controller."""
         try:
-            from opss.run.controller import POPSSRunController
+            from opss.run.controller import PiscesLxRunController
             
-            self._controller = POPSSRunController(self._run_store)
+            self._controller = PiscesLxRunController(self._run_store)
             
             full_spec = {
                 "type": "infer_service",
@@ -254,9 +254,9 @@ class PiscesLxRunIntegration:
     def _init_resource_monitor(self):
         """Initialize Resource Monitor."""
         try:
-            from opss.run.monitor import POPSSResourceMonitor
+            from opss.run.monitor import PiscesLxResourceMonitor
             
-            self._resource_monitor = POPSSResourceMonitor(
+            self._resource_monitor = PiscesLxResourceMonitor(
                 store=self._run_store,
                 interval_s=self.config.resource_interval_s,
                 enable_gpu=self.config.enable_gpu_monitor,
@@ -276,9 +276,9 @@ class PiscesLxRunIntegration:
     def _init_heartbeat_monitor(self):
         """Initialize Heartbeat Monitor."""
         try:
-            from opss.run.monitor import POPSSHeartbeatMonitor
+            from opss.run.monitor import PiscesLxHeartbeatMonitor
             
-            self._heartbeat_monitor = POPSSHeartbeatMonitor(
+            self._heartbeat_monitor = PiscesLxHeartbeatMonitor(
                 store=self._run_store,
                 interval_s=10.0,
                 timeout_s=60.0
@@ -297,9 +297,9 @@ class PiscesLxRunIntegration:
     def _init_run_manager(self):
         """Initialize Run Manager."""
         try:
-            from opss.run.monitor import POPSSRunManager
+            from opss.run.monitor import PiscesLxRunManager
             
-            self._run_manager = POPSSRunManager()
+            self._run_manager = PiscesLxRunManager()
             self._LOG.info("Run Manager initialized")
             
         except ImportError as e:

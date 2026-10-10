@@ -317,7 +317,7 @@ def cmd_publish(args: argparse.Namespace) -> int:
         Exit code (0 for success, non-zero for failure).
     """
     from tools.publish.runner import PiscesLxToolsPublish
-    from tools.publish.config import PiscesLxPublishConfig, ExportAction
+    from tools.publish.config import PiscesLxPublishConfig, PiscesLxExportAction
 
     _LOG.info("Executing publish command", model_size=args.model_size)
 
@@ -326,7 +326,7 @@ def cmd_publish(args: argparse.Namespace) -> int:
         model_name=args.model_name,
         model_path=args.model_path or f"./checkpoints/{args.model_size}",
         output_dir=args.output_dir,
-        action=ExportAction.ALL.value if not args.no_push else ExportAction.BUILD_ONLY.value,
+        action=PiscesLxExportAction.ALL.value if not args.no_push else PiscesLxExportAction.BUILD_ONLY.value,
     )
 
     if args.config:
@@ -370,7 +370,7 @@ def cmd_export(args: argparse.Namespace) -> int:
         Exit code (0 for success, non-zero for failure).
     """
     from tools.publish.runner import PiscesLxToolsPublish
-    from tools.publish.config import PiscesLxPublishConfig, ExportAction
+    from tools.publish.config import PiscesLxPublishConfig, PiscesLxExportAction
 
     _LOG.info("Executing export command", model_path=args.model_path)
 
@@ -379,7 +379,7 @@ def cmd_export(args: argparse.Namespace) -> int:
         model_name=args.model_name,
         model_path=args.model_path or f"./checkpoints/{args.model_size}",
         output_dir=args.output_dir,
-        action=ExportAction.EXPORT_ONLY.value,
+        action=PiscesLxExportAction.EXPORT_ONLY.value,
     )
 
     config.export.export_format = args.format
@@ -417,7 +417,7 @@ def cmd_build(args: argparse.Namespace) -> int:
         Exit code (0 for success, non-zero for failure).
     """
     from tools.publish.runner import PiscesLxToolsPublish
-    from tools.publish.config import PiscesLxPublishConfig, ExportAction
+    from tools.publish.config import PiscesLxPublishConfig, PiscesLxExportAction
 
     _LOG.info("Executing build command", image_name=args.image_name)
 
@@ -426,7 +426,7 @@ def cmd_build(args: argparse.Namespace) -> int:
         model_name=args.model_name,
         model_path=args.model_path or f"./checkpoints/{args.model_size}",
         output_dir=args.output_dir,
-        action=ExportAction.BUILD_ONLY.value,
+        action=PiscesLxExportAction.BUILD_ONLY.value,
     )
 
     config.docker.image_name = args.image_name

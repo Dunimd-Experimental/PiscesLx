@@ -27,7 +27,7 @@ from .manager import PiscesLxToolsDataDatasetManager
 from .loader import PiscesLxToolsDataOptimizedDataLoader, PiscesLxToolsDataBatchConfig
 from .streaming import PiscesLxToolsDataLargeScaleStreamingDataset
 from .memory import PiscesLxToolsDataMemoryMonitor, PiscesLxToolsDataStreamingDataBuffer
-from .core import Dataset as PiscesLxDataset
+from .core import PiscesLxDataset as PiscesLxDataset
 
 __all__ = [
     "PiscesLxToolsDataDatasetManager",

@@ -99,7 +99,7 @@ class PiscesLxDynamicBatchSampler(Sampler[List[int]]):
         Initialize the dynamic batch sampler.
         
         Args:
-            data_source: Dataset to sample from.
+            data_source: PiscesLxDataset to sample from.
             max_tokens: Maximum tokens per batch. Defaults to 8192.
             max_samples: Maximum samples per batch as safety limit. Defaults to 128.
             length_fn: Function returning sample length by index. If None,

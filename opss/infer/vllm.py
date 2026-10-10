@@ -63,7 +63,7 @@ from configs.version import VERSION
 
 
 @dataclass
-class POPSSVLLMConfig:
+class PiscesLxVLLMConfig:
     """vLLM inference configuration."""
     
     model_path: str = ".pisceslx/ckpt"
@@ -93,7 +93,7 @@ class POPSSVLLMConfig:
 
 
 @dataclass
-class MultiLoRAConfig:
+class PiscesLxMultiLoRAConfig:
     """Multi-LoRA configuration for concurrent adapter serving."""
     
     max_lora_adapters: int = 16
@@ -102,12 +102,12 @@ class MultiLoRAConfig:
     lora_dtype: str = "auto"
     
     @classmethod
-    def from_adapter_path(cls, adapter_path: str) -> "MultiLoRAConfig":
+    def from_adapter_path(cls, adapter_path: str) -> "PiscesLxMultiLoRAConfig":
         """Create config from LoRA adapter path."""
         return cls()
 
 
-class PrefixCacheEntry:
+class PiscesLxPrefixCacheEntry:
     """Prefix cache entry for KV cache reuse."""
     
     def __init__(
@@ -140,7 +140,7 @@ class PrefixCacheEntry:
         }
 
 
-class PrefixCacheManager:
+class PiscesLxPrefixCacheManager:
     """
     Advanced prefix caching manager for vLLM inference.
     
@@ -157,7 +157,7 @@ class PrefixCacheManager:
         eviction_policy: str = "lru",
         enable_substring_matching: bool = True,
     ):
-        self.cache: OrderedDict[str, PrefixCacheEntry] = OrderedDict()
+        self.cache: OrderedDict[str, PiscesLxPrefixCacheEntry] = OrderedDict()
         self.max_memory_bytes = max_memory_bytes
         self.eviction_policy = eviction_policy
         self.enable_substring_matching = enable_substring_matching
@@ -221,7 +221,7 @@ class PrefixCacheManager:
         with self.lock:
             prompt_hash = self._compute_prompt_hash(token_ids)
             
-            entry = PrefixCacheEntry(
+            entry = PiscesLxPrefixCacheEntry(
                 prompt_hash=prompt_hash,
                 token_ids=token_ids,
                 kv_cache=kv_cache,
@@ -294,7 +294,7 @@ class PrefixCacheManager:
             self._LOG.info("Prefix cache cleared")
 
 
-class ChunkedPrefillScheduler:
+class PiscesLxChunkedPrefillScheduler:
     """
     Chunked pre-fill scheduler for memory-efficient long sequence inference.
     
@@ -396,7 +396,7 @@ class ChunkedPrefillScheduler:
         }
 
 
-class POPSSMultiLoRAOperator(PiscesLxOperatorInterface):
+class PiscesLxMultiLoRAOperator(PiscesLxOperatorInterface):
     """
     Multi-LoRA operator for concurrent adapter serving.
     
@@ -418,7 +418,7 @@ class POPSSMultiLoRAOperator(PiscesLxOperatorInterface):
         self.adapter_lock = Lock()
         self.lora_requests: Dict[str, LoRARequest] = {}
         
-        self.config = MultiLoRAConfig()
+        self.config = PiscesLxMultiLoRAConfig()
         self.stats = {
             "total_requests": 0,
             "adapter_switches": 0,
@@ -612,7 +612,7 @@ class POPSSMultiLoRAOperator(PiscesLxOperatorInterface):
             self._LOG.info("All LoRA adapters unloaded")
 
 
-class POPSSPrefixCachingOperator(PiscesLxOperatorInterface):
+class PiscesLxPrefixCachingOperator(PiscesLxOperatorInterface):
     """
     Prefix caching operator for KV cache reuse.
     
@@ -637,7 +637,7 @@ class POPSSPrefixCachingOperator(PiscesLxOperatorInterface):
         
         max_bytes = int(max_memory_mb * 1024 * 1024) if max_memory_mb else None
         
-        self.cache_manager = PrefixCacheManager(
+        self.cache_manager = PiscesLxPrefixCacheManager(
             max_memory_bytes=max_bytes,
             eviction_policy=eviction_policy,
             enable_substring_matching=enable_substring_matching,
@@ -774,7 +774,7 @@ class POPSSPrefixCachingOperator(PiscesLxOperatorInterface):
         self.cache_manager.clear()
 
 
-class POPSSChunkedPrefillOperator(PiscesLxOperatorInterface):
+class PiscesLxChunkedPrefillOperator(PiscesLxOperatorInterface):
     """
     Chunked pre-fill operator for memory-efficient long sequence inference.
     
@@ -800,7 +800,7 @@ class POPSSChunkedPrefillOperator(PiscesLxOperatorInterface):
         
         memory_bytes = int(memory_budget_mb * 1024 * 1024) if memory_budget_mb else None
         
-        self.scheduler = ChunkedPrefillScheduler(
+        self.scheduler = PiscesLxChunkedPrefillScheduler(
             max_chunk_size=max_chunk_size,
             min_chunk_size=min_chunk_size,
             overlap_chunks=overlap_chunks,
@@ -899,7 +899,7 @@ class POPSSChunkedPrefillOperator(PiscesLxOperatorInterface):
         return self.scheduler.get_stats()
 
 
-class POPSSVLLMInferenceOperator(PiscesLxOperatorInterface):
+class PiscesLxVLLMInferenceOperator(PiscesLxOperatorInterface):
     """Complete vLLM inference operator implementation."""
     
     def __init__(self):
@@ -910,9 +910,9 @@ class POPSSVLLMInferenceOperator(PiscesLxOperatorInterface):
         self._LOG = PiscesLxLogger("PiscesLx.Opss.Infer",file_path=get_log_file("PiscesLx.Opss.Infer"), enable_file=True)
         self.vllm_engine = None
         
-        self.multi_lora_operator = POPSSMultiLoRAOperator()
-        self.prefix_caching_operator = POPSSPrefixCachingOperator()
-        self.chunked_prefill_operator = POPSSChunkedPrefillOperator()
+        self.multi_lora_operator = PiscesLxMultiLoRAOperator()
+        self.prefix_caching_operator = PiscesLxPrefixCachingOperator()
+        self.chunked_prefill_operator = PiscesLxChunkedPrefillOperator()
         
     @property
     def description(self) -> str:
@@ -923,7 +923,7 @@ class POPSSVLLMInferenceOperator(PiscesLxOperatorInterface):
         return {
             "model_path": {"type": "str", "required": True, "description": "Path to model checkpoint"},
             "prompts": {"type": "list", "required": True, "description": "List of input prompts"},
-            "config": {"type": "POPSSVLLMConfig", "required": False, "description": "vLLM configuration"},
+            "config": {"type": "PiscesLxVLLMConfig", "required": False, "description": "vLLM configuration"},
             "sampling_params": {"type": "dict", "required": False, "description": "Sampling parameters"},
         }
         
@@ -971,7 +971,7 @@ class POPSSVLLMInferenceOperator(PiscesLxOperatorInterface):
             if custom_config:
                 config = custom_config
             else:
-                config = POPSSVLLMConfig(model_path=model_path)
+                config = PiscesLxVLLMConfig(model_path=model_path)
             
             self._LOG.info(f"Initializing vLLM engine with {len(prompts)} prompts")
             
@@ -1019,7 +1019,7 @@ class POPSSVLLMInferenceOperator(PiscesLxOperatorInterface):
                 execution_time=time.time() - start_time
             )
     
-    def _initialize_vllm_engine(self, config: POPSSVLLMConfig):
+    def _initialize_vllm_engine(self, config: PiscesLxVLLMConfig):
         """Initialize vLLM engine with given configuration."""
         engine_args = {
             "model": config.model_path,
@@ -1140,7 +1140,7 @@ class POPSSVLLMInferenceOperator(PiscesLxOperatorInterface):
             return 'unknown'
     
     def _fallback_inference(self, model_path: str, prompts: List[str], 
-                           config: POPSSVLLMConfig, sampling_params_dict: Dict[str, Any], 
+                           config: PiscesLxVLLMConfig, sampling_params_dict: Dict[str, Any], 
                            start_time: float) -> PiscesLxOperatorResult:
         """Fallback to native PyTorch inference when vLLM is not available."""
         self._LOG.warning("Falling back to native inference due to vLLM unavailability")
@@ -1196,9 +1196,9 @@ class POPSSVLLMInferenceOperator(PiscesLxOperatorInterface):
 
 # Export operators
 __all__ = [
-    'POPSSVLLMConfig',
-    'POPSSMultiLoRAOperator',
-    'POPSSPrefixCachingOperator',
-    'POPSSChunkedPrefillOperator',
-    'POPSSVLLMInferenceOperator',
+    'PiscesLxVLLMConfig',
+    'PiscesLxMultiLoRAOperator',
+    'PiscesLxPrefixCachingOperator',
+    'PiscesLxChunkedPrefillOperator',
+    'PiscesLxVLLMInferenceOperator',
 ]

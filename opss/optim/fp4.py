@@ -60,7 +60,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import PiscesLxDataset, DataLoader
 from typing import Any, Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass, field
 import math
@@ -88,7 +88,7 @@ FP4_E2M1_MIN = -6.0
 
 
 @dataclass
-class POPSSFP4Config(PiscesLxOperatorConfig):
+class PiscesLxFP4Config(PiscesLxOperatorConfig):
     """
     FP4 (4-bit Floating Point) Training Configuration.
     
@@ -151,7 +151,7 @@ class POPSSFP4Config(PiscesLxOperatorConfig):
 
 
 # Paper: Original contribution by Dunimd Team (Yv Architecture)
-class POPSSFP4Quantizer:
+class PiscesLxFP4Quantizer:
     """
     FP4 Quantization and Dequantization.
     
@@ -317,7 +317,7 @@ class POPSSFP4Quantizer:
         return selected
 
 
-class POPSSFP4Operator(PiscesLxOperatorInterface):
+class PiscesLxFP4Operator(PiscesLxOperatorInterface):
     """
     FP4 Training Operator.
     
@@ -332,8 +332,8 @@ class POPSSFP4Operator(PiscesLxOperatorInterface):
         - Mixed precision training
     
     Example:
-        >>> config = POPSSFP4Config(block_size=16)
-        >>> fp4 = POPSSFP4Operator()
+        >>> config = PiscesLxFP4Config(block_size=16)
+        >>> fp4 = PiscesLxFP4Operator()
         >>> result = fp4.execute({
         ...     "model": model,
         ...     "dataloader": train_loader,
@@ -381,7 +381,7 @@ class POPSSFP4Operator(PiscesLxOperatorInterface):
         try:
             model = inputs.get("model")
             batch = inputs.get("batch")
-            config = inputs.get("config", POPSSFP4Config())
+            config = inputs.get("config", PiscesLxFP4Config())
             optimizer = inputs.get("optimizer")
             step = inputs.get("step", 0)
             
@@ -389,7 +389,7 @@ class POPSSFP4Operator(PiscesLxOperatorInterface):
                 raise ValueError("Model is required for FP4 training")
             
             if self.quantizer is None:
-                self.quantizer = POPSSFP4Quantizer(
+                self.quantizer = PiscesLxFP4Quantizer(
                     fp4_format=config.fp4_format,
                     block_size=config.block_size,
                     stochastic_rounding=config.stochastic_rounding,
@@ -448,7 +448,7 @@ class POPSSFP4Operator(PiscesLxOperatorInterface):
     def _initialize_master_weights(
         self,
         model: nn.Module,
-        config: POPSSFP4Config,
+        config: PiscesLxFP4Config,
     ):
         """Initialize FP32 master weights from model."""
         for name, param in model.named_parameters():
@@ -462,7 +462,7 @@ class POPSSFP4Operator(PiscesLxOperatorInterface):
         self,
         model: nn.Module,
         batch: Dict[str, Any],
-        config: POPSSFP4Config,
+        config: PiscesLxFP4Config,
         step: int,
     ) -> Dict[str, float]:
         """Perform FP4 forward and backward pass."""
@@ -518,7 +518,7 @@ class POPSSFP4Operator(PiscesLxOperatorInterface):
     def _quantize_weights_to_fp4(
         self,
         model: nn.Module,
-        config: POPSSFP4Config,
+        config: PiscesLxFP4Config,
     ):
         """Quantize master weights to FP4 for forward pass."""
         for name, param in model.named_parameters():
@@ -536,7 +536,7 @@ class POPSSFP4Operator(PiscesLxOperatorInterface):
     def _quantize_gradients_to_fp8(
         self,
         model: nn.Module,
-        config: POPSSFP4Config,
+        config: PiscesLxFP4Config,
     ):
         """Quantize gradients to FP8 for memory efficiency."""
         for name, param in model.named_parameters():
@@ -570,7 +570,7 @@ class POPSSFP4Operator(PiscesLxOperatorInterface):
         self,
         model: nn.Module,
         optimizer: torch.optim.Optimizer,
-        config: POPSSFP4Config,
+        config: PiscesLxFP4Config,
     ):
         """Perform optimizer step with FP4 weight update."""
         torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
@@ -600,7 +600,7 @@ class POPSSFP4Operator(PiscesLxOperatorInterface):
         self,
         model: nn.Module,
         path: str,
-        config: POPSSFP4Config,
+        config: PiscesLxFP4Config,
     ):
         """Save FP4 checkpoint with master weights."""
         import os
@@ -630,29 +630,29 @@ class POPSSFP4Operator(PiscesLxOperatorInterface):
         return checkpoint.get("config", {})
 
 
-class POPSSFP4Trainer:
+class PiscesLxFP4Trainer:
     """
     High-level FP4 Trainer.
     
     Provides complete training loop with FP4 quantization.
     
     Example:
-        >>> config = POPSSFP4Config(
+        >>> config = PiscesLxFP4Config(
         ...     block_size=16,
         ...     stochastic_rounding=True,
         ... )
-        >>> trainer = POPSSFP4Trainer(model, config)
+        >>> trainer = PiscesLxFP4Trainer(model, config)
         >>> trainer.train(train_loader, num_epochs=10)
     """
     
     def __init__(
         self,
         model: nn.Module,
-        config: Optional[POPSSFP4Config] = None,
+        config: Optional[PiscesLxFP4Config] = None,
         optimizer: Optional[torch.optim.Optimizer] = None,
     ):
         self.model = model
-        self.config = config or POPSSFP4Config()
+        self.config = config or PiscesLxFP4Config()
         
         if optimizer is None:
             self.optimizer = torch.optim.AdamW(
@@ -663,7 +663,7 @@ class POPSSFP4Trainer:
         else:
             self.optimizer = optimizer
         
-        self.operator = POPSSFP4Operator()
+        self.operator = PiscesLxFP4Operator()
         self.step = 0
     
     def train(
@@ -730,7 +730,7 @@ class POPSSFP4Trainer:
         self.operator.load_checkpoint(self.model, path)
 
 
-class POPSSFP4Linear(nn.Module):
+class PiscesLxFP4Linear(nn.Module):
     """
     FP4 Linear Layer.
     
@@ -751,7 +751,7 @@ class POPSSFP4Linear(nn.Module):
         self.out_features = out_features
         self.block_size = block_size
         
-        self.quantizer = POPSSFP4Quantizer(
+        self.quantizer = PiscesLxFP4Quantizer(
             block_size=block_size,
             stochastic_rounding=stochastic_rounding,
         )

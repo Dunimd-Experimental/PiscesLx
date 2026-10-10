@@ -30,15 +30,15 @@ Unified registry center that integrates MCP tools and Agent experts.
 """
 
 from .registry import (
-    POPSSToolType,
-    POPSSToolInfo,
-    POPSSToolResult,
-    POPSSToolRegistry,
+    PiscesLxToolType,
+    PiscesLxToolInfo,
+    PiscesLxToolResult,
+    PiscesLxToolRegistry,
 )
 
 __all__ = [
-    "POPSSToolType",
-    "POPSSToolInfo",
-    "POPSSToolResult",
-    "POPSSToolRegistry",
+    "PiscesLxToolType",
+    "PiscesLxToolInfo",
+    "PiscesLxToolResult",
+    "PiscesLxToolRegistry",
 ]

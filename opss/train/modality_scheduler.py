@@ -61,11 +61,11 @@ Dependencies:
 
 Usage Examples:
     >>> from opss.train.modality_scheduler import (
-    ...     POPSSModalitySchedulerConfig,
-    ...     POPSSModalitySchedulerOperator
+    ...     PiscesLxModalitySchedulerConfig,
+    ...     PiscesLxModalitySchedulerOperator
     ... )
     
-    >>> config = POPSSModalitySchedulerConfig(
+    >>> config = PiscesLxModalitySchedulerConfig(
     ...     vision_t0=10,
     ...     vision_eta_min=1e-7,
     ...     audio_t0=15,
@@ -76,17 +76,17 @@ Usage Examples:
     ...     text_eta_min=1e-7
     ... )
     
-    >>> operator = POPSSModalitySchedulerOperator(config)
+    >>> operator = PiscesLxModalitySchedulerOperator(config)
     >>> result = operator.execute({"optimizer": optimizer})
 
 Integration:
     This operator integrates seamlessly with the PiscesLxTrainingEngine through
-    the AdvancedTrainingCoordinator in opss/train/impl.py. It should be executed
+    the PiscesLxAdvancedTrainingCoordinator in opss/train/impl.py. It should be executed
     after the optimizer has been initialized and before the training loop begins.
 
 See Also:
     - opss/train/lr_scheduler.py: Generic LR scheduler implementations
-    - opss/train/impl.py: AdvancedTrainingCoordinator for operator orchestration
+    - opss/train/impl.py: PiscesLxAdvancedTrainingCoordinator for operator orchestration
 """
 
 import torch
@@ -108,7 +108,7 @@ from utils.opsc.interface import (
 )
 
 
-class POPSSModalityType(Enum):
+class PiscesLxModalityType(Enum):
     """
     Enumeration of supported modality types.
     
@@ -131,7 +131,7 @@ class POPSSModalityType(Enum):
 
 
 @dataclass
-class POPSSModalitySchedulerConfig(PiscesLxOperatorConfig):
+class PiscesLxModalitySchedulerConfig(PiscesLxOperatorConfig):
     """
     Configuration for modality-aware learning rate scheduling.
     
@@ -168,7 +168,7 @@ class POPSSModalitySchedulerConfig(PiscesLxOperatorConfig):
         Text/Other: T_0=8, T_mult=1.0, eta_min=1e-7
     
     Example:
-        >>> config = POPSSModalitySchedulerConfig(
+        >>> config = PiscesLxModalitySchedulerConfig(
         ...     base_lr=1.0,
         ...     vision_t0=10,
         ...     vision_eta_min=1e-7,
@@ -208,7 +208,7 @@ class POPSSModalitySchedulerConfig(PiscesLxOperatorConfig):
         self.version = VERSION
 
 
-class POPSSModalitySchedulerOperator(PiscesLxOperatorInterface):
+class PiscesLxModalitySchedulerOperator(PiscesLxOperatorInterface):
     """
     Modality-aware learning rate scheduler operator.
     
@@ -237,7 +237,7 @@ class POPSSModalitySchedulerOperator(PiscesLxOperatorInterface):
             T_new = T_old * T_mult
     
     Attributes:
-        config: POPSSModalitySchedulerConfig instance
+        config: PiscesLxModalitySchedulerConfig instance
         schedulers: Dict mapping modality types to scheduler instances
         modality_params: Dict mapping modality types to parameter groups
         
@@ -249,7 +249,7 @@ class POPSSModalitySchedulerOperator(PiscesLxOperatorInterface):
         O(1) additional memory for parameter group tracking.
     """
     
-    def __init__(self, config: Optional[POPSSModalitySchedulerConfig] = None):
+    def __init__(self, config: Optional[PiscesLxModalitySchedulerConfig] = None):
         """
         Initialize the modality-aware scheduler operator.
         
@@ -258,9 +258,9 @@ class POPSSModalitySchedulerOperator(PiscesLxOperatorInterface):
                    with standard modality parameters is used.
         """
         super().__init__(config)
-        self.config = config or POPSSModalitySchedulerConfig()
-        self.schedulers: Dict[POPSSModalityType, CosineAnnealingWarmRestarts] = {}
-        self.modality_params: Dict[POPSSModalityType, List[torch.nn.Parameter]] = {}
+        self.config = config or PiscesLxModalitySchedulerConfig()
+        self.schedulers: Dict[PiscesLxModalityType, CosineAnnealingWarmRestarts] = {}
+        self.modality_params: Dict[PiscesLxModalityType, List[torch.nn.Parameter]] = {}
         
         self._logger = self._setup_logger()
     
@@ -380,7 +380,7 @@ class POPSSModalitySchedulerOperator(PiscesLxOperatorInterface):
         
         return True
 
-    def _detect_modality(self, param_name: str) -> POPSSModalityType:
+    def _detect_modality(self, param_name: str) -> PiscesLxModalityType:
         """
         Detect modality type from parameter name using pattern matching.
         
@@ -388,32 +388,32 @@ class POPSSModalitySchedulerOperator(PiscesLxOperatorInterface):
             param_name: Name of the parameter to classify.
             
         Returns:
-            POPSSModalityType enum value indicating the parameter's modality.
+            PiscesLxModalityType enum value indicating the parameter's modality.
         """
         name_lower = param_name.lower()
         
         if any(pattern in name_lower for pattern in ['vision', 'visual', 'image', 
                                                         'vit', 'clip_vision', 'resnet',
                                                         'efficientnet', 'swin']):
-            return POPSSModalityType.VISION
+            return PiscesLxModalityType.VISION
         
         if any(pattern in name_lower for pattern in ['audio', 'speech', 'wav2vec', 
                                                         'whisper', 'baidu', ' Hubert']):
-            return POPSSModalityType.AUDIO
+            return PiscesLxModalityType.AUDIO
         
         if any(pattern in name_lower for pattern in ['fusion', 'multimodal', 'cross_attn',
                                                         'gate_fusion', 'proj_fusion']):
-            return POPSSModalityType.FUSION
+            return PiscesLxModalityType.FUSION
         
         if any(pattern in name_lower for pattern in ['text', 'language', 'encoder', 
                                                         'decoder', 'lm_head', 'embed']):
-            return POPSSModalityType.TEXT
+            return PiscesLxModalityType.TEXT
         
-        return POPSSModalityType.OTHER
+        return PiscesLxModalityType.OTHER
     
     def _create_scheduler_for_modality(
         self,
-        modality: POPSSModalityType,
+        modality: PiscesLxModalityType,
         optimizer: torch.optim.Optimizer,
         modality_params: List[torch.nn.Parameter]
     ) -> CosineAnnealingWarmRestarts:
@@ -428,19 +428,19 @@ class POPSSModalitySchedulerOperator(PiscesLxOperatorInterface):
         Returns:
             Configured CosineAnnealingWarmRestarts scheduler instance.
         """
-        if modality == POPSSModalityType.VISION:
+        if modality == PiscesLxModalityType.VISION:
             t0 = self.config.vision_t0
             t_mult = self.config.vision_t_mult
             eta_min = self.config.vision_eta_min
-        elif modality == POPSSModalityType.AUDIO:
+        elif modality == PiscesLxModalityType.AUDIO:
             t0 = self.config.audio_t0
             t_mult = self.config.audio_t_mult
             eta_min = self.config.audio_eta_min
-        elif modality == POPSSModalityType.FUSION:
+        elif modality == PiscesLxModalityType.FUSION:
             t0 = self.config.fusion_t0
             t_mult = self.config.fusion_t_mult
             eta_min = self.config.fusion_eta_min
-        elif modality == POPSSModalityType.TEXT:
+        elif modality == PiscesLxModalityType.TEXT:
             t0 = self.config.text_t0
             t_mult = self.config.text_t_mult
             eta_min = self.config.text_eta_min
@@ -467,7 +467,7 @@ class POPSSModalitySchedulerOperator(PiscesLxOperatorInterface):
     def _organize_parameters_by_modality(
         self,
         model: Optional[nn.Module]
-    ) -> Dict[POPSSModalityType, List[torch.nn.Parameter]]:
+    ) -> Dict[PiscesLxModalityType, List[torch.nn.Parameter]]:
         """
         Organize model parameters into modality-specific groups.
         
@@ -478,12 +478,12 @@ class POPSSModalitySchedulerOperator(PiscesLxOperatorInterface):
         Returns:
             Dictionary mapping modality types to their parameter lists.
         """
-        modality_params: Dict[POPSSModalityType, List[torch.nn.Parameter]] = {
-            POPSSModalityType.VISION: [],
-            POPSSModalityType.AUDIO: [],
-            POPSSModalityType.FUSION: [],
-            POPSSModalityType.TEXT: [],
-            POPSSModalityType.OTHER: []
+        modality_params: Dict[PiscesLxModalityType, List[torch.nn.Parameter]] = {
+            PiscesLxModalityType.VISION: [],
+            PiscesLxModalityType.AUDIO: [],
+            PiscesLxModalityType.FUSION: [],
+            PiscesLxModalityType.TEXT: [],
+            PiscesLxModalityType.OTHER: []
         }
         
         if model is not None:
@@ -574,7 +574,7 @@ class POPSSModalitySchedulerOperator(PiscesLxOperatorInterface):
                     eta_min=self.config.text_eta_min,
                     last_epoch=self.config.last_epoch
                 )
-                self.schedulers[POPSSModalityType.TEXT] = default_scheduler
+                self.schedulers[PiscesLxModalityType.TEXT] = default_scheduler
                 scheduler_configs["default"] = {
                     "t0": self.config.text_t0,
                     "t_mult": self.config.text_t_mult,
@@ -650,7 +650,7 @@ class POPSSModalitySchedulerOperator(PiscesLxOperatorInterface):
                 lrs[modality.value] = current_lr[0]
         return lrs
     
-    def get_modality_schedulers(self) -> Dict[POPSSModalityType, CosineAnnealingWarmRestarts]:
+    def get_modality_schedulers(self) -> Dict[PiscesLxModalityType, CosineAnnealingWarmRestarts]:
         """
         Get the scheduler instances for external access.
         
@@ -660,7 +660,7 @@ class POPSSModalitySchedulerOperator(PiscesLxOperatorInterface):
         return self.schedulers
 
 
-class POPSSModalitySchedulerFacade:
+class PiscesLxModalitySchedulerFacade:
     """
     Convenience facade for quick modality scheduler setup.
     
@@ -668,7 +668,7 @@ class POPSSModalitySchedulerFacade:
     automatically handling parameter detection and scheduler creation.
     
     Usage:
-        >>> facade = POPSSModalitySchedulerFacade()
+        >>> facade = PiscesLxModalitySchedulerFacade()
         >>> schedulers = facade.setup(optimizer, model)
         >>> 
         >>> for epoch in range(num_epochs):
@@ -703,7 +703,7 @@ class POPSSModalitySchedulerFacade:
             text_eta_min: Text minimum learning rate
             **kwargs: Additional configuration passed to config
         """
-        config = POPSSModalitySchedulerConfig(
+        config = PiscesLxModalitySchedulerConfig(
             vision_t0=vision_t0,
             vision_eta_min=vision_eta_min,
             audio_t0=audio_t0,
@@ -714,14 +714,14 @@ class POPSSModalitySchedulerFacade:
             text_eta_min=text_eta_min,
             **kwargs
         )
-        self.operator = POPSSModalitySchedulerOperator(config)
-        self._schedulers: Dict[POPSSModalityType, CosineAnnealingWarmRestarts] = {}
+        self.operator = PiscesLxModalitySchedulerOperator(config)
+        self._schedulers: Dict[PiscesLxModalityType, CosineAnnealingWarmRestarts] = {}
     
     def setup(
         self,
         optimizer: torch.optim.Optimizer,
         model: Optional[nn.Module] = None
-    ) -> Dict[POPSSModalityType, CosineAnnealingWarmRestarts]:
+    ) -> Dict[PiscesLxModalityType, CosineAnnealingWarmRestarts]:
         """
         Setup modality-aware schedulers for the given optimizer and model.
         
@@ -758,8 +758,8 @@ class POPSSModalitySchedulerFacade:
 
 
 __all__ = [
-    "POPSSModalityType",
-    "POPSSModalitySchedulerConfig",
-    "POPSSModalitySchedulerOperator",
-    "POPSSModalitySchedulerFacade",
+    "PiscesLxModalityType",
+    "PiscesLxModalitySchedulerConfig",
+    "PiscesLxModalitySchedulerOperator",
+    "PiscesLxModalitySchedulerFacade",
 ]

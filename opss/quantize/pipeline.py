@@ -50,12 +50,12 @@ import torch.nn as nn
 from typing import Any, Dict, Optional, List, Tuple, Union
 from configs.version import VERSION
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus, PiscesLxOperatorConfig
-from .methods import QuantizationConfig, QuantizationOperatorFactory
-from .advanced import AdvancedQuantizationConfig, POPSSSensitivityAnalysisOperator, POPSSAdaptiveBitAllocationOperator
-from .calibration import CalibrationConfig, POPSSCalibrationDataLoaderOperator, POPSSActivationCollectorOperator
+from .methods import PiscesLxQuantizationConfig, PiscesLxQuantizationOperatorFactory
+from .advanced import PiscesLxAdvancedQuantizationConfig, PiscesLxSensitivityAnalysisOperator, PiscesLxAdaptiveBitAllocationOperator
+from .calibration import PiscesLxCalibrationConfig, PiscesLxCalibrationDataLoaderOperator, PiscesLxActivationCollectorOperator
 
 
-class QuantizationPipelineConfig(PiscesLxOperatorConfig):
+class PiscesLxQuantizationPipelineConfig(PiscesLxOperatorConfig):
     """
     Configuration for quantization pipeline.
     
@@ -72,7 +72,7 @@ class QuantizationPipelineConfig(PiscesLxOperatorConfig):
         enable_adaptive_allocation: Enable adaptive bit allocation. Default: True
         target_compression_ratio: Target compression ratio. Default: 0.5
         
-        calibration_dataset: Dataset name for calibration. Default: "wikitext"
+        calibration_dataset: PiscesLxDataset name for calibration. Default: "wikitext"
         calibration_samples: Number of calibration samples. Default: 128
         sequence_length: Sequence length for calibration. Default: 512
         
@@ -102,7 +102,7 @@ class QuantizationPipelineConfig(PiscesLxOperatorConfig):
     validation_metric: str = "perplexity"
 
 
-class POPSSQuantizationPipelineOperator(PiscesLxOperatorInterface):
+class PiscesLxQuantizationPipelineOperator(PiscesLxOperatorInterface):
     """
     Complete Quantization Pipeline Operator.
     
@@ -114,8 +114,8 @@ class POPSSQuantizationPipelineOperator(PiscesLxOperatorInterface):
     on model characteristics and user configuration.
     
     Example:
-        >>> config = QuantizationPipelineConfig(method="auto", bits=8)
-        >>> operator = POPSSQuantizationPipelineOperator()
+        >>> config = PiscesLxQuantizationPipelineConfig(method="auto", bits=8)
+        >>> operator = PiscesLxQuantizationPipelineOperator()
         >>> result = operator.execute({"model": model, "config": config})
         >>> if result.is_success():
         ...     quantized_model = result.output["quantized_model"]
@@ -137,7 +137,7 @@ class POPSSQuantizationPipelineOperator(PiscesLxOperatorInterface):
         Args:
             inputs: Dictionary containing pipeline inputs
                 - model: Model to quantize (nn.Module)
-                - config: Pipeline configuration (QuantizationPipelineConfig)
+                - config: Pipeline configuration (PiscesLxQuantizationPipelineConfig)
                 - validation_data: Optional validation data for post-quantization check
         
         Returns:
@@ -148,7 +148,7 @@ class POPSSQuantizationPipelineOperator(PiscesLxOperatorInterface):
         """
         try:
             model = inputs.get("model")
-            config = inputs.get("config", QuantizationPipelineConfig())
+            config = inputs.get("config", PiscesLxQuantizationPipelineConfig())
             validation_data = inputs.get("validation_data")
             
             if not model:
@@ -235,7 +235,7 @@ class POPSSQuantizationPipelineOperator(PiscesLxOperatorInterface):
                 execution_time=0.0,
             )
     
-    def _stage_calibration_data(self, config: QuantizationPipelineConfig) -> PiscesLxOperatorResult:
+    def _stage_calibration_data(self, config: PiscesLxQuantizationPipelineConfig) -> PiscesLxOperatorResult:
         """
         Stage 1: Prepare calibration data.
         
@@ -247,8 +247,8 @@ class POPSSQuantizationPipelineOperator(PiscesLxOperatorInterface):
         Returns:
             Result containing calibration batches
         """
-        cal_loader = POPSSCalibrationDataLoaderOperator()
-        cal_cfg = CalibrationConfig(
+        cal_loader = PiscesLxCalibrationDataLoaderOperator()
+        cal_cfg = PiscesLxCalibrationConfig(
             dataset_name=config.calibration_dataset,
             num_calibration_samples=int(config.calibration_samples),
             sequence_length=int(config.sequence_length),
@@ -258,7 +258,7 @@ class POPSSQuantizationPipelineOperator(PiscesLxOperatorInterface):
     def _stage_sensitivity_analysis(self, 
                                   model: nn.Module, 
                                   pipeline_results: Dict,
-                                  config: QuantizationPipelineConfig) -> PiscesLxOperatorResult:
+                                  config: PiscesLxQuantizationPipelineConfig) -> PiscesLxOperatorResult:
         """
         Stage 2: Sensitivity analysis.
         
@@ -272,11 +272,11 @@ class POPSSQuantizationPipelineOperator(PiscesLxOperatorInterface):
         Returns:
             Result containing sensitivity scores for each layer
         """
-        sensitivity_op = POPSSSensitivityAnalysisOperator()
+        sensitivity_op = PiscesLxSensitivityAnalysisOperator()
         
         calibration_data = pipeline_results.get("calibration", {}).get("calibration_batches", [])
         
-        adv_cfg = AdvancedQuantizationConfig(
+        adv_cfg = PiscesLxAdvancedQuantizationConfig(
             sensitivity_analysis=True,
             adaptive_bit_allocation=bool(config.enable_adaptive_allocation),
             preserve_layers=config.preserve_layers,
@@ -295,7 +295,7 @@ class POPSSQuantizationPipelineOperator(PiscesLxOperatorInterface):
     def _stage_bit_allocation(self, 
                              model: nn.Module, 
                              pipeline_results: Dict,
-                             config: QuantizationPipelineConfig) -> PiscesLxOperatorResult:
+                             config: PiscesLxQuantizationPipelineConfig) -> PiscesLxOperatorResult:
         """
         Stage 3: Adaptive bit allocation.
         
@@ -309,11 +309,11 @@ class POPSSQuantizationPipelineOperator(PiscesLxOperatorInterface):
         Returns:
             Result containing bit allocation for each layer
         """
-        allocation_op = POPSSAdaptiveBitAllocationOperator()
+        allocation_op = PiscesLxAdaptiveBitAllocationOperator()
         
         sensitivity_analysis = pipeline_results.get("sensitivity", {})
         
-        adv_cfg = AdvancedQuantizationConfig(
+        adv_cfg = PiscesLxAdvancedQuantizationConfig(
             sensitivity_analysis=bool(config.enable_sensitivity_analysis),
             adaptive_bit_allocation=True,
             preserve_layers=config.preserve_layers,
@@ -332,7 +332,7 @@ class POPSSQuantizationPipelineOperator(PiscesLxOperatorInterface):
     def _stage_core_quantization(self, 
                                 model: nn.Module, 
                                 pipeline_results: Dict,
-                                config: QuantizationPipelineConfig) -> PiscesLxOperatorResult:
+                                config: PiscesLxQuantizationPipelineConfig) -> PiscesLxOperatorResult:
         """
         Stage 4: Core quantization.
         
@@ -355,10 +355,10 @@ class POPSSQuantizationPipelineOperator(PiscesLxOperatorInterface):
             method = self._auto_select_method(model, config, pipeline_results)
         
         # Create quantizer using factory
-        quantizer = QuantizationOperatorFactory.create_operator(method)
+        quantizer = PiscesLxQuantizationOperatorFactory.create_operator(method)
         
         # Prepare quantization inputs
-        qcfg = QuantizationConfig(
+        qcfg = PiscesLxQuantizationConfig(
             bits=int(config.bits),
             group_size=int(config.group_size),
         )
@@ -377,7 +377,7 @@ class POPSSQuantizationPipelineOperator(PiscesLxOperatorInterface):
     def _stage_validation(self, 
                          quantized_model: nn.Module, 
                          validation_data: List[Dict],
-                         config: QuantizationPipelineConfig) -> PiscesLxOperatorResult:
+                         config: PiscesLxQuantizationPipelineConfig) -> PiscesLxOperatorResult:
         """
         Stage 5: Post-quantization validation.
         
@@ -444,7 +444,7 @@ class POPSSQuantizationPipelineOperator(PiscesLxOperatorInterface):
             )
     
     def _determine_quantization_method(self, 
-                                      config: QuantizationPipelineConfig, 
+                                      config: PiscesLxQuantizationPipelineConfig, 
                                       pipeline_results: Dict) -> str:
         """
         Determine quantization method.
@@ -471,7 +471,7 @@ class POPSSQuantizationPipelineOperator(PiscesLxOperatorInterface):
     
     def _auto_select_method(self, 
                            model: nn.Module, 
-                           config: QuantizationPipelineConfig,
+                           config: PiscesLxQuantizationPipelineConfig,
                            pipeline_results: Dict) -> str:
         """
         Auto-select best quantization method.
@@ -498,7 +498,7 @@ class POPSSQuantizationPipelineOperator(PiscesLxOperatorInterface):
     
     def _integrate_results(self, 
                           pipeline_results: Dict, 
-                          config: QuantizationPipelineConfig) -> Dict[str, Any]:
+                          config: PiscesLxQuantizationPipelineConfig) -> Dict[str, Any]:
         """
         Integrate pipeline results.
         
@@ -574,7 +574,7 @@ def quantize_pipeline(model: nn.Module,
     """
     
     # Create pipeline configuration
-    config = QuantizationPipelineConfig(
+    config = PiscesLxQuantizationPipelineConfig(
         method=method,
         bits=bits,
         calibration_dataset=calibration_dataset,
@@ -586,7 +586,7 @@ def quantize_pipeline(model: nn.Module,
     )
     
     # Execute pipeline
-    pipeline = POPSSQuantizationPipelineOperator()
+    pipeline = PiscesLxQuantizationPipelineOperator()
     inputs = {
         "model": model,
         "config": config,
@@ -603,7 +603,7 @@ def quantize_pipeline(model: nn.Module,
 
 
 
-class QuantizationEvaluator:
+class PiscesLxQuantizationEvaluator:
     """
     Quantization Effect Evaluation Tool.
     
@@ -636,19 +636,19 @@ class QuantizationEvaluator:
         
         # Evaluate perplexity
         if "perplexity" in metrics:
-            results["perplexity"] = QuantizationEvaluator._evaluate_perplexity(
+            results["perplexity"] = PiscesLxQuantizationEvaluator._evaluate_perplexity(
                 original_model, quantized_model, test_data
             )
         
         # Evaluate memory usage
         if "memory_usage" in metrics:
-            results["memory_usage"] = QuantizationEvaluator._evaluate_memory_usage(
+            results["memory_usage"] = PiscesLxQuantizationEvaluator._evaluate_memory_usage(
                 original_model, quantized_model
             )
         
         # Evaluate inference speed
         if "inference_speed" in metrics:
-            results["inference_speed"] = QuantizationEvaluator._evaluate_inference_speed(
+            results["inference_speed"] = PiscesLxQuantizationEvaluator._evaluate_inference_speed(
                 original_model, quantized_model, test_data
             )
         

@@ -68,7 +68,7 @@ from collections import defaultdict
 from configs.version import VERSION
 
 
-class POPSSInkSparseSelector:
+class PiscesLxInkSparseSelector:
     """
     Sparse Gradient Selector for Efficient Training.
     
@@ -87,7 +87,7 @@ class POPSSInkSparseSelector:
         importance_history: Historical importance scores per parameter
     
     Example:
-        >>> selector = POPSSInkSparseSelector(
+        >>> selector = PiscesLxInkSparseSelector(
         ...     sparse_ratio=0.01,
         ...     warmup_steps=1000,
         ...     adaptive=True

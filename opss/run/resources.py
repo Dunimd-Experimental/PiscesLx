@@ -36,11 +36,11 @@ Key Features:
     - Multi-resource constraint validation
 
 Usage:
-    from opss.run.resources import POPSSResourceLimits, POPSSResourceRequirements
+    from opss.run.resources import PiscesLxResourceLimits, PiscesLxResourceRequirements
     
-    limits = POPSSResourceLimits()
+    limits = PiscesLxResourceLimits()
     
-    requirements = POPSSResourceRequirements(
+    requirements = PiscesLxResourceRequirements(
         gpu_count=2,
         gpu_memory_mb=40000,
         cpu_cores=8,
@@ -68,7 +68,7 @@ except ImportError:
 
 
 @dataclass
-class POPSSResourceRequirements:
+class PiscesLxResourceRequirements:
     """Resource requirements for a task."""
     gpu_count: int = 1
     gpu_memory_mb: int = 24000
@@ -89,7 +89,7 @@ class POPSSResourceRequirements:
         }
     
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "POPSSResourceRequirements":
+    def from_dict(cls, data: Dict[str, Any]) -> "PiscesLxResourceRequirements":
         """Create from dictionary."""
         return cls(
             gpu_count=data.get("gpu_count", 1),
@@ -105,13 +105,13 @@ class POPSSResourceRequirements:
 class POPSSResourceAllocation:
     """Resource allocation record."""
     task_id: str
-    requirements: POPSSResourceRequirements
+    requirements: PiscesLxResourceRequirements
     allocated_at: str
     gpu_ids: List[int] = field(default_factory=list)
     cpu_affinity: List[int] = field(default_factory=list)
 
 
-class POPSSResourceLimits:
+class PiscesLxResourceLimits:
     """
     Resource Limits Manager for LLM Training and Inference.
     
@@ -124,8 +124,8 @@ class POPSSResourceLimits:
         _state_file: Path to persistent state file.
     
     Example:
-        >>> limits = POPSSResourceLimits()
-        >>> req = POPSSResourceRequirements(gpu_count=2, memory_mb=64000)
+        >>> limits = PiscesLxResourceLimits()
+        >>> req = PiscesLxResourceRequirements(gpu_count=2, memory_mb=64000)
         >>> limits.check_available(req)
         True
         >>> limits.allocate("train_001", req)
@@ -162,7 +162,7 @@ class POPSSResourceLimits:
             for task_id, alloc_data in data.get("allocations", {}).items():
                 self._allocations[task_id] = POPSSResourceAllocation(
                     task_id=alloc_data["task_id"],
-                    requirements=POPSSResourceRequirements.from_dict(alloc_data["requirements"]),
+                    requirements=PiscesLxResourceRequirements.from_dict(alloc_data["requirements"]),
                     allocated_at=alloc_data["allocated_at"],
                     gpu_ids=alloc_data.get("gpu_ids", []),
                     cpu_affinity=alloc_data.get("cpu_affinity", []),
@@ -228,7 +228,7 @@ class POPSSResourceLimits:
     
     def check_available(
         self,
-        requirements: POPSSResourceRequirements,
+        requirements: PiscesLxResourceRequirements,
         exclude_task: Optional[str] = None,
     ) -> Tuple[bool, Dict[str, Any]]:
         """
@@ -284,7 +284,7 @@ class POPSSResourceLimits:
     def allocate(
         self,
         task_id: str,
-        requirements: POPSSResourceRequirements,
+        requirements: PiscesLxResourceRequirements,
         gpu_ids: Optional[List[int]] = None,
     ) -> POPSSResourceAllocation:
         """
@@ -397,7 +397,7 @@ class POPSSResourceLimits:
         batch_size: int = 1,
         seq_len: int = 4096,
         gradient_checkpointing: bool = True,
-    ) -> POPSSResourceRequirements:
+    ) -> PiscesLxResourceRequirements:
         """
         Estimate resource requirements for a model.
         
@@ -441,7 +441,7 @@ class POPSSResourceLimits:
         cpu_cores = min(8 * gpu_count, os.cpu_count() or 8)
         memory_mb = int(total_memory_mb * 1.5)
         
-        return POPSSResourceRequirements(
+        return PiscesLxResourceRequirements(
             gpu_count=gpu_count,
             gpu_memory_mb=gpu_memory_mb,
             cpu_cores=cpu_cores,

@@ -82,7 +82,7 @@ from datetime import datetime
 from utils.dc import PiscesLxLogger
 from utils.paths import get_log_file
 
-from .config import PiscesLxPublishConfig, ExportAction
+from .config import PiscesLxPublishConfig, PiscesLxExportAction
 from .exporter import PiscesLxPublishExporter
 from .docker_builder import PiscesLxPublishDockerBuilder
 from .registry import PiscesLxPublishRegistry
@@ -235,7 +235,7 @@ class PiscesLxPublishOrchestrator:
         stage_name = "docker_build"
         action = self.config.action
 
-        if action not in [ExportAction.ALL.value, ExportAction.BUILD_ONLY.value]:
+        if action not in [PiscesLxExportAction.ALL.value, PiscesLxExportAction.BUILD_ONLY.value]:
             _LOG.info("Skipping build stage", action=action)
             return
 
@@ -286,7 +286,7 @@ class PiscesLxPublishOrchestrator:
         stage_name = "registry_publish"
         action = self.config.action
 
-        if action not in [ExportAction.ALL.value, ExportAction.PUBLISH_ONLY.value]:
+        if action not in [PiscesLxExportAction.ALL.value, PiscesLxExportAction.PUBLISH_ONLY.value]:
             _LOG.info("Skipping publish stage", action=action)
             return
 

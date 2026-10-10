@@ -44,16 +44,16 @@ Key Features:
 
 Usage:
     from opss.train.distill_loss import (
-        POPSSDistillationLossConfig,
-        POPSSDistillationLoss,
+        PiscesLxDistillationLossConfig,
+        PiscesLxDistillationLoss,
     )
     
-    config = POPSSDistillationLossConfig(
+    config = PiscesLxDistillationLossConfig(
         temperature=2.0,
         alpha=1.0,
         beta=0.5,
     )
-    loss_fn = POPSSDistillationLoss(config)
+    loss_fn = PiscesLxDistillationLoss(config)
     loss = loss_fn(teacher_outputs, student_outputs, labels)
 """
 
@@ -71,7 +71,7 @@ from utils.paths import get_log_file
 
 
 @dataclass
-class POPSSDistillationLossConfig:
+class PiscesLxDistillationLossConfig:
     """Configuration for distillation loss computation.
     
     Attributes:
@@ -107,7 +107,7 @@ class POPSSDistillationLossConfig:
 
 
 # Paper: Hinton et al., "Distilling the Knowledge in a Neural Network", NeurIPS 2014 Workshop, 2015
-class POPSSLogitsDistillationLoss(nn.Module):
+class PiscesLxLogitsDistillationLoss(nn.Module):
     """Logits-level knowledge distillation loss.
     
     Computes KL divergence between teacher and student output distributions
@@ -171,7 +171,7 @@ class POPSSLogitsDistillationLoss(nn.Module):
 
 
 # Paper: Hinton et al., "Distilling the Knowledge in a Neural Network", NeurIPS 2014 Workshop, 2015
-class POPSSHiddenStateDistillationLoss(nn.Module):
+class PiscesLxHiddenStateDistillationLoss(nn.Module):
     """Hidden state knowledge distillation loss.
     
     Computes MSE loss between teacher and student hidden states,
@@ -219,7 +219,7 @@ class POPSSHiddenStateDistillationLoss(nn.Module):
 
 
 # Paper: Hinton et al., "Distilling the Knowledge in a Neural Network", NeurIPS 2014 Workshop, 2015
-class POPSSAttentionDistillationLoss(nn.Module):
+class PiscesLxAttentionDistillationLoss(nn.Module):
     """Attention pattern knowledge distillation loss.
     
     Computes MSE loss between teacher and student attention weights,
@@ -314,7 +314,7 @@ class POPSSAttentionDistillationLoss(nn.Module):
 
 
 # Paper: Hinton et al., "Distilling the Knowledge in a Neural Network", NeurIPS 2014 Workshop, 2015
-class POPSSLayerWiseDistillationLoss(nn.Module):
+class PiscesLxLayerWiseDistillationLoss(nn.Module):
     """Layer-wise progressive knowledge distillation loss.
     
     Computes distillation loss at each layer, allowing progressive
@@ -331,7 +331,7 @@ class POPSSLayerWiseDistillationLoss(nn.Module):
         super().__init__()
         self.layer_mapping = layer_mapping
         self.normalize = normalize
-        self.hidden_loss = POPSSHiddenStateDistillationLoss(
+        self.hidden_loss = PiscesLxHiddenStateDistillationLoss(
             teacher_dim=teacher_dim,
             student_dim=student_dim,
             normalize=normalize,
@@ -388,7 +388,7 @@ class POPSSLayerWiseDistillationLoss(nn.Module):
 
 
 # Paper: Hinton et al., "Distilling the Knowledge in a Neural Network", NeurIPS 2014 Workshop, 2015
-class POPSSContrastiveDistillationLoss(nn.Module):
+class PiscesLxContrastiveDistillationLoss(nn.Module):
     """Contrastive distillation loss for remote API teachers.
     
     When only teacher-generated text is available (no logits),
@@ -435,7 +435,7 @@ class POPSSContrastiveDistillationLoss(nn.Module):
 
 
 # Paper: Hinton et al., "Distilling the Knowledge in a Neural Network", NeurIPS 2014 Workshop, 2015
-class POPSSDistillationLoss(nn.Module):
+class PiscesLxDistillationLoss(nn.Module):
     """Comprehensive knowledge distillation loss.
     
     Combines multiple distillation loss types with configurable weights:
@@ -446,7 +446,7 @@ class POPSSDistillationLoss(nn.Module):
     - Task-specific loss (cross-entropy)
     """
     
-    def __init__(self, config: POPSSDistillationLossConfig):
+    def __init__(self, config: PiscesLxDistillationLossConfig):
         super().__init__()
         self.config = config
         self._LOG = PiscesLxLogger(
@@ -455,26 +455,26 @@ class POPSSDistillationLoss(nn.Module):
             enable_file=True,
         )
         
-        self.logits_loss = POPSSLogitsDistillationLoss(
+        self.logits_loss = PiscesLxLogitsDistillationLoss(
             temperature=config.temperature,
             ignore_index=config.ignore_index,
         )
         
-        self.hidden_loss = POPSSHiddenStateDistillationLoss(
+        self.hidden_loss = PiscesLxHiddenStateDistillationLoss(
             normalize=config.normalize_hidden,
         )
         
-        self.attn_loss = POPSSAttentionDistillationLoss(
+        self.attn_loss = PiscesLxAttentionDistillationLoss(
             teacher_heads=config.attention_heads,
             student_heads=config.attention_heads,
         )
         
-        self.layer_loss = POPSSLayerWiseDistillationLoss(
+        self.layer_loss = PiscesLxLayerWiseDistillationLoss(
             layer_mapping=config.layer_mapping,
             normalize=config.normalize_hidden,
         )
         
-        self.contrastive_loss = POPSSContrastiveDistillationLoss(
+        self.contrastive_loss = PiscesLxContrastiveDistillationLoss(
             temperature=config.temperature,
             ignore_index=config.ignore_index,
         )
@@ -555,11 +555,11 @@ class POPSSDistillationLoss(nn.Module):
 
 
 __all__ = [
-    "POPSSDistillationLossConfig",
-    "POPSSLogitsDistillationLoss",
-    "POPSSHiddenStateDistillationLoss",
-    "POPSSAttentionDistillationLoss",
-    "POPSSLayerWiseDistillationLoss",
-    "POPSSContrastiveDistillationLoss",
-    "POPSSDistillationLoss",
+    "PiscesLxDistillationLossConfig",
+    "PiscesLxLogitsDistillationLoss",
+    "PiscesLxHiddenStateDistillationLoss",
+    "PiscesLxAttentionDistillationLoss",
+    "PiscesLxLayerWiseDistillationLoss",
+    "PiscesLxContrastiveDistillationLoss",
+    "PiscesLxDistillationLoss",
 ]

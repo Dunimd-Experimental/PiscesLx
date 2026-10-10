@@ -74,7 +74,7 @@ from utils.opsc.interface import (
 
 
 @dataclass
-class POPSSROOTConfig(PiscesLxOperatorConfig):
+class PiscesLxROOTConfig(PiscesLxOperatorConfig):
     """
     ROOT (Robust Orthogonalized Optimizer) Configuration.
     
@@ -125,7 +125,7 @@ class POPSSROOTConfig(PiscesLxOperatorConfig):
 
 
 # Paper: Original contribution by Dunimd Team (Yv Architecture)
-class POPSSROOTOperator(PiscesLxOperatorInterface):
+class PiscesLxROOTOperator(PiscesLxOperatorInterface):
     """
     ROOT (Robust Orthogonalized Optimizer) Operator.
     
@@ -139,8 +139,8 @@ class POPSSROOTOperator(PiscesLxOperatorInterface):
         - Selective orthogonalization (only for 2D weights)
     
     Example:
-        >>> config = POPSSROOTConfig(lr=1e-3, orthogonalization_steps=5)
-        >>> root = POPSSROOTOperator()
+        >>> config = PiscesLxROOTConfig(lr=1e-3, orthogonalization_steps=5)
+        >>> root = PiscesLxROOTOperator()
         >>> result = root.execute({
         ...     "model": model,
         ...     "gradients": gradients,
@@ -170,7 +170,7 @@ class POPSSROOTOperator(PiscesLxOperatorInterface):
         return {
             "model": {"type": "nn.Module", "required": True},
             "gradients": {"type": "dict", "required": False},
-            "config": {"type": "POPSSROOTConfig", "required": False},
+            "config": {"type": "PiscesLxROOTConfig", "required": False},
             "optimizer_state": {"type": "dict", "required": False},
         }
     
@@ -204,7 +204,7 @@ class POPSSROOTOperator(PiscesLxOperatorInterface):
         try:
             model = inputs.get("model")
             gradients = inputs.get("gradients", {})
-            config = inputs.get("config", POPSSROOTConfig())
+            config = inputs.get("config", PiscesLxROOTConfig())
             optimizer_state = inputs.get("optimizer_state", {})
             
             if model is None:
@@ -458,7 +458,7 @@ class POPSSROOTOperator(PiscesLxOperatorInterface):
     def _should_orthogonalize(
         self,
         param: torch.Tensor,
-        config: POPSSROOTConfig,
+        config: PiscesLxROOTConfig,
     ) -> bool:
         """Check if parameter should be orthogonalized."""
         if param.dim() < 2:
@@ -473,7 +473,7 @@ class POPSSROOTOperator(PiscesLxOperatorInterface):
     def _initialize_state(
         self,
         model: nn.Module,
-        config: POPSSROOTConfig,
+        config: PiscesLxROOTConfig,
     ) -> Dict[str, Any]:
         """Initialize optimizer state."""
         return {
@@ -487,7 +487,7 @@ class POPSSROOTOperator(PiscesLxOperatorInterface):
         return time.time()
 
 
-class POPSSROOTOptimizer(Optimizer):
+class PiscesLxROOTOptimizer(Optimizer):
     """
     PyTorch-compatible ROOT Optimizer.
     
@@ -496,7 +496,7 @@ class POPSSROOTOptimizer(Optimizer):
     
     Example:
         >>> model = MyModel()
-        >>> optimizer = POPSSROOTOptimizer(
+        >>> optimizer = PiscesLxROOTOptimizer(
         ...     model.parameters(),
         ...     lr=1e-3,
         ...     orthogonalization_steps=5,
@@ -553,7 +553,7 @@ class POPSSROOTOptimizer(Optimizer):
         
         super().__init__(params, defaults)
         
-        self.operator = POPSSROOTOperator()
+        self.operator = PiscesLxROOTOperator()
     
     def __setstate__(self, state):
         super().__setstate__(state)
@@ -742,7 +742,7 @@ class POPSSROOTOptimizer(Optimizer):
         return config
 
 
-class POPSSROOTScheduler:
+class PiscesLxROOTScheduler:
     """
     Learning rate scheduler for ROOT optimizer.
     
@@ -752,7 +752,7 @@ class POPSSROOTScheduler:
     
     def __init__(
         self,
-        optimizer: POPSSROOTOptimizer,
+        optimizer: PiscesLxROOTOptimizer,
         warmup_steps: int = 1000,
         total_steps: int = 100000,
         min_lr: float = 1e-6,

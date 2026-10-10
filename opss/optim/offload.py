@@ -55,7 +55,7 @@ from configs.version import VERSION
 
 
 @dataclass
-class POPSSTensorLifetime:
+class PiscesLxTensorLifetime:
     """Tensor lifetime information for offloading decisions.
     
     Attributes:
@@ -72,14 +72,14 @@ class POPSSTensorLifetime:
     access_pattern: List[int]
 
 
-class POPSSTERAIOManager:
+class PiscesLxTERAIOManager:
     """TERAIO Tensor Lifecycle-Aware Offloading Manager.
     
     This class manages tensor placement across GPU, CPU, and NVMe storage
     based on tensor lifetime analysis, enabling training of ultra-large models.
     
     Example:
-        >>> manager = POPSSTERAIOManager(
+        >>> manager = PiscesLxTERAIOManager(
         ...     gpu_memory_budget=40 * 1024 * 1024 * 1024,  # 40GB
         ...     cpu_memory_budget=128 * 1024 * 1024 * 1024,  # 128GB
         ... )
@@ -107,7 +107,7 @@ class POPSSTERAIOManager:
         self.nvme_path = Path(nvme_path)
         self.enable_gds = enable_gds
         
-        self._tensor_lifetimes: Dict[str, POPSSTensorLifetime] = {}
+        self._tensor_lifetimes: Dict[str, PiscesLxTensorLifetime] = {}
         self._gpu_tensors: Set[str] = set()
         self._cpu_tensors: Set[str] = set()
         self._nvme_tensors: Set[str] = set()
@@ -160,7 +160,7 @@ class POPSSTERAIOManager:
         for name, access_steps in access_log.items():
             param = dict(model.named_parameters()).get(name)
             if param is not None:
-                lifetime = POPSSTensorLifetime(
+                lifetime = PiscesLxTensorLifetime(
                     name=name,
                     create_step=min(access_steps),
                     last_use_step=max(access_steps),
