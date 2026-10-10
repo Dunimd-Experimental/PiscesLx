@@ -651,10 +651,7 @@ class PiscesLxQuantizationEvaluator:
         return {"original_tokens_per_sec": 1200, "quantized_tokens_per_sec": 2100, "speedup": 1.75}
 
 class PiscesLxPipeline:
-    """Operations formerly exposed as module-level functions of pipeline.
-
-    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
-"""
+    """Module-level operations of pipeline, exposed through a class (§6.2)."""
 
     @staticmethod
     def quantize_pipeline(model: nn.Module,

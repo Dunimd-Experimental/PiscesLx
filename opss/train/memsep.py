@@ -62,8 +62,8 @@ from utils.dc import PiscesLxLogger
 from utils.paths import PiscesLxPaths
 
 _LOG = PiscesLxLogger(
-    "POPSS.MemSepTrainer",
-    file_path=PiscesLxPaths.get_log_file("POPSS.MemSepTrainer"),
+    "PiscesLx.MemSep.Trainer",
+    file_path=PiscesLxPaths.get_log_file("PiscesLx.MemSep.Trainer"),
     enable_file=True,
 )
 
@@ -696,10 +696,7 @@ class PiscesLxMemSepTrainer:
 # ============================================================
 
 class PiscesLxMemsep:
-    """Operations formerly exposed as module-level functions of memsep.
-
-    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
-"""
+    """Module-level operations of memsep, exposed through a class (§6.2)."""
 
     @staticmethod
     def create_memsep_trainer(

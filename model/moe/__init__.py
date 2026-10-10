@@ -53,7 +53,7 @@ Module Components:
     2. Routing Components (gate.py):
        - YvMoEGate: Standard top-k routing gate with load balancing
        - YvStableMoEGate: Stable routing with load prediction
-       - moe_init_weights: Weight initialization function
+       - YvGateInitializer: Gate weight initialisation
     
     3. MoE Layers (layer.py):
        - YvDynamicMoELayer: Dynamic MoE with shared expert support
@@ -155,7 +155,6 @@ __all__ = [
     "YvMoEGate",
     "YvPathMoEGate",
     "YvPhiBalancing",
-    "moe_init_weights",
     "YvDynamicMoELayer",
     "YvExpertChoiceRouter",
     "YvFineGrainedRouter",

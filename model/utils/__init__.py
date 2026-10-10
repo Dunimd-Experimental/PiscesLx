@@ -35,8 +35,7 @@ Architecture Overview:
        - YvYaRNRotaryEmbedding: YaRN-scaled RoPE for long contexts
        - YvDynamicYaRNRotaryEmbedding: Dynamic NTK scaling
        - YvLinearScalingRoPE: Simple linear position scaling
-       - precompute_freqs_cis: Frequency precomputation for efficiency
-       - apply_rotary_emb: Efficient rotary embedding application
+       - YvRope: Frequency precomputation and rotary application
     
     2. **Quantization** (quantization.py):
        - YvQuantizer: Unified quantization interface
@@ -118,8 +117,7 @@ __all__ = [
     "YvYaRNRotaryEmbedding",
     "YvDynamicYaRNRotaryEmbedding",
     "YvLinearScalingRoPE",
-    "precompute_freqs_cis",
-    "apply_rotary_emb",
+    "YvRope",
     "YvQuantizer",
     "YvQuantizationConfig",
     "YvQuantizationType",

@@ -539,10 +539,7 @@ class PiscesLxProfilingOperator(PiscesLxOperatorInterface):
                 config.profile_steps > config.warmup_steps)
 
 class PiscesLxProfiler:
-    """Operations formerly exposed as module-level functions of profiler.
-
-    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
-"""
+    """Module-level operations of profiler, exposed through a class (§6.2)."""
 
     @staticmethod
     def profile_training(model: torch.nn.Module,

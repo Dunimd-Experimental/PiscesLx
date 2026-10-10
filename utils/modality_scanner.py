@@ -42,10 +42,7 @@ _MODALITY_SIGNALS = {
 }
 
 class PiscesLxModalityScanner:
-    """Operations formerly exposed as module-level functions of modality_scanner.
-
-    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
-"""
+    """Module-level operations of modality_scanner, exposed through a class (§6.2)."""
 
     @staticmethod
     def _scan_hf_dataset(ds) -> Set[str]:

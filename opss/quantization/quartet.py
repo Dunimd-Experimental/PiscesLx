@@ -161,9 +161,6 @@ class PiscesLxQuartetTrainer:
         return 4.0  # FP32 -> FP4 is 8x, BF16 -> FP4 is 4x
 
 class PiscesLxQuartetQuantizer:
-    """Operations formerly exposed as module-level functions of quartet.
-
-    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
-"""
+    """Module-level operations of quartet, exposed through a class (§6.2)."""
 
 

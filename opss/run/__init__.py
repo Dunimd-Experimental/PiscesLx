@@ -60,6 +60,4 @@ __all__ = [
     "PiscesLxStateReader",
     "PiscesLxUnauthorizedWriteError",
     "PiscesLxStateFileCorruptedError",
-    "write_authorized",
-    "readonly_access",
 ]

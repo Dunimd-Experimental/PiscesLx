@@ -64,8 +64,8 @@ from utils.dc import PiscesLxLogger
 from utils.paths import PiscesLxPaths
 
 _LOG = PiscesLxLogger(
-    "POPSS.KnowledgeBuilder",
-    file_path=PiscesLxPaths.get_log_file("POPSS.KnowledgeBuilder"),
+    "PiscesLx.Knowledge.Builder",
+    file_path=PiscesLxPaths.get_log_file("PiscesLx.Knowledge.Builder"),
     enable_file=True,
 )
 
@@ -941,10 +941,7 @@ class PiscesLxKnowledgeBuilder:
 # ============================================================
 
 class PiscesLxBuilder:
-    """Operations formerly exposed as module-level functions of builder.
-
-    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
-"""
+    """Module-level operations of builder, exposed through a class (§6.2)."""
 
     @staticmethod
     def create_knowledge_builder(

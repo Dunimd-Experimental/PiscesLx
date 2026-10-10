@@ -651,9 +651,6 @@ class PiscesLxAdaptiveBitAllocationOperator(PiscesLxOperatorInterface):
         }
 
 class PiscesLxAdvancedQuantizer:
-    """Operations formerly exposed as module-level functions of advanced.
-
-    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
-"""
+    """Module-level operations of advanced, exposed through a class (§6.2)."""
 
 

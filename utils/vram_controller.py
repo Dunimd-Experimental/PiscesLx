@@ -243,10 +243,7 @@ class PiscesLxVRAMMonitor:
 _monitor: Optional[PiscesLxVRAMMonitor] = None
 
 class PiscesLxVramController:
-    """Operations formerly exposed as module-level functions of vram_controller.
-
-    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
-"""
+    """Module-level operations of vram_controller, exposed through a class (§6.2)."""
 
     @staticmethod
     def profile_gpu() -> PiscesLxVRAMProfile:

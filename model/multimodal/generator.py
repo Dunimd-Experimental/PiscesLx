@@ -1121,10 +1121,7 @@ class YvGenerator:
 # Factory function
 
 class YvGeneratorFactory:
-    """Operations formerly exposed as module-level functions of generator.
-
-    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
-"""
+    """Module-level operations of generator, exposed through a class (§6.2)."""
 
     @staticmethod
     def create_generator(config: Optional[Any] = None) -> YvGenerator:

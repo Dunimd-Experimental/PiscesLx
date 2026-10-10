@@ -2141,10 +2141,7 @@ class YvUltraSparseGate(nn.Module):
         return balance_loss * self.load_balance_alpha
 
 class YvGateInitializer:
-    """Operations formerly exposed as module-level functions of gate.
-
-    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
-"""
+    """Module-level operations of gate, exposed through a class (§6.2)."""
 
     @staticmethod
     def moe_init_weights(m):

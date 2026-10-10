@@ -151,11 +151,10 @@ class PiscesLxClassExposureTool:
         existing = next((i for i, l in enumerate(head) if l.startswith(f"class {cls}")), None)
         if existing is None:
             doc = (
-                f"class {cls}:\n"
-                f'    """Operations formerly exposed as module-level functions of '
-                f'{self.module.stem}.\n\n'
-                f"    Standard §6.2 requires functionality be exposed through a class, so "
-                f'each became a static method here.\n"""\n\n'
+                f'class {cls}:\n'
+                f'    """Module-level operations of {self.module.stem}, '
+                f'exposed through a class (§6.2)."""\n'
+                f"\n"
             )
             tail = (doc + methods).split("\n")
             body = "\n".join(head).rstrip("\n")

@@ -2296,7 +2296,7 @@ class PiscesLxBenchmarkSuite:
 
     def _print_summary(self, report: Dict[str, Any]) -> None:
         print("\n" + "=" * 70)
-        print("POPSS Benchmark Suite Report")
+        print("PiscesL1 Benchmark Suite Report")
         print("=" * 70)
 
         scores = report.get("scores", {})

@@ -37,17 +37,8 @@ _LAZY_EXPORTS = {
     'PiscesLxToolsDatasetItem': 'tools.data.download.config',
     # Infer
     'PiscesLxInferOrchestrator': 'tools.infer.orchestrator',
-    'PiscesLxToolsInferRunner': 'tools.infer.runner',
-    'PiscesLxToolsInferConfig': 'tools.infer.config',
-    'PiscesLxToolsInferImpl': 'tools.infer.impl',
     # Train
     'PiscesLxTrainOrchestrator': 'tools.train.orchestrator',
-    'PiscesLxToolsTrainRunner': 'tools.train.runner',
-    'PiscesLxToolsTrainConfig': 'tools.train.config',
-    'PiscesLxToolsTrainImpl': 'tools.train.impl',
-    'PiscesLxToolsProfiler': 'tools.train.profiler',
-    'PiscesLxToolsQuantExporter': 'tools.train.quant_export',
-    'PiscesLxToolsPreferenceTrainer': 'tools.train.pref_align',
     # Monitor
     'PiscesLxToolsMonitorOrchestrator': 'tools.monitor.orchestrator',
     'PiscesLxToolsMonitorRunner': 'tools.monitor.runner',

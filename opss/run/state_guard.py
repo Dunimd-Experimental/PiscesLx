@@ -46,20 +46,16 @@ State Files Protected:
     - .pisceslx/recovery/recovery_state.json
 
 Usage:
-    # In action system (write access):
-    from opss.run.state_guard import PiscesLxStateGuard, write_authorized
-    
-    @write_authorized
-    def update_state(run_id, data):
-        guard = PiscesLxStateGuard()
-        guard.write_state(run_id, data)
-    
-    # In external modules (read-only access):
+    Authorization is decided from the calling module, not from a decorator:
+    the action components listed in PiscesLxStateGuard may write, everything
+    else is read-only.
+
     from opss.run.state_guard import PiscesLxStateGuard
     
     guard = PiscesLxStateGuard()
-    state = guard.read_state(run_id)  # OK - read allowed
-    guard.write_state(run_id, data)   # Raises UnauthorizedWriteError
+    state = guard.read_state(run_id)  # always allowed
+    guard.write_state(run_id, data)   # raises PiscesLxUnauthorizedWriteError
+                                    # unless the caller is an action component
 """
 
 import functools

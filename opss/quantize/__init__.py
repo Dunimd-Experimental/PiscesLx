@@ -41,14 +41,14 @@ Quantization Methods:
 Operator Classes:
     PiscesLxQuantizationEngineOperator: Main operator for model quantization
     PiscesLxGPTQOperator: GPTQ quantization implementation
-    POPSSAWQOperator: AWQ quantization operator
+    PiscesLxAWQOperator: AWQ quantization operator
     PiscesLxSmoothQuantOperator: SmoothQuant operator
     PiscesLxQuantizationPipelineOperator: Full quantization pipeline
 
 Usage:
-    from opss.quantize import PiscesLxQuantizationPipelineOperator, POPSSQuantizationPipelineConfig
+    from opss.quantize import PiscesLxQuantizationPipelineOperator, PiscesLxQuantizationPipelineConfig
 
-    config = POPSSQuantizationPipelineConfig(method="gptq", bits=4, group_size=128)
+    config = PiscesLxQuantizationPipelineConfig(method="gptq", bits=4, group_size=128)
     operator = PiscesLxQuantizationPipelineOperator()
     result = operator.execute({
         "model": model,
@@ -75,7 +75,7 @@ from .engine import PiscesLxQuantizationEngineConfig, PiscesLxQuantizationEngine
 
 __all__ = [
     "PiscesLxQuantizationConfig",
-    "POPSSQuantizationOperatorFactory",
+    "PiscesLxQuantizationOperatorFactory",
     "PiscesLxCalibrationConfig",
     "PiscesLxCalibrationDataLoaderOperator",
     "PiscesLxActivationCollectorOperator",

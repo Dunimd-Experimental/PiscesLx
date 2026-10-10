@@ -182,5 +182,4 @@ __all__ = [
     "PiscesLxTrainingConfig", 
     "PiscesLxEvolutionConfig",
     "PiscesLxTrainOrchestrator",
-    "TrainingPipelineWatermarkOperator"
 ]

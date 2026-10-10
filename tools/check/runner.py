@@ -38,6 +38,7 @@ from tools.check.base import (
     PiscesLxRuleId,
     PiscesLxSeverity,
 )
+from tools.check.checks_exports import PiscesLxDanglingExportCheck
 from tools.check.checks_hygiene import (
     PiscesLxDanglingImportCheck,
     PiscesLxEngineIsolationCheck,
@@ -71,6 +72,7 @@ class PiscesLxCheckCatalog:
         PiscesLxModalityCheck,
         PiscesLxEngineIsolationCheck,
         PiscesLxDanglingImportCheck,
+        PiscesLxDanglingExportCheck,
         PiscesLxIncompleteMarkerCheck,
     )
 

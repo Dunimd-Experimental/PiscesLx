@@ -626,10 +626,7 @@ class YvSampler:
         return token_indices.unsqueeze(-1), top_scores, beam_indices
 
 class YvSamplerFactory:
-    """Operations formerly exposed as module-level functions of sampler.
-
-    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
-"""
+    """Module-level operations of sampler, exposed through a class (§6.2)."""
 
     @staticmethod
     def create_sampler(

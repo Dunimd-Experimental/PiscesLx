@@ -182,10 +182,7 @@ class PiscesLxOPDTrainer:
         return loss_dict
 
 class PiscesLxOpd:
-    """Operations formerly exposed as module-level functions of opd.
-
-    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
-"""
+    """Module-level operations of opd, exposed through a class (§6.2)."""
 
     @staticmethod
     def reverse_kl_divergence(

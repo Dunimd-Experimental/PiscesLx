@@ -89,8 +89,7 @@ Design Principles:
     - Support for hybrid attention-Mamba architectures
     - Exposed classes follow naming conventions:
       * model/ classes: YvXxxXxx
-      * opss/ classes: POPSSXxxXxx
-      * Other directories: PiscesLxXxxXx
+      * every other directory (opss/, tools/, utils/, ...): PiscesLxXxxXx
 
 Example:
     >>> from model import YvConfig, YvModelForCausalLM

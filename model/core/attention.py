@@ -6107,10 +6107,7 @@ class YvLatentCondensedAttention(nn.Module):
         return output, k_latent, v_latent
 
 class YvAttentionMaskFactory:
-    """Operations formerly exposed as module-level functions of attention.
-
-    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
-"""
+    """Module-level operations of attention, exposed through a class (§6.2)."""
 
     @staticmethod
     def _get_causal_sdpa_mask(

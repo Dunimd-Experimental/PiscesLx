@@ -43,10 +43,7 @@ import torch
 __all__ = ["qr_safe", "svd_safe"]
 
 class PiscesLxDtypeSafe:
-    """Operations formerly exposed as module-level functions of dtype_safe.
-
-    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
-"""
+    """Module-level operations of dtype_safe, exposed through a class (§6.2)."""
 
     @staticmethod
     def qr_safe(matrix: torch.Tensor) -> torch.Tensor:

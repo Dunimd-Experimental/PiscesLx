@@ -524,10 +524,7 @@ class PiscesLxInverseSquareRootScheduler(PiscesLxLRSchedulerOperator):
         super().__init__(config)
 
 class PiscesLxLrScheduler:
-    """Operations formerly exposed as module-level functions of lr_scheduler.
-
-    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
-"""
+    """Module-level operations of lr_scheduler, exposed through a class (§6.2)."""
 
     @staticmethod
     def create_scheduler(

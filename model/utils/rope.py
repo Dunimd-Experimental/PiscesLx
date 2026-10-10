@@ -268,10 +268,7 @@ __all__ = [
 ]
 
 class YvRope:
-    """Operations formerly exposed as module-level functions of rope.
-
-    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
-"""
+    """Module-level operations of rope, exposed through a class (§6.2)."""
 
     @staticmethod
     def precompute_freqs_cis(

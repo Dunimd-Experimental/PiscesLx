@@ -1627,10 +1627,7 @@ __all__ = [
 ]
 
 class PiscesLxMoeRuntime:
-    """Operations formerly exposed as module-level functions of moe_runtime.
-
-    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
-"""
+    """Module-level operations of moe_runtime, exposed through a class (§6.2)."""
 
     @staticmethod
     def create_moe_runtime_operator(config: Optional[PiscesLxMoERuntimeConfig] = None) -> 'PiscesLxMoERuntimeOperator':

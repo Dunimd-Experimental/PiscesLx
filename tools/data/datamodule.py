@@ -51,7 +51,6 @@ from functools import partial
 
 import torch
 from torch.utils.data import Dataset, DataLoader, IterableDataset
-from torch.utils.data.dataset import T_co
 import numpy as np
 
 from utils.dc import PiscesLxLogger

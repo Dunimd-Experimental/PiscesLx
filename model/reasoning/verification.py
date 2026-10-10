@@ -304,10 +304,7 @@ class YvCRVIntegration(nn.Module):
         }
 
 class YvVerificationFactory:
-    """Operations formerly exposed as module-level functions of verification.
-
-    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
-"""
+    """Module-level operations of verification, exposed through a class (§6.2)."""
 
     @staticmethod
     def detect_cot_failure_modes(

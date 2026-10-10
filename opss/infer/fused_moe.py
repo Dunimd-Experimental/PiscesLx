@@ -114,10 +114,7 @@ class PiscesLxFusedMoEDispatch(nn.Module):
         return output
 
 class PiscesLxFusedMoe:
-    """Operations formerly exposed as module-level functions of fused_moe.
-
-    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
-"""
+    """Module-level operations of fused_moe, exposed through a class (§6.2)."""
 
     @staticmethod
     def fused_moe_dispatch(

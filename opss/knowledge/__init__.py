@@ -56,5 +56,4 @@ from .builder import PiscesLxBuilder, PiscesLxKnowledgeBuilder, PiscesLxKnowledg
 __all__ = [
     "PiscesLxKnowledgeBuilder",
     "PiscesLxKnowledgeBuilderConfig",
-    "create_knowledge_builder",
 ]

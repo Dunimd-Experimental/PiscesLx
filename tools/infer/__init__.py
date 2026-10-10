@@ -161,8 +161,6 @@ __all__ = [
     "PiscesLxRunConfig",
     "PiscesLxServiceConfig",
     "MODEL_SPECS",
-    "get_model_spec",
-    "list_available_models",
     "PiscesLxInferOrchestrator",
     "PiscesLxModelRouter",
     "PiscesLxRoutingStrategy",

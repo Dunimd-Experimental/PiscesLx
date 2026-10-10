@@ -857,10 +857,7 @@ class YvParallelResidualNorm(nn.Module):
         return sum(normalized) * gate + residual * (1 - gate)
 
 class YvNorms:
-    """Operations formerly exposed as module-level functions of norms.
-
-    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
-"""
+    """Module-level operations of norms, exposed through a class (§6.2)."""
 
     @staticmethod
     def _arctic_init_weights(m: nn.Module):

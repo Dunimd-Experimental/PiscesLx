@@ -90,7 +90,7 @@ from .comparison import (
     get_flagship_benchmark_data,
 )
 
-# Standard benchmark interfaces (POPSS namespace)
+# Standard benchmark interfaces
 
 from .benchmark import (
     PiscesLxBenchmarkResult,

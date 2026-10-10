@@ -160,10 +160,7 @@ class YvMegaMoE(nn.Module):
         return output
 
 class YvMegaKernel:
-    """Operations formerly exposed as module-level functions of mega_kernel.
-
-    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
-"""
+    """Module-level operations of mega_kernel, exposed through a class (§6.2)."""
 
     @staticmethod
     def _wave_schedule(expert_counts: torch.Tensor, max_wave_size: int) -> List[List[int]]:

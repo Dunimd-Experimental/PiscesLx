@@ -954,10 +954,7 @@ class PiscesLxServiceConfig:
         return config
 
 class PiscesLxConfig:
-    """Operations formerly exposed as module-level functions of config.
-
-    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
-"""
+    """Module-level operations of config, exposed through a class (§6.2)."""
 
     @staticmethod
     def get_model_spec(model_size: str) -> PiscesLxModelSpec:

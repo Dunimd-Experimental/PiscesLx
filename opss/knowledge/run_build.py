@@ -26,7 +26,7 @@ from __future__ import annotations
 """CLI entry point for building the PiscesLx knowledge store.
 
 Builds a FAISS-indexed mmap-backed knowledge store from raw text
-corpora using the 0.5B POPSS knowledge encoder, then writes it to
+corpora using the 0.5B PiscesLx knowledge encoder, then writes it to
 ``memory_store_path`` so :class:`YvMemoryRouter` can load it at
 inference / training time.
 
