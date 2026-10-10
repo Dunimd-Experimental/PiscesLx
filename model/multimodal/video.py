@@ -32,7 +32,7 @@ and video summarization capabilities.
 Module Components:
     1. YvVideoEncoder:
        - Video frame encoding with temporal modeling
-       - Action recognition and localization
+       - YvReActAction recognition and localization
        - Scene understanding and event detection
        - Object tracking and summarization
 
@@ -40,7 +40,7 @@ Key Features:
     - Per-frame feature extraction via YvVisionEncoder
     - Optional 3D spatio-temporal RoPE for video
     - Temporal convolution and attention layers
-    - Action recognition head (10 action classes)
+    - YvReActAction recognition head (10 action classes)
     - Scene understanding (20 scene classes)
     - Event detection (8 event types)
     - Object tracking with occlusion handling
@@ -49,7 +49,7 @@ Key Features:
 Performance Characteristics:
     - Per-frame encoding: O(T * N^2) where N = patches per frame
     - Temporal processing: O(T^2 * hidden_size) with attention
-    - Action recognition: O(T * hidden_size)
+    - YvReActAction recognition: O(T * hidden_size)
     - Total complexity: O(T * (N^2 + T * hidden_size))
 
 Usage Example:
@@ -94,7 +94,7 @@ class YvVideoEncoder(nn.Module):
         2. Temporal Processing:
            - With 3D RoPE: Conv1d + BatchNorm + SiLU + MultiheadAttention
            - Without 3D RoPE: Conv1d + MultiheadAttention
-        3. Action Recognition: 10-class action head + localization
+        3. YvReActAction Recognition: 10-class action head + localization
         4. Scene Understanding: 20-class scene classification
         5. Event Detection: 8-type event detection
         6. Object Tracking: Correlation + occlusion estimation
@@ -104,7 +104,7 @@ class YvVideoEncoder(nn.Module):
         - Per-frame feature extraction via YvVisionEncoder
         - Optional 3D spatio-temporal RoPE for video
         - Temporal convolution and attention layers
-        - Action recognition with temporal localization
+        - YvReActAction recognition with temporal localization
         - Scene understanding and event detection
         - Object tracking with occlusion handling
         - Video summarization capabilities
@@ -317,7 +317,7 @@ class YvVideoEncoder(nn.Module):
             seq_scores = self.event_detector(video_seq.transpose(1, 2))  # [B, 8, T]
             event_features = seq_scores.mean(dim=-1)  # [B, 8]
 
-            # Action recognition: [B, 10]
+            # YvReActAction recognition: [B, 10]
             action_features = self.action_recognition['head'](pooled)  # [B, 10]
 
             # Scene understanding: [B, 20]

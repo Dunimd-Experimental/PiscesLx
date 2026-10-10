@@ -136,13 +136,13 @@ class YvMultiPathReasoningEngine(nn.Module):
         
         5. Meta-Cognitive GRU:
            - Temporal reasoning feedback
-           - Reflection logit generation
+           - YvReActReflection logit generation
         
         6. Reasoning Streams:
            - hypothesis: Hypothesis generation head
            - evidence: Evidence gathering head
            - conclusion: Conclusion drawing head
-           - reflection: Reflection type head
+           - reflection: YvReActReflection type head
     
     Complexity Estimation:
         - Length complexity: min(seq_len / 512, 1.0)

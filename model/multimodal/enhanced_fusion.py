@@ -36,16 +36,16 @@ Module Components:
        - Configuration dataclass for fusion parameters
        - Modality list and attention settings
 
-    2. _IntraModalEncoder:
+    2. _YvIntraModalEncoder:
        - Transformer encoder for intra-modal processing
        - Self-attention within each modality
 
-    3. _CrossModalAligner:
+    3. _YvCrossModalAligner:
        - Cross-modal feature alignment
        - Modality-specific projections
        - Feature fusion and residual connections
 
-    4. _InterModalAttention:
+    4. _YvInterModalAttention:
        - Cross-modal attention mechanism
        - Multi-head attention across modalities
 
@@ -128,7 +128,7 @@ class YvModalFusionConfig:
     use_cross_modal_alignment: bool = True
 
 
-class _IntraModalEncoder(nn.Module):
+class _YvIntraModalEncoder(nn.Module):
     """Transformer encoder for intra-modal feature processing.
     
     A multi-layer transformer encoder that processes features within
@@ -145,7 +145,7 @@ class _IntraModalEncoder(nn.Module):
         layers (nn.ModuleList): List of TransformerEncoderLayer modules.
     
     Example:
-        >>> encoder = _IntraModalEncoder(hidden_size=2048, num_layers=2)
+        >>> encoder = _YvIntraModalEncoder(hidden_size=2048, num_layers=2)
         >>> output = encoder(input_features)  # [B, L, hidden_size]
     
     Note:
@@ -187,7 +187,7 @@ class _IntraModalEncoder(nn.Module):
         return x
 
 
-class _CrossModalAligner(nn.Module):
+class _YvCrossModalAligner(nn.Module):
     """Cross-modal feature alignment and fusion module.
     
     Aligns features from different modalities through modality-specific
@@ -213,7 +213,7 @@ class _CrossModalAligner(nn.Module):
         {modality}_proj (nn.Linear): Per-modality projection layers.
     
     Example:
-        >>> aligner = _CrossModalAligner(hidden_size=2048, num_modalities=6)
+        >>> aligner = _YvCrossModalAligner(hidden_size=2048, num_modalities=6)
         >>> aligned = aligner({"text": text_feat, "image": img_feat})
     
     Note:
@@ -271,7 +271,7 @@ class _CrossModalAligner(nn.Module):
         return aligned
 
 
-class _InterModalAttention(nn.Module):
+class _YvInterModalAttention(nn.Module):
     """Cross-modal attention mechanism for feature interaction.
     
     Implements multi-head attention across different modalities, enabling
@@ -286,7 +286,7 @@ class _InterModalAttention(nn.Module):
         hidden_size (int): Hidden dimension for features.
     
     Example:
-        >>> attention = _InterModalAttention(hidden_size=2048, num_modalities=6)
+        >>> attention = _YvInterModalAttention(hidden_size=2048, num_modalities=6)
         >>> attended = attention(modal_features)
     
     Note:
@@ -364,7 +364,7 @@ class _InterModalAttention(nn.Module):
         return output, attention_map
 
 
-class _ModalityImportanceLearner(nn.Module):
+class _YvModalityImportanceLearner(nn.Module):
     def __init__(self, hidden_size: int, num_modalities: int):
         super().__init__()
         self.hidden_size = hidden_size
@@ -406,7 +406,7 @@ class _ModalityImportanceLearner(nn.Module):
         return importance_weights, gate_values
 
 
-class _MultiScaleQualityAssessor(nn.Module):
+class _YvMultiScaleQualityAssessor(nn.Module):
     def __init__(self, hidden_size: int, num_modalities: int):
         super().__init__()
         self.hidden_size = hidden_size
@@ -491,7 +491,7 @@ class _MultiScaleQualityAssessor(nn.Module):
         return quality_dict
 
 
-class _QualityAwareFusion(nn.Module):
+class _YvQualityAwareFusion(nn.Module):
     def __init__(self, hidden_size: int, num_modalities: int, dropout: float = 0.1):
         super().__init__()
         self.hidden_size = hidden_size
@@ -592,27 +592,27 @@ class YvEnhancedModalFusion(nn.Module):
         
         self.intra_modal_encoders = nn.ModuleDict()
         for modality in self.modalities:
-            self.intra_modal_encoders[modality] = _IntraModalEncoder(
+            self.intra_modal_encoders[modality] = _YvIntraModalEncoder(
                 hidden_size=self.hidden_size,
                 num_layers=config.num_layers // 2
             )
         
         if config.use_cross_modal_alignment:
-            self.cross_modal_aligner = _CrossModalAligner(
+            self.cross_modal_aligner = _YvCrossModalAligner(
                 hidden_size=self.hidden_size,
                 num_modalities=self.num_modalities
             )
         else:
             self.cross_modal_aligner = None
         
-        self.inter_modal_attention = _InterModalAttention(
+        self.inter_modal_attention = _YvInterModalAttention(
             hidden_size=self.hidden_size,
             num_modalities=self.num_modalities,
             num_heads=config.num_heads
         )
         
         if config.use_modality_attention:
-            self.modality_importance = _ModalityImportanceLearner(
+            self.modality_importance = _YvModalityImportanceLearner(
                 hidden_size=self.hidden_size,
                 num_modalities=self.num_modalities
             )
@@ -620,12 +620,12 @@ class YvEnhancedModalFusion(nn.Module):
             self.modality_importance = None
         
         if config.use_quality_aware_fusion:
-            self.quality_assessor = _MultiScaleQualityAssessor(
+            self.quality_assessor = _YvMultiScaleQualityAssessor(
                 hidden_size=self.hidden_size,
                 num_modalities=self.num_modalities
             )
             
-            self.quality_fusion = _QualityAwareFusion(
+            self.quality_fusion = _YvQualityAwareFusion(
                 hidden_size=self.hidden_size,
                 num_modalities=self.num_modalities,
                 dropout=config.dropout

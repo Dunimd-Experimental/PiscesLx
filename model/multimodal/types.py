@@ -252,7 +252,7 @@ class YvAgenticAction:
     Used in the agent action-observation loop for tool execution.
     
     Attributes:
-        action_type (str): Action label emitted by the policy.
+        action_type (str): YvReActAction label emitted by the policy.
             Examples: "search", "generate", "analyze", "tool_call".
         parameters (Dict[str, Any]): Arguments passed to downstream tools.
             Structure depends on action_type. May contain nested dicts.
@@ -290,7 +290,7 @@ class YvAgenticObservation:
     Attributes:
         modality (str): Modality identifier such as ``"text"`` or ``"image"``.
             Supported values: "text", "image", "audio", "video", "document".
-        content (Any): Observation payload—may be text, tensors, or tool outputs.
+        content (Any): YvReActObservation payload—may be text, tensors, or tool outputs.
             Type varies based on modality and observation source.
         metadata (Dict[str, Any]): Auxiliary properties like timestamps or source tags.
             May include: "timestamp", "source", "confidence", "language".

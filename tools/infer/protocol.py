@@ -432,14 +432,14 @@ class RunListResponse(BaseModel):
 class RunControlRequest(BaseModel):
     """Run control request."""
     action: str = Field(..., description="Control action: pause, resume, cancel, kill, reload")
-    payload: Optional[Dict[str, Any]] = Field(None, description="Action payload")
+    payload: Optional[Dict[str, Any]] = Field(None, description="YvReActAction payload")
 
 
 class RunControlResponse(BaseModel):
     """Run control response."""
     success: bool = Field(True)
     run_id: str = Field(..., description="Run ID")
-    action: str = Field(..., description="Action performed")
+    action: str = Field(..., description="YvReActAction performed")
     message: Optional[str] = Field(None)
 
 

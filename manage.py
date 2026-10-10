@@ -796,13 +796,13 @@ def main():
         help='MCP server port (for MCP operations)'
     )
     
-    # --mcp_action: Action to perform on MCP server
+    # --mcp_action: YvReActAction to perform on MCP server
     # status: Check current tool registration status
     # warmup: Start background tool discovery
     # refresh-cache: Reload all tool definitions
     parser.add_argument(
         '--mcp_action', 
-        type=str,  # Action name as string
+        type=str,  # YvReActAction name as string
         choices=['status', 'warmup', 'refresh-cache'],  # Valid actions
         default='status',  # Default to status check
         help='MCP action to perform (for MCP operations)'
@@ -1150,7 +1150,7 @@ def main():
     # -------------------------------------------------------------------------
     # PUBLISH COMMAND ARGUMENTS
     # -------------------------------------------------------------------------
-    # --publish_action: Action to perform for publishing
+    # --publish_action: YvReActAction to perform for publishing
     # full: Run full pipeline (export, build, push)
     # export: Export model weights and configs only
     # build: Build Docker image only

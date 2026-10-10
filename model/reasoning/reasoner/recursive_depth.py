@@ -167,7 +167,7 @@ class YvRecursiveReasoningConfig:
     early_exit_threshold: float = 0.9
 
 
-class _SubProblemDecomposer(nn.Module):
+class _YvSubProblemDecomposer(nn.Module):
     """Neural network module for decomposing problems into subproblems.
     
     This module implements a learned decomposition strategy that analyzes problem
@@ -199,7 +199,7 @@ class _SubProblemDecomposer(nn.Module):
         num_subproblems_predictor (nn.Linear): Subproblem count prediction head.
     
     Example:
-        >>> decomposer = _SubProblemDecomposer(hidden_size=2048)
+        >>> decomposer = _YvSubProblemDecomposer(hidden_size=2048)
         >>> problem_emb = torch.randn(1, 2048)
         >>> context = torch.randn(1, 2048)
         >>> result = decomposer(problem_emb, context, complexity_score=0.7)
@@ -284,7 +284,7 @@ class _SubProblemDecomposer(nn.Module):
                   with raw decomposition network output.
         
         Example:
-            >>> decomposer = _SubProblemDecomposer(2048)
+            >>> decomposer = _YvSubProblemDecomposer(2048)
             >>> emb = torch.randn(2, 2048)
             >>> ctx = torch.randn(2, 2048)
             >>> out = decomposer(emb, ctx, 0.6)
@@ -312,7 +312,7 @@ class _SubProblemDecomposer(nn.Module):
         }
 
 
-class _RecursiveReasoningBlock(nn.Module):
+class _YvRecursiveReasoningBlock(nn.Module):
     """Transformer-based reasoning block for processing problem representations.
     
     This module implements a stack of transformer encoder layers followed by
@@ -332,7 +332,7 @@ class _RecursiveReasoningBlock(nn.Module):
         output_proj (nn.Sequential): Final projection network.
     
     Example:
-        >>> block = _RecursiveReasoningBlock(hidden_size=2048, num_layers=3)
+        >>> block = _YvRecursiveReasoningBlock(hidden_size=2048, num_layers=3)
         >>> x = torch.randn(2, 10, 2048)  # batch=2, seq_len=10
         >>> output = block(x)
         >>> print(output.shape)  # torch.Size([2, 10, 2048])
@@ -393,7 +393,7 @@ class _RecursiveReasoningBlock(nn.Module):
         return self.output_proj(x)
 
 
-class _SubProblemAggregator(nn.Module):
+class _YvSubProblemAggregator(nn.Module):
     """Attention-based aggregator for combining subproblem results.
     
     This module implements a sophisticated aggregation mechanism that combines
@@ -425,7 +425,7 @@ class _SubProblemAggregator(nn.Module):
         output_proj (nn.Sequential): Final projection with LayerNorm.
     
     Example:
-        >>> aggregator = _SubProblemAggregator(hidden_size=2048)
+        >>> aggregator = _YvSubProblemAggregator(hidden_size=2048)
         >>> problem = torch.randn(2, 2048)
         >>> sub_results = [torch.randn(2, 2048) for _ in range(3)]
         >>> output = aggregator(problem, sub_results)
@@ -496,7 +496,7 @@ class _SubProblemAggregator(nn.Module):
                 Returns problem_embedding if sub_problem_results is empty.
         
         Example:
-            >>> agg = _SubProblemAggregator(2048)
+            >>> agg = _YvSubProblemAggregator(2048)
             >>> prob = torch.randn(1, 2048)
             >>> subs = [torch.randn(1, 2048) for _ in range(4)]
             >>> weights = torch.tensor([0.4, 0.3, 0.2, 0.1])
@@ -530,7 +530,7 @@ class _SubProblemAggregator(nn.Module):
         return output
 
 
-class _BidirectionalVerifier(nn.Module):
+class _YvBidirectionalVerifier(nn.Module):
     """Bidirectional reasoning verifier for solution consistency checking.
     
     This module implements a forward-backward verification mechanism that
@@ -563,7 +563,7 @@ class _BidirectionalVerifier(nn.Module):
         fusion_proj (nn.Sequential): Final fusion projection with LayerNorm.
     
     Example:
-        >>> verifier = _BidirectionalVerifier(hidden_size=2048)
+        >>> verifier = _YvBidirectionalVerifier(hidden_size=2048)
         >>> hypothesis = torch.randn(2, 2048)
         >>> evidence = torch.randn(2, 2048)
         >>> context = torch.randn(2, 2048)
@@ -644,7 +644,7 @@ class _BidirectionalVerifier(nn.Module):
                   of shape (batch_size, 1) with values in [0, 1].
         
         Example:
-            >>> verifier = _BidirectionalVerifier(2048)
+            >>> verifier = _YvBidirectionalVerifier(2048)
             >>> h = torch.randn(1, 2048)
             >>> e = torch.randn(1, 2048)
             >>> c = torch.randn(1, 2048)
@@ -718,10 +718,10 @@ class YvRecursiveDepthReasoner(nn.Module):
         min_depth (int): Minimum recursion depth.
         width (int): Maximum subproblems per decomposition.
         temperature (float): Sampling temperature.
-        decomposer (_SubProblemDecomposer): Subproblem generation module.
-        recursive_block (_RecursiveReasoningBlock): Transformer reasoning stack.
-        aggregator (Optional[_SubProblemAggregator]): Result combination module.
-        verifier (Optional[_BidirectionalVerifier]): Consistency checker.
+        decomposer (_YvSubProblemDecomposer): Subproblem generation module.
+        recursive_block (_YvRecursiveReasoningBlock): Transformer reasoning stack.
+        aggregator (Optional[_YvSubProblemAggregator]): Result combination module.
+        verifier (Optional[_YvBidirectionalVerifier]): Consistency checker.
         complexity_predictor (nn.Sequential): Complexity estimation network.
         confidence_predictor (nn.Sequential): Confidence estimation network.
         depth_predictor (nn.Sequential): Optimal depth prediction network.
@@ -774,18 +774,18 @@ class YvRecursiveDepthReasoner(nn.Module):
         self.width = config.width
         self.temperature = config.temperature
         
-        self.decomposer = _SubProblemDecomposer(
+        self.decomposer = _YvSubProblemDecomposer(
             hidden_size=self.hidden_size,
             num_decomposition_heads=4
         )
         
-        self.recursive_block = _RecursiveReasoningBlock(
+        self.recursive_block = _YvRecursiveReasoningBlock(
             hidden_size=self.hidden_size,
             num_layers=2
         )
         
         if config.use_aggregation:
-            self.aggregator = _SubProblemAggregator(
+            self.aggregator = _YvSubProblemAggregator(
                 hidden_size=self.hidden_size,
                 num_heads=8
             )
@@ -793,7 +793,7 @@ class YvRecursiveDepthReasoner(nn.Module):
             self.aggregator = None
         
         if config.use_verification:
-            self.verifier = _BidirectionalVerifier(self.hidden_size)
+            self.verifier = _YvBidirectionalVerifier(self.hidden_size)
         else:
             self.verifier = None
         

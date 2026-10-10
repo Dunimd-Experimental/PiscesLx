@@ -1013,7 +1013,7 @@ Answer (1 or 2): """
             
             prompt = f"""Which solution is more physically plausible?
 
-Goal: {goal}
+YvReActGoal: {goal}
 
 Solution 1: {sol1}
 Solution 2: {sol2}

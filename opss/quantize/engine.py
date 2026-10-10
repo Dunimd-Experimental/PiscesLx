@@ -638,7 +638,7 @@ class POPSSQuantizationEngineOperator(PiscesLxOperatorInterface):
             "model": {"type": "Module", "required": False, "description": "Model object"},
             "calibration_data": {"type": "list", "required": False, "description": "Calibration data"},
             "config": {"type": "QuantizationEngineConfig", "required": False, "description": "Quantization config"},
-            "action": {"type": "str", "required": False, "description": "Action: quantize, analyze, export"},
+            "action": {"type": "str", "required": False, "description": "YvReActAction: quantize, analyze, export"},
         }
     
     @property

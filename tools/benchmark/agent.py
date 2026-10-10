@@ -624,8 +624,8 @@ Instruction: {instruction}
         
         prompt += "Provide your solution step by step. Use the format:\n"
         prompt += "Thought: [your reasoning]\n"
-        prompt += "Action: [action to take]\n"
-        prompt += "Observation: [result of action]\n"
+        prompt += "YvReActAction: [action to take]\n"
+        prompt += "YvReActObservation: [result of action]\n"
         prompt += "...\n"
         prompt += "Final Answer: [your final answer]\n\n"
         prompt += "Response:"

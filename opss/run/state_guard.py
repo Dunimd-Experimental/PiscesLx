@@ -24,7 +24,7 @@
 from __future__ import annotations
 
 """
-State File Guard for Action System Isolation.
+State File Guard for YvReActAction System Isolation.
 
 This module provides write protection for action system state files,
 ensuring only authorized action components can modify them while
@@ -86,7 +86,7 @@ class POPSSStateFileCorruptedError(Exception):
 
 class POPSSStateGuard:
     """
-    State File Guard for Action System Isolation.
+    State File Guard for YvReActAction System Isolation.
     
     This class controls write access to action system state files,
     ensuring only authorized components within the action system can

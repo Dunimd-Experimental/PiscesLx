@@ -73,7 +73,7 @@ Note:
     This file embeds vocabulary, merge rules, and configuration.
 """
 
-from .tokenizer import YvTokenizer, get_tokenizer, EXTENDED_VOCAB_SIZE, POPSSExtendedTokenizerConfig, PiscesLx160KTokenizer
+from .tokenizer import YvTokenizer, get_tokenizer, EXTENDED_VOCAB_SIZE, YvExtendedTokenizerConfig, YvTokenizer160K
 from .builder import YvTokenizerBuilder, YvTokenizerConfig
 from .special_tokens import YvSpecialTokens, YvSpecialTokenType
 
@@ -81,8 +81,8 @@ __all__ = [
     "YvTokenizer",
     "get_tokenizer",
     "EXTENDED_VOCAB_SIZE",
-    "POPSSExtendedTokenizerConfig",
-    "PiscesLx160KTokenizer",
+    "YvExtendedTokenizerConfig",
+    "YvTokenizer160K",
     "YvTokenizerBuilder",
     "YvTokenizerConfig",
     "YvSpecialTokens",

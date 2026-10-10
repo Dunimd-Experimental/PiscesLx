@@ -1945,7 +1945,7 @@ class YvTaskStage:
 
 @dataclass
 class YvPlanStep:
-    """Plan step data class."""
+    """YvReActPlan step data class."""
     step_id: int
     name: str
     description: str

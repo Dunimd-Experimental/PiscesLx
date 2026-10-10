@@ -125,7 +125,7 @@ class YvAgentic(nn.Module):
         
         2. Memory:
            - YvAgenticMemory for persistent storage
-           - Observation, action, and reflection tracking
+           - YvReActObservation, action, and reflection tracking
            - Contextual retrieval with internal Agentic memory
         
         3. Reasoning:
@@ -286,7 +286,7 @@ class YvAgentic(nn.Module):
         # Coordinate marking support flag for vision-assisted operations
         self._coordinate_detection_enabled = True
         
-        # Action prediction heads
+        # YvReActAction prediction heads
         self.action_type_head = nn.Linear(cfg.hidden_size, 10)  # Predict 10 action categories
         self.action_param_head = nn.Linear(cfg.hidden_size, cfg.hidden_size)
         self.confidence_head = nn.Linear(cfg.hidden_size, 1)
@@ -597,10 +597,10 @@ class YvAgentic(nn.Module):
         """Persist an observation and acknowledge processing.
 
         Args:
-            message (YvMCPMessage): Observation payload emitted by a peer.
+            message (YvMCPMessage): YvReActObservation payload emitted by a peer.
 
         Returns:
-            YvMCPMessage: Observation acknowledgement carrying embedding metadata.
+            YvMCPMessage: YvReActObservation acknowledgement carrying embedding metadata.
         """
         observation_data = message.payload
         observation = YvAgenticObservation(
@@ -623,13 +623,13 @@ class YvAgentic(nn.Module):
         )
 
     async def _handle_action(self, message: YvMCPMessage) -> YvMCPMessage:
-        """Plan an action in response to an MCP action request.
+        """YvReActPlan an action in response to an MCP action request.
 
         Args:
-            message (YvMCPMessage): Action request populated with contextual data.
+            message (YvMCPMessage): YvReActAction request populated with contextual data.
 
         Returns:
-            YvMCPMessage: Action response including the serialized plan and agent state.
+            YvMCPMessage: YvReActAction response including the serialized plan and agent state.
         """
         action_data = message.payload
         context = {
@@ -1215,8 +1215,8 @@ class YvAgentic(nn.Module):
         difficulty_label = difficulty_labels[min(difficulty_level, len(difficulty_labels)-1)]
         trace_parts.append(f"Difficulty Assessment: {difficulty_label} (level {difficulty_level})")
         
-        # Action selection reasoning
-        trace_parts.append(f"Action Selection: Chose '{action_type}' with {confidence:.2f} confidence")
+        # YvReActAction selection reasoning
+        trace_parts.append(f"YvReActAction Selection: Chose '{action_type}' with {confidence:.2f} confidence")
         
         # Memory influence
         if relevant_memories:

@@ -652,7 +652,7 @@ class POPSSPrefixCachingOperator(PiscesLxOperatorInterface):
         return {
             "token_ids": {"type": "tuple", "required": True, "description": "Token IDs to look up or cache"},
             "kv_cache": {"type": "tuple", "required": False, "description": "KV cache to insert"},
-            "action": {"type": "str", "required": False, "description": "Action: lookup, insert, clear, invalidate"},
+            "action": {"type": "str", "required": False, "description": "YvReActAction: lookup, insert, clear, invalidate"},
         }
     
     @property
@@ -817,7 +817,7 @@ class POPSSChunkedPrefillOperator(PiscesLxOperatorInterface):
         return {
             "token_ids": {"type": "tuple", "required": True, "description": "Token IDs to process"},
             "current_memory_usage": {"type": "float", "required": False, "description": "Current memory usage ratio"},
-            "action": {"type": "str", "required": False, "description": "Action: chunk, stats"},
+            "action": {"type": "str", "required": False, "description": "YvReActAction: chunk, stats"},
         }
     
     @property

@@ -24,7 +24,7 @@
 from __future__ import annotations
 
 """
-Run Store - State File Management for Action System.
+Run Store - State File Management for YvReActAction System.
 
 This module provides the core storage layer for action system state files.
 All state files are protected by POPSSStateGuard to ensure only authorized
@@ -56,7 +56,7 @@ from .lock import POPSSFileLock
 
 class POPSSRunStore:
     """
-    Run Store - State File Management for Action System.
+    Run Store - State File Management for YvReActAction System.
     
     This class manages all state files for a single run. All write operations
     are protected by the action system authorization mechanism.

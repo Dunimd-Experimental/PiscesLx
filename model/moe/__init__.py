@@ -149,7 +149,7 @@ from .diversity import (
     YvDiversityRegularizer,
 )
 from .online_router import YvOnlineClusterRouter, YvClusterConfig
-from .expert_init import YvGradientClusterInitializer, GradientStatistics, ClusterInfo
+from .expert_init import YvGradientClusterInitializer, YvGradientStatistics, YvClusterInfo
 from .regularization import YvRegularizationConfig, YvExpertDiversityRegularizer
 
 __all__ = [
@@ -182,8 +182,8 @@ __all__ = [
     "YvOnlineClusterRouter",
     "YvClusterConfig",
     "YvGradientClusterInitializer",
-    "GradientStatistics",
-    "ClusterInfo",
+    "YvGradientStatistics",
+    "YvClusterInfo",
     "YvRegularizationConfig",
     "YvExpertDiversityRegularizer",
 ]

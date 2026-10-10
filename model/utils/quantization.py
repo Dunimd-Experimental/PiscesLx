@@ -298,7 +298,7 @@ class YvQuantizer:
         self.scale_dict[name + ".weight"] = scale
         self.zero_point_dict[name + ".weight"] = zero_point
 
-        return _QuantizedLinear(quantized_weight, scale, zero_point, linear.bias)
+        return _YvQuantizedLinear(quantized_weight, scale, zero_point, linear.bias)
 
     def quantize_model(
         self,
@@ -382,7 +382,7 @@ class YvQuantizer:
         self.zero_point_dict = state_dict.get("zero_points", {})
 
 
-class _QuantizedLinear(nn.Module):
+class _YvQuantizedLinear(nn.Module):
     def __init__(self, q_weight, scale, zero_point, bias):
         super().__init__()
         self.q_weight = nn.Parameter(q_weight, requires_grad=False)

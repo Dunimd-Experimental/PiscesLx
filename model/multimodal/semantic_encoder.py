@@ -34,7 +34,7 @@ Module Components:
        - Text tokenization with special token handling
        - Token and positional embeddings
        - Bidirectional GRU context encoding
-       - Goal, context, and history encoding
+       - YvReActGoal, context, and history encoding
 
     2. YvHybridEncoder:
        - Semantic and additional feature fusion
@@ -113,7 +113,7 @@ class YvSemanticEncoder(nn.Module):
         - Special token patterns for agent workflows
         - Precomputed rotary frequency cache
         - Bidirectional GRU for context modeling
-        - Goal, context, and history encoding methods
+        - YvReActGoal, context, and history encoding methods
     
     Attributes:
         hidden_size (int): Output embedding dimension.
@@ -321,7 +321,7 @@ class YvSemanticEncoder(nn.Module):
         encoding and special tokens enabled.
         
         Args:
-            goal (str): Goal text to encode.
+            goal (str): YvReActGoal text to encode.
         
         Returns:
             torch.Tensor: Pooled goal representation [B, hidden_size].

@@ -101,7 +101,7 @@ Architecture Overview:
          * Frame sampling strategies
        
          * Processes agentic/action inputs
-         * Action space encoding
+         * YvReActAction space encoding
          * State representation
        
        - Dynamic Modal Fusion: YvDynamicModalFusion

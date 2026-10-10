@@ -112,7 +112,7 @@ _LOG = PiscesLxLogger("Yv.Moe", file_path=get_log_file("Yv.Moe"), enable_file=Tr
 
 
 @dataclass
-class GradientStatistics:
+class YvGradientStatistics:
     """Dataclass for storing gradient statistics per parameter.
     
     Encapsulates gradient statistics collected during forward/backward passes,
@@ -128,7 +128,7 @@ class GradientStatistics:
         param_name (str): Name of the parameter in the model.
     
     Example:
-        >>> stats = GradientStatistics(
+        >>> stats = YvGradientStatistics(
         ...     mean=torch.zeros(4096, 11008),
         ...     std=torch.ones(4096, 11008),
         ...     norm=torch.ones(4096, 11008),
@@ -148,7 +148,7 @@ class GradientStatistics:
 
 
 @dataclass
-class ClusterInfo:
+class YvClusterInfo:
     """Dataclass for storing cluster information.
     
     Encapsulates information about a single cluster discovered during
@@ -163,7 +163,7 @@ class ClusterInfo:
         size (int): Number of members in the cluster.
     
     Example:
-        >>> cluster = ClusterInfo(
+        >>> cluster = YvClusterInfo(
         ...     cluster_id=0,
         ...     centroid=torch.randn(128),
         ...     member_indices=[0, 5, 12, 45],
@@ -209,8 +209,8 @@ class YvGradientClusterInitializer:
         num_experts (int): Total number of experts to initialize.
         min_clusters (int): Minimum number of clusters for auto-detection.
         max_clusters (int): Maximum number of clusters for auto-detection.
-        gradient_features (Dict[str, GradientStatistics]): Collected gradient stats.
-        clusters (List[ClusterInfo]): Discovered parameter clusters.
+        gradient_features (Dict[str, YvGradientStatistics]): Collected gradient stats.
+        clusters (List[YvClusterInfo]): Discovered parameter clusters.
         device (torch.device): Device for computation.
     
     Example:
@@ -268,8 +268,8 @@ class YvGradientClusterInitializer:
         self.device = device or torch.device('cpu')
         self.dtype = dtype or torch.float32
         
-        self.gradient_features: Dict[str, GradientStatistics] = {}
-        self.clusters: List[ClusterInfo] = []
+        self.gradient_features: Dict[str, YvGradientStatistics] = {}
+        self.clusters: List[YvClusterInfo] = []
         self._gradient_buffer: Dict[str, List[torch.Tensor]] = defaultdict(list)
         self._collection_count = 0
         
@@ -283,7 +283,7 @@ class YvGradientClusterInitializer:
         self,
         model: nn.Module,
         param_filter: Optional[str] = None
-    ) -> Dict[str, GradientStatistics]:
+    ) -> Dict[str, YvGradientStatistics]:
         """Collect gradient statistics from model parameters.
         
         Analyzes gradients accumulated during backward pass and computes
@@ -303,7 +303,7 @@ class YvGradientClusterInitializer:
                 Default: None.
         
         Returns:
-            Dict[str, GradientStatistics]: Dictionary mapping parameter names
+            Dict[str, YvGradientStatistics]: Dictionary mapping parameter names
                 to their gradient statistics.
         
         Example:
@@ -341,14 +341,14 @@ class YvGradientClusterInitializer:
         
         return self.gradient_features
     
-    def _compute_gradient_statistics(self) -> Dict[str, GradientStatistics]:
+    def _compute_gradient_statistics(self) -> Dict[str, YvGradientStatistics]:
         """Compute gradient statistics from collected gradient buffer.
         
         Processes accumulated gradients to compute mean, standard deviation,
         L2 norm, and direction vectors for each parameter.
         
         Returns:
-            Dict[str, GradientStatistics]: Computed gradient statistics.
+            Dict[str, YvGradientStatistics]: Computed gradient statistics.
         """
         stats_dict = {}
         
@@ -370,7 +370,7 @@ class YvGradientClusterInitializer:
             
             param_shape = tuple(grad_list[0].shape)
             
-            stats_dict[name] = GradientStatistics(
+            stats_dict[name] = YvGradientStatistics(
                 mean=mean,
                 std=std,
                 norm=norm,
@@ -384,13 +384,13 @@ class YvGradientClusterInitializer:
     
     def discover_expert_specializations(
         self,
-        gradient_stats: Optional[Dict[str, GradientStatistics]] = None,
+        gradient_stats: Optional[Dict[str, YvGradientStatistics]] = None,
         auto_detect_k: bool = True,
         num_clusters: Optional[int] = None,
         max_iterations: int = 100,
         tolerance: float = 1e-4,
         seed: Optional[int] = None
-    ) -> List[ClusterInfo]:
+    ) -> List[YvClusterInfo]:
         """Discover expert specializations using K-means clustering.
         
         Applies K-means clustering to gradient statistics to discover natural
@@ -403,7 +403,7 @@ class YvGradientClusterInitializer:
             - K-means++ initialization for better convergence
         
         Args:
-            gradient_stats (Dict[str, GradientStatistics], optional): Pre-computed
+            gradient_stats (Dict[str, YvGradientStatistics], optional): Pre-computed
                 gradient statistics. If None, uses self.gradient_features.
                 Default: None.
             auto_detect_k (bool): Whether to automatically detect optimal number
@@ -415,7 +415,7 @@ class YvGradientClusterInitializer:
             seed (int, optional): Random seed for reproducibility. Default: None.
         
         Returns:
-            List[ClusterInfo]: List of discovered clusters with member information.
+            List[YvClusterInfo]: List of discovered clusters with member information.
         
         Raises:
             ValueError: If no gradient statistics available or invalid num_clusters.
@@ -482,7 +482,7 @@ class YvGradientClusterInitializer:
     
     def _extract_clustering_features(
         self,
-        gradient_stats: Dict[str, GradientStatistics]
+        gradient_stats: Dict[str, YvGradientStatistics]
     ) -> Tuple[torch.Tensor, List[str]]:
         """Extract clustering features from gradient statistics.
         
@@ -703,10 +703,10 @@ class YvGradientClusterInitializer:
         labels: torch.Tensor,
         param_names: List[str],
         features: torch.Tensor
-    ) -> List[ClusterInfo]:
+    ) -> List[YvClusterInfo]:
         """Build cluster information from clustering results.
         
-        Creates ClusterInfo objects containing centroid, member indices,
+        Creates YvClusterInfo objects containing centroid, member indices,
         and intra-cluster variance for each cluster.
         
         Args:
@@ -716,7 +716,7 @@ class YvGradientClusterInitializer:
             features: Feature matrix [num_samples, feature_dim].
         
         Returns:
-            List[ClusterInfo]: List of cluster information objects.
+            List[YvClusterInfo]: List of cluster information objects.
         """
         clusters = []
         num_clusters = centroids.shape[0]
@@ -733,7 +733,7 @@ class YvGradientClusterInitializer:
             else:
                 variance = 0.0
             
-            clusters.append(ClusterInfo(
+            clusters.append(YvClusterInfo(
                 cluster_id=k,
                 centroid=centroids[k],
                 member_indices=member_indices,
@@ -747,8 +747,8 @@ class YvGradientClusterInitializer:
     def initialize_experts_from_clusters(
         self,
         experts: nn.ModuleList,
-        clusters: Optional[List[ClusterInfo]] = None,
-        gradient_stats: Optional[Dict[str, GradientStatistics]] = None,
+        clusters: Optional[List[YvClusterInfo]] = None,
+        gradient_stats: Optional[Dict[str, YvGradientStatistics]] = None,
         init_scale: float = 0.02,
         preserve_structure: bool = True
     ) -> None:
@@ -766,9 +766,9 @@ class YvGradientClusterInitializer:
         
         Args:
             experts (nn.ModuleList): List of expert modules to initialize.
-            clusters (List[ClusterInfo], optional): Pre-computed clusters.
+            clusters (List[YvClusterInfo], optional): Pre-computed clusters.
                 If None, uses self.clusters. Default: None.
-            gradient_stats (Dict[str, GradientStatistics], optional): Gradient
+            gradient_stats (Dict[str, YvGradientStatistics], optional): Gradient
                 statistics. If None, uses self.gradient_features. Default: None.
             init_scale (float): Scale for random perturbation. Default: 0.02.
             preserve_structure (bool): Whether to preserve parameter structure.
@@ -824,7 +824,7 @@ class YvGradientClusterInitializer:
         self,
         num_experts: int,
         num_clusters: int,
-        clusters: List[ClusterInfo]
+        clusters: List[YvClusterInfo]
     ) -> List[int]:
         """Assign clusters to experts based on cluster sizes.
         
@@ -866,8 +866,8 @@ class YvGradientClusterInitializer:
     def _initialize_single_expert(
         self,
         expert: nn.Module,
-        cluster: ClusterInfo,
-        gradient_stats: Dict[str, GradientStatistics],
+        cluster: YvClusterInfo,
+        gradient_stats: Dict[str, YvGradientStatistics],
         init_scale: float,
         preserve_structure: bool
     ) -> None:

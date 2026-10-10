@@ -177,7 +177,7 @@ class POPSSTERAIOManager:
         }
     
     def plan_offload(self) -> Dict[int, List[str]]:
-        """Plan tensor offloading based on lifetime analysis.
+        """YvReActPlan tensor offloading based on lifetime analysis.
         
         Returns:
             Dictionary mapping steps to list of tensors to offload

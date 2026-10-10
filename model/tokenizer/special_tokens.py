@@ -63,12 +63,12 @@ Token Categories:
         - <answer/>, </answer>: Answer generation markers
         - <verify/>, </verify>: Verification blocks
         - <reasoning/>, </reasoning>: Reasoning sections
-        - <reflection/>, </reflection>: Reflection blocks
+        - <reflection/>, </reflection>: YvReActReflection blocks
     
     **Agent Tokens** (6 tokens):
         - <tool/>, </tool>: Tool invocation markers
-        - <action/>, </action>: Action execution markers
-        - <observation/>, </observation>: Observation markers
+        - <action/>, </action>: YvReActAction execution markers
+        - <observation/>, </observation>: YvReActObservation markers
 
 Example:
     >>> from model.tokenizer.special_tokens import YvSpecialTokens, YvSpecialTokenType
@@ -162,14 +162,14 @@ class YvSpecialTokens:
         verify_end_token (str): Verification block end marker. Default: "</verify>".
         tool_token (str): Tool invocation start marker. Default: "<tool>".
         tool_end_token (str): Tool invocation end marker. Default: "</tool>".
-        action_token (str): Action execution start marker. Default: "<action>".
-        action_end_token (str): Action execution end marker. Default: "</action>".
-        observation_token (str): Observation start marker. Default: "<observation>".
-        observation_end_token (str): Observation end marker. Default: "</observation>".
+        action_token (str): YvReActAction execution start marker. Default: "<action>".
+        action_end_token (str): YvReActAction execution end marker. Default: "</action>".
+        observation_token (str): YvReActObservation start marker. Default: "<observation>".
+        observation_end_token (str): YvReActObservation end marker. Default: "</observation>".
         reasoning_start (str): Reasoning section start marker. Default: "<reasoning>".
         reasoning_end (str): Reasoning section end marker. Default: "</reasoning>".
-        reflection_start (str): Reflection section start marker. Default: "<reflection>".
-        reflection_end (str): Reflection section end marker. Default: "</reflection>".
+        reflection_start (str): YvReActReflection section start marker. Default: "<reflection>".
+        reflection_end (str): YvReActReflection section end marker. Default: "</reflection>".
         additional_special_tokens (List[str]): Extra special tokens. Default: [].
     
     Example:

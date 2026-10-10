@@ -711,7 +711,7 @@ class POPSSQuantizationBenchmarkOperator(PiscesLxOperatorInterface):
             "quantization_method": {"type": "str", "required": False, "description": "Quantization method"},
             "bits": {"type": "int", "required": False, "description": "Quantization bits"},
             "config": {"type": "BenchmarkConfig", "required": False, "description": "Benchmark config"},
-            "action": {"type": "str", "required": False, "description": "Action: benchmark, compare, export"},
+            "action": {"type": "str", "required": False, "description": "YvReActAction: benchmark, compare, export"},
             "baseline_model": {"type": "Module", "required": False, "description": "Baseline model"},
         }
     

@@ -731,10 +731,10 @@ def get_tokenizer(
 
 
 @dataclass
-class POPSSExtendedTokenizerConfig:
+class YvExtendedTokenizerConfig:
     """Configuration for extended 160K vocabulary tokenizer.
 
-    Controls the behavior of PiscesLx160KTokenizer, including
+    Controls the behavior of YvTokenizer160K, including
     vocabulary expansion, special token preservation, and
     domain-specific token generation.
 
@@ -762,7 +762,7 @@ class POPSSExtendedTokenizerConfig:
     merge_frequency_threshold: int = 3
 
 
-class PiscesLx160KTokenizer(YvTokenizer):
+class YvTokenizer160K(YvTokenizer):
     """Extended 160K vocabulary tokenizer with domain-specific tokens.
 
     Extends YvTokenizer with vocabulary expansion to 160K tokens,
@@ -790,7 +790,7 @@ class PiscesLx160KTokenizer(YvTokenizer):
         _domain_token_ranges (Dict[str, range]): Token ID ranges per domain.
     """
 
-    _160k_instance: Optional["PiscesLx160KTokenizer"] = None
+    _160k_instance: Optional["YvTokenizer160K"] = None
     _160k_initialized: bool = False
 
     def __new__(cls, *args, **kwargs):
@@ -800,14 +800,14 @@ class PiscesLx160KTokenizer(YvTokenizer):
 
     def __init__(
         self,
-        config: Optional[POPSSExtendedTokenizerConfig] = None,
+        config: Optional[YvExtendedTokenizerConfig] = None,
         tokenizer_dir: Optional[Union[str, Path]] = None,
         **kwargs,
     ):
-        if PiscesLx160KTokenizer._160k_initialized:
+        if YvTokenizer160K._160k_initialized:
             return
 
-        self.config = config or POPSSExtendedTokenizerConfig()
+        self.config = config or YvExtendedTokenizerConfig()
         self._is_extended = False
         self._extended_vocab: Dict[str, int] = {}
         self._extended_id_to_token: Dict[int, str] = {}
@@ -821,9 +821,9 @@ class PiscesLx160KTokenizer(YvTokenizer):
         self._preserve_special_ids()
         self._extend_vocabulary()
 
-        PiscesLx160KTokenizer._160k_initialized = True
+        YvTokenizer160K._160k_initialized = True
         _LOG.info(
-            f"PiscesLx160KTokenizer initialized: "
+            f"YvTokenizer160K initialized: "
             f"base_vocab_size={self.base_vocab_size}, "
             f"extended_vocab_size={self.vocab_size}"
         )

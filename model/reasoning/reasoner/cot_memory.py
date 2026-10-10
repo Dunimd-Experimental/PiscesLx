@@ -43,7 +43,7 @@ Architecture:
     3. Auxiliary Heads:
        - thinking_head: Next token prediction logits
        - difficulty_head: Problem difficulty classification (5 levels)
-       - reflection_head: Reflection type prediction (4 types)
+       - reflection_head: YvReActReflection type prediction (4 types)
        - confidence_head: Confidence score estimation
        - error_analyzer: Error type, severity, and confidence
        - correction_head: Correction proposal generation
@@ -138,7 +138,7 @@ class YvCoTMemoryReasoner(nn.Module):
         depth_controller (nn.Sequential): Network for depth prediction.
         thinking_head (nn.Linear): Token prediction head.
         difficulty_head (nn.Linear): Difficulty classification head.
-        reflection_head (nn.Linear): Reflection type head.
+        reflection_head (nn.Linear): YvReActReflection type head.
         confidence_head (nn.Linear): Confidence estimation head.
         memory_key_proj (nn.Linear): Memory key projection.
         memory_value_proj (nn.Linear): Memory value projection.

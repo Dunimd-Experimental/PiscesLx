@@ -336,7 +336,7 @@ class YvUnifiedReasoner(nn.Module):
             Dict[str, Any]: Output dictionary containing:
                 - thinking_logits (torch.Tensor): Logits for next token prediction
                 - difficulty_logits (torch.Tensor): Difficulty classification logits
-                - reflection_logits (torch.Tensor): Reflection type logits
+                - reflection_logits (torch.Tensor): YvReActReflection type logits
                 - confidence_score (torch.Tensor): Confidence score [0, 1]
                 - reasoning_states (torch.Tensor): Final reasoning hidden states
                 - reasoning_steps (list): List of intermediate states
@@ -747,7 +747,7 @@ class YvUnifiedReasoner(nn.Module):
                 reasoning_state + reasoning_state * 0.1, p=2, dim=-1
             )
 
-            # Reflection-based correction
+            # YvReActReflection-based correction
             if reflection_logits is not None and enable_self_correction:
                 if reflection_logits.dim() == 3:
                     reflection_logits = reflection_logits[:, -1, :]
