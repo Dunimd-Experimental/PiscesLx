@@ -96,6 +96,7 @@ except ImportError:
 
 from utils.dc import PiscesLxLogger
 from utils.paths import PiscesLxPaths
+from .config import PiscesLxPublishConfig
 
 _LOG = PiscesLxLogger("PiscesLx.Publish.Exporter", file_path=PiscesLxPaths.get_log_file("PiscesLx.Publish.Exporter"), enable_file=True)
 
@@ -117,7 +118,7 @@ class PiscesLxPublishExporter:
         >>> results = exporter.export()
     """
 
-    def __init__(self, config: 'PiscesLxPublishConfig'):
+    def __init__(self, config: PiscesLxPublishConfig):
         """Initialize the exporter.
 
         Args:

@@ -135,7 +135,7 @@ class PiscesLxTimeoutOperator:
         self._timeout_occurred = False
         self._timer: Optional[threading.Timer] = None
     
-    def __enter__(self) -> 'TimeoutOperator':
+    def __enter__(self) -> 'PiscesLxTimeoutOperator':
         self._start = time.perf_counter()
         self._timeout_occurred = False
         

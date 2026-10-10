@@ -890,7 +890,7 @@ class YvLinearAttention(nn.Module):
         self.s4_A = nn.Parameter(torch.randn(n_head, feature_dim, device=device, dtype=dtype) * 0.1)
         self.s4_B = nn.Parameter(torch.randn(n_head, feature_dim, device=device, dtype=dtype) * 0.1)
         self.s4_C = nn.Parameter(torch.randn(n_head, feature_dim, device=device, dtype=dtype) * 0.1)
-        self.s4_D = nn.Parameter(torch.ones(n_head, head_dim, device=device, dtype=dtype))
+        self.s4_D = nn.Parameter(torch.ones(n_head, self.head_dim, device=device, dtype=dtype))
         
     def _kernel_feature(self, x: torch.Tensor) -> torch.Tensor:
         """Apply kernel feature map to input tensor.
@@ -1280,7 +1280,7 @@ class YvCirculantAttention(nn.Module):
         sdpa_mask = None
         if self.causal:
             kv_len = k.shape[-2]
-            sdpa_mask = _get_causal_sdpa_mask(seq_len, kv_len, q.device, q.dtype)
+            sdpa_mask = YvAttentionMaskFactory._get_causal_sdpa_mask(seq_len, kv_len, q.device, q.dtype)
         return F.scaled_dot_product_attention(
             q,
             k,
@@ -1304,7 +1304,7 @@ class YvCirculantAttention(nn.Module):
 ) -> torch.Tensor:
         """Compute causal attention using standard softmax (fallback from FFT)."""
         kv_len = k.shape[-2]
-        sdpa_mask = _get_causal_sdpa_mask(seq_len, kv_len, q.device, q.dtype)
+        sdpa_mask = YvAttentionMaskFactory._get_causal_sdpa_mask(seq_len, kv_len, q.device, q.dtype)
         return F.scaled_dot_product_attention(
             q,
             k,
@@ -2139,7 +2139,7 @@ class YvPagedAttention(nn.Module):
             k = k.repeat_interleave(repeat, dim=1)
             v = v.repeat_interleave(repeat, dim=1)
 
-        sdpa_mask = _get_causal_sdpa_mask(seq_len, kv_seq_len, hidden_states.device, q.dtype)
+        sdpa_mask = YvAttentionMaskFactory._get_causal_sdpa_mask(seq_len, kv_seq_len, hidden_states.device, q.dtype)
         if attention_mask is not None:
             sdpa_mask = sdpa_mask.unsqueeze(0).unsqueeze(0) + attention_mask.to(device=q.device, dtype=q.dtype)
 
@@ -2715,7 +2715,7 @@ class YvLocalGlobalAttention(nn.Module):
             Global attention output.
         """
         seq_len = q.shape[2]
-        sdpa_mask = _get_causal_sdpa_mask(seq_len, seq_len, q.device, q.dtype, diagonal=1)
+        sdpa_mask = YvAttentionMaskFactory._get_causal_sdpa_mask(seq_len, seq_len, q.device, q.dtype, diagonal=1)
         if attention_mask is not None:
             sdpa_mask = sdpa_mask.unsqueeze(0).unsqueeze(0) + attention_mask.to(device=q.device, dtype=q.dtype)
 
@@ -3290,7 +3290,7 @@ class YvMultiQueryAttention(nn.Module):
 
         sdpa_mask = attention_mask
         if past_key_value is not None or attention_mask is not None:
-            causal_bias = _get_causal_sdpa_mask(seq_len, kv_seq_len, q.device, q.dtype)
+            causal_bias = YvAttentionMaskFactory._get_causal_sdpa_mask(seq_len, kv_seq_len, q.device, q.dtype)
             if attention_mask is None:
                 sdpa_mask = causal_bias
             else:
@@ -4619,7 +4619,7 @@ class YvHISAAttention(nn.Module):
         local_k = key[:, :, :local_len]
         local_v = value[:, :, :local_len]
 
-        local_sdpa_mask = _get_causal_sdpa_mask(seq_len, local_len, query.device, query.dtype, diagonal=1)
+        local_sdpa_mask = YvAttentionMaskFactory._get_causal_sdpa_mask(seq_len, local_len, query.device, query.dtype, diagonal=1)
 
         if attention_mask is not None:
             local_sdpa_mask = local_sdpa_mask.unsqueeze(0).unsqueeze(0) + attention_mask[:, :, :seq_len, :local_len].to(device=query.device, dtype=query.dtype)
@@ -4880,7 +4880,7 @@ class YvMixtureBlockAttention(nn.Module):
         """Standard causal attention used for short sequences."""
         seq_len = q.shape[2]
         kv_len = k.shape[2]
-        sdpa_mask = _get_causal_sdpa_mask(seq_len, kv_len, q.device, q.dtype)
+        sdpa_mask = YvAttentionMaskFactory._get_causal_sdpa_mask(seq_len, kv_len, q.device, q.dtype)
         if attention_mask is not None:
             sdpa_mask = sdpa_mask.unsqueeze(0).unsqueeze(0) + attention_mask.to(device=q.device, dtype=q.dtype)
 
@@ -5370,7 +5370,7 @@ class YvAttention(nn.Module):
         self._sparsity_loss = torch.tensor(0.0, device=device, dtype=dtype)
 
         self.layer_idx = 0
-        self.apply(_arctic_init_weights)
+        self.apply(YvNorms._arctic_init_weights)
 
     def _apply_hydra_heads(
         self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,

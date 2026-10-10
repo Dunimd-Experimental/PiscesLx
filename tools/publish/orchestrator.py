@@ -353,7 +353,7 @@ class PiscesLxPublishOrchestrator:
         _LOG.info("Running docker build stage only")
 
         if "stages" not in self.results or "export" not in self.results.get("stages", {}):
-            _run_export_stage()
+            PiscesLxPublishOrchestrator._run_export_stage()
 
         try:
             self._run_build_stage()

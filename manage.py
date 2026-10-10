@@ -217,8 +217,6 @@ COMMANDS = [
 # =============================================================================
 # This block executes when the script is run directly (not imported)
 # It calls the PiscesLxManageCli.main() function to start the CLI
-if __name__ == "__main__":
-    PiscesLxManageCli.main()
 
 class PiscesLxManageCli:
     """Module-level operations of manage, exposed through a class (§6.2)."""
@@ -1768,3 +1766,7 @@ class PiscesLxManageCli:
 
             # Exit with error code
             sys.exit(1)
+
+
+if __name__ == "__main__":
+    PiscesLxManageCli.main()

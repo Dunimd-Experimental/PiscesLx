@@ -71,7 +71,7 @@ class PiscesLxMediaCleaner:
                 img = img.convert("RGB")
                 if img.size[0] < min_size[0] or img.size[1] < min_size[1]:
                     return None
-                score = _MediaCleaner._calculate_image_quality(img)
+                score = PiscesLxMediaCleaner._calculate_image_quality(img)
                 if score < min_quality_score:
                     return None
             return image_path
@@ -158,7 +158,7 @@ class PiscesLxMediaCleaner:
             dur = len(y) / float(sr)
             if dur < min_duration or dur > max_duration:
                 return None
-            score = _MediaCleaner._calculate_audio_quality(y, sr)
+            score = PiscesLxMediaCleaner._calculate_audio_quality(y, sr)
             if score < min_quality_score:
                 return None
             return audio_path
@@ -252,7 +252,7 @@ class PiscesLxMediaCleaner:
             if (frames / fps if fps and fps > 0 else 0) < min_duration or frames < min_frames:
                 cap.release()
                 return None
-            score = _MediaCleaner._calculate_video_quality(cap, frames)
+            score = PiscesLxMediaCleaner._calculate_video_quality(cap, frames)
             cap.release()
             if score < min_quality_score:
                 return None
@@ -286,7 +286,7 @@ class PiscesLxMediaCleaner:
                     continue
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 pil_img = Image.fromarray(frame_rgb)
-                scores.append(_MediaCleaner._calculate_image_quality(pil_img))
+                scores.append(PiscesLxMediaCleaner._calculate_image_quality(pil_img))
             if not scores:
                 return 0.0
             import numpy as _np
@@ -339,7 +339,7 @@ class PiscesLxMediaCleaner:
             if len(doc) > max_pages:
                 doc.close()
                 return None
-            score = _MediaCleaner._calculate_document_quality(doc)
+            score = PiscesLxMediaCleaner._calculate_document_quality(doc)
             doc.close()
             if score < min_quality_score:
                 return None

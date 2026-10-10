@@ -61,7 +61,7 @@ class PiscesLxQuartetLinear(nn.Linear):
         with torch.no_grad():
             self.scale = self.weight.abs().max().item() / 6.0 + 1e-8
             scaled_weight = self.weight / self.scale
-            self.weight_fp4 = fp4_quantize(scaled_weight)
+            self.weight_fp4 = PiscesLxQuartetLinear.fp4_quantize(scaled_weight)
 
     def _dequantize_weights(self) -> torch.Tensor:
         """Dequantize FP4 weights to compute precision."""

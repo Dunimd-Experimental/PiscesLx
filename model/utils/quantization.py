@@ -90,6 +90,7 @@ Dependencies:
 """
 
 import torch
+import torch.nn.functional as F
 import torch.nn as nn
 from dataclasses import dataclass
 from typing import Optional, Dict, Any, List, Union, Tuple

@@ -162,7 +162,7 @@ class YvRMSNorm(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Apply RMS normalization via unified core."""
-        return _norm_forward(x, self.weight, self.bias, self.eps, mode='rms')
+        return YvNorms._norm_forward(x, self.weight, self.bias, self.eps, mode='rms')
 
 
 class YvLayerNorm(nn.Module):
@@ -191,7 +191,7 @@ class YvLayerNorm(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         mode = 'rms' if self.use_rms else 'layer'
-        return _norm_forward(x, self.weight, self.bias, self.eps, mode=mode)
+        return YvNorms._norm_forward(x, self.weight, self.bias, self.eps, mode=mode)
 
 
 # Paper: Perez et al., "FiLM: Visual Reasoning with a General Conditioning Layer", NeurIPS 2017, arXiv:1709.07871; DiT: Peebles & Xie, arXiv:2212.09748
@@ -223,7 +223,7 @@ class YvAdaptiveLayerNorm(nn.Module):
         self.shift_proj.reset_parameters()
 
     def forward(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
-        return _norm_forward(
+        return YvNorms._norm_forward(
             x, self.weight, self.bias, self.eps, mode='adaptive',
             cond=cond, scale_proj=self.scale_proj, shift_proj=self.shift_proj,
         )
@@ -267,7 +267,7 @@ class YvGroupNorm(nn.Module):
             x = x.view(x.shape[0], self.num_channels, -1)
             return self.weight[:, None] * x + self.bias[:, None]
         else:
-            return _norm_forward(x, self.weight, self.bias, self.eps, mode='group', num_groups=self.num_groups)
+            return YvNorms._norm_forward(x, self.weight, self.bias, self.eps, mode='group', num_groups=self.num_groups)
 
 
 # Paper: Su et al., "RoFormer: Enhanced Transformer with Rotary Position Embedding", arXiv:2104.09864, 2021

@@ -1514,7 +1514,7 @@ class YvMoELayer(nn.Module):
         ])
         # Initialize weights for expert modules
         for expert in self.experts:
-            expert.apply(moe_init_weights)
+            expert.apply(YvGateInitializer.moe_init_weights)
         
         # Print layer information for the first layer
         if YvMoELayer._layer_count == 1:
@@ -2157,7 +2157,7 @@ class YvGateInitializer:
 
         Example:
             >>> expert = nn.Linear(4096, 11008)
-            >>> expert.apply(moe_init_weights)
+            >>> expert.apply(YvGateInitializer.moe_init_weights)
 
         Note:
             Should be applied to expert modules after construction.

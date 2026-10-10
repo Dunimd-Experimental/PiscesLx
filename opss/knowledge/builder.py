@@ -56,6 +56,7 @@ import time
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
 from pathlib import Path

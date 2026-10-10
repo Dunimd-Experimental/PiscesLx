@@ -1991,6 +1991,7 @@ class YvTransformerBlock(nn.Module):
         use_cache=False,
         subconscious_kv=None,
         film_params=None,
+        modal_id=None,
     ):
         """Apply the transformer block with optional gradient checkpointing.
 
@@ -2017,6 +2018,7 @@ class YvTransformerBlock(nn.Module):
             use_cache_arg=False,
             subconscious_kv_arg=None,
             film_params_arg=None,
+            modal_id_arg=None,
         ):
             """Inner function for gradient checkpointing.
 
@@ -2044,6 +2046,7 @@ class YvTransformerBlock(nn.Module):
                     use_cache_arg,
                     subconscious_kv=subconscious_kv_arg,
                     film_params=film_params_arg,
+                    modal_id=modal_id_arg,
                 )
             finally:
                 self.use_attn_res = saved_use_attn_res
@@ -2056,6 +2059,7 @@ class YvTransformerBlock(nn.Module):
                     _inner, x, mask, attn_past_key_values, use_cache,
                     subconscious_kv_arg=subconscious_kv,
                     film_params_arg=film_params,
+                    modal_id_arg=modal_id,
                     use_reentrant=False,
                     preserve_rng_state=True,
                     determinism_check="default"
@@ -2070,6 +2074,7 @@ class YvTransformerBlock(nn.Module):
                 use_cache,
                 subconscious_kv_arg=subconscious_kv,
                 film_params_arg=film_params,
+                modal_id_arg=modal_id,
             )
 
         return out
@@ -2173,6 +2178,7 @@ class YvTransformerBlock(nn.Module):
                 use_cache,
                 subconscious_kv=subconscious_kv,
                 film_params=film_params,
+                modal_id=modal_id,
             )
 
     def _forward_core(
@@ -2183,6 +2189,7 @@ class YvTransformerBlock(nn.Module):
         use_cache=False,
         subconscious_kv=None,
         film_params=None,
+        modal_id=None,
     ):
         """Core forward computation without checkpointing wrapper.
 

@@ -233,7 +233,7 @@ class PiscesLxToolsDataLargeScaleStreamingDataset(IterableDataset):
         Returns:
             Dict: A dictionary containing processed multimodal data.
         """
-        out = {"pixel_values": None, "audio_input": None, "doc_input": None, "video_frames": None}
+        out = {"pixel_values": None, "audio_input": None, "video_frames": None}
         try:
             # Optimized: Check if data exists BEFORE accessing encoder (lazy init)
             # Uses custom keys from config

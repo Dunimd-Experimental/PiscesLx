@@ -37,62 +37,6 @@ class PiscesLxMuonParameterError(ValueError):
     standard Python exceptions.
     """
     pass
-
-    @staticmethod
-    def _hybrid_newton_schulz(G: torch.Tensor, steps: int = 10) -> torch.Tensor:
-        """Hybrid Newton-Schulz matrix orthogonalization.
-
-        Args:
-            G: Input matrix of shape (n, m)
-            steps: Total iterations (default: 10, first 8 aggressive, last 2 conservative)
-
-        Returns:
-            Orthogonalized matrix O ~= (G G^T)^{-1/2} G
-
-        Raises:
-            PiscesLxMuonParameterError: If input tensor does not have exactly 2 dimensions.
-        """
-        # Structured parameter validation
-        if G.ndim != 2:
-            raise PiscesLxMuonParameterError(
-                f"Muon requires 2D parameter tensor, but got {G.ndim}D tensor with shape {G.shape}. "
-                f"Expected shape: (n, m) where n and m are positive integers. "
-                f"This error typically occurs when the optimizer is applied to incompatible "
-                f"parameter types (e.g., 1D biases, 3D convolution weights). "
-                f"Please check your parameter filtering logic in PiscesLxMuon.create_muon_optimizer()."
-            )
-        n, m = G.shape
-
-        if min(n, m) <= 1:
-            return G.sign() * math.sqrt(max(n, m))
-
-        # Normalize for numerical stability
-        scale = G.norm().item()
-        G = G / (scale + 1e-20)
-
-        # Hybrid coefficients
-        agg_coeffs = (3.4445, -4.7750, 2.0315)
-        cons_coeffs = (2.0, -1.5, 0.5)
-
-        if n >= m:
-            X = G.T @ G
-            is_transposed = False
-        else:
-            X = G @ G.T
-            is_transposed = True
-
-        # Newton-Schulz iterations
-        for i in range(steps):
-            a, b, c = agg_coeffs if i < 8 else cons_coeffs
-            X = a * X + b * (X @ X) + c * (X @ (X @ X))
-
-        if is_transposed:
-            O = (X @ G.T).T
-        else:
-            O = G @ X
-
-        return O * scale
-
     @staticmethod
     def create_muon_optimizer(
         model,
@@ -236,7 +180,7 @@ class PiscesLxMuon(torch.optim.Optimizer):
                         update = buf.clone()
 
                     # Orthogonalize via hybrid Newton-Schulz
-                    O = _hybrid_newton_schulz(update, steps=ns_steps)
+                    O = PiscesLxMuon._hybrid_newton_schulz(update, steps=ns_steps)
 
                     # RMS rescale
                     target_norm = math.sqrt(max(p.shape[0], p.shape[1])) * gamma
@@ -276,3 +220,59 @@ class PiscesLxMuon(torch.optim.Optimizer):
                     p.data.addcdiv_(exp_avg / bias_corr1, denom, value=-lr)
 
         return loss
+
+
+    @staticmethod
+    def _hybrid_newton_schulz(G: torch.Tensor, steps: int = 10) -> torch.Tensor:
+        """Hybrid Newton-Schulz matrix orthogonalization.
+
+        Args:
+            G: Input matrix of shape (n, m)
+            steps: Total iterations (default: 10, first 8 aggressive, last 2 conservative)
+
+        Returns:
+            Orthogonalized matrix O ~= (G G^T)^{-1/2} G
+
+        Raises:
+            PiscesLxMuonParameterError: If input tensor does not have exactly 2 dimensions.
+        """
+        # Structured parameter validation
+        if G.ndim != 2:
+            raise PiscesLxMuonParameterError(
+                f"Muon requires 2D parameter tensor, but got {G.ndim}D tensor with shape {G.shape}. "
+                f"Expected shape: (n, m) where n and m are positive integers. "
+                f"This error typically occurs when the optimizer is applied to incompatible "
+                f"parameter types (e.g., 1D biases, 3D convolution weights). "
+                f"Please check your parameter filtering logic in PiscesLxMuon.create_muon_optimizer()."
+            )
+        n, m = G.shape
+
+        if min(n, m) <= 1:
+            return G.sign() * math.sqrt(max(n, m))
+
+        # Normalize for numerical stability
+        scale = G.norm().item()
+        G = G / (scale + 1e-20)
+
+        # Hybrid coefficients
+        agg_coeffs = (3.4445, -4.7750, 2.0315)
+        cons_coeffs = (2.0, -1.5, 0.5)
+
+        if n >= m:
+            X = G.T @ G
+            is_transposed = False
+        else:
+            X = G @ G.T
+            is_transposed = True
+
+        # Newton-Schulz iterations
+        for i in range(steps):
+            a, b, c = agg_coeffs if i < 8 else cons_coeffs
+            X = a * X + b * (X @ X) + c * (X @ (X @ X))
+
+        if is_transposed:
+            O = (X @ G.T).T
+        else:
+            O = G @ X
+
+        return O * scale

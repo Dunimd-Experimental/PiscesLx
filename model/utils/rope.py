@@ -263,8 +263,6 @@ __all__ = [
     "YvYaRNRotaryEmbedding",
     "YvDynamicYaRNRotaryEmbedding",
     "YvLinearScalingRoPE",
-    "precompute_freqs_cis",
-    "apply_rotary_emb",
 ]
 
 class YvRope:

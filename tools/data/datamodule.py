@@ -670,7 +670,7 @@ class PiscesLxDataModule:
         self._val_dataset = None
         self._test_dataset = None
         
-        logger.info("PiscesLxDataModule initialized")
+        _LOG.info("PiscesLxDataModule initialized")
     
     def setup(self, stage: str = "fit") -> None:
         """Setup datasets for different stages."""
@@ -750,7 +750,7 @@ class PiscesLxDataModule:
         self._val_dataset = None
         self._test_dataset = None
         
-        logger.info("PiscesLxDataModule teardown complete")
+        _LOG.info("PiscesLxDataModule teardown complete")
 
     @staticmethod
     def create_datamodule(
@@ -801,7 +801,7 @@ class PiscesLxDataModule:
         _LOG.info(f"Training batches: {len(train_loader)}")
 
         for batch in train_loader:
-            logger.info(f"Batch keys: {batch.keys()}")
+            _LOG.info(f"Batch keys: {batch.keys()}")
             break
 
         datamodule.teardown()

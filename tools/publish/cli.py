@@ -74,8 +74,6 @@ from utils.dc import PiscesLxLogger
 from utils.paths import PiscesLxPaths
 
 _LOG = PiscesLxLogger("PiscesLx.Publish.CLI", file_path=PiscesLxPaths.get_log_file("PiscesLx.Publish.CLI"), enable_file=True)
-if __name__ == "__main__":
-    sys.exit(PiscesLxPublishCli.main())
 
 class PiscesLxPublishCli:
     """Module-level operations of cli, exposed through a class (§6.2)."""
@@ -640,13 +638,13 @@ class PiscesLxPublishCli:
             return 0
 
         commands = {
-            "publish": cmd_publish,
-            "export": cmd_export,
-            "build": cmd_build,
-            "push": cmd_push,
-            "validate": cmd_validate,
-            "info": cmd_info,
-            "list": cmd_list,
+            "publish": PiscesLxPublishCli.cmd_publish,
+            "export": PiscesLxPublishCli.cmd_export,
+            "build": PiscesLxPublishCli.cmd_build,
+            "push": PiscesLxPublishCli.cmd_push,
+            "validate": PiscesLxPublishCli.cmd_validate,
+            "info": PiscesLxPublishCli.cmd_info,
+            "list": PiscesLxPublishCli.cmd_list,
         }
 
         command_func = commands.get(args.command)
@@ -655,3 +653,7 @@ class PiscesLxPublishCli:
         else:
             print(f"Unknown command: {args.command}")
             return 1
+
+
+if __name__ == "__main__":
+    sys.exit(PiscesLxPublishCli.main())

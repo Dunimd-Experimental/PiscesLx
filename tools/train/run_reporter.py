@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from utils.dc import PiscesLxLogger
+from utils.paths import PiscesLxPaths
 
 from opss.run import (
     PiscesLxRunController,

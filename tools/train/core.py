@@ -296,6 +296,7 @@ class PiscesLxTrainingOperator(object):
         self._kfac_operator = None
         self._multitask_operator = None
         self._parallel_3d_operator = None
+        self._fsdp_applied = False
         
         self._compliance_operator = None
         self._audit_operator = None
@@ -865,6 +866,7 @@ class PiscesLxTrainingOperator(object):
                     device_id=local_rank,
                     param_init_fn=_safe_param_init_fn,
                 )
+                self._fsdp_applied = True
                 _LOG.info(
                     f"FSDP wrapping applied: shard=FULL_SHARD, cpu_offload={_cpu_offload}, "
                     f"precision={mp_dtype}, world_size={_world_size}"
@@ -882,7 +884,7 @@ class PiscesLxTrainingOperator(object):
                     if self.device.type == 'cuda':
                         torch.cuda.empty_cache()
                 _should_ddp = True
-                _should_fsdp = False
+                self._fsdp_applied = False
 
         # Apply FP8 training if configured
         fp8_enabled = getattr(self.config, 'fp8', {}).get('enabled', False) if hasattr(self.config, 'fp8') else False
@@ -997,7 +999,7 @@ class PiscesLxTrainingOperator(object):
             )
         )
         if self.config.distributed and not parallel_active:
-            if _should_fsdp:
+            if self._fsdp_applied:
                 _LOG.info("FSDP already applied, skipping DDP wrapping")
             else:
                 self._setup_distributed_training()
@@ -1167,8 +1169,6 @@ class PiscesLxTrainingOperator(object):
 
                 quant_type = "nf4" if method == "nf4" else "fp4"
                 compute_dtype = torch.bfloat16 if str(getattr(self.config, "mixed_precision", "bf16")).lower() == "bf16" else torch.float16
-
-                _LOG.info(f"Quantizing {total_linear} linear layers with {quant_type} (sequential low-memory mode)...")
 
                 skip_modules = set()
                 linear_modules = []

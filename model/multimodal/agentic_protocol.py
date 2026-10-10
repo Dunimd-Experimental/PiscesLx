@@ -177,7 +177,7 @@ class YvAgenticProtocol:
         if result.metadata:
             metadata_json = json.dumps(result.metadata)
             escaped_metadata = self.parser.escape_xml(metadata_json)
-            return f'<agent_result execution_id="{context.execution_id if hasattr(result, "metadata") else ""}" mode="{result.execution_mode}">{result_xml}<metadata>{escaped_metadata}</metadata></agent_result>'
+            return f'<agent_result execution_id="{getattr(result, 'execution_id', '')}" mode="{result.execution_mode}">{result_xml}<metadata>{escaped_metadata}</metadata></agent_result>'
         
         return result_xml
     

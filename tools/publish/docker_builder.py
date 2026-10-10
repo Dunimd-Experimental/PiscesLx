@@ -87,6 +87,7 @@ from datetime import datetime
 
 from utils.dc import PiscesLxLogger
 from utils.paths import PiscesLxPaths
+from .config import PiscesLxPublishConfig
 
 _LOG = PiscesLxLogger("PiscesLx.Publish.Docker", file_path=PiscesLxPaths.get_log_file("PiscesLx.Publish.Docker"), enable_file=True)
 
@@ -232,7 +233,7 @@ CMD ["python3", "/app/tools/infer/server.py", "--model_path", "/app/model_weight
 '''
     }
 
-    def __init__(self, config: 'PiscesLxPublishConfig'):
+    def __init__(self, config: PiscesLxPublishConfig):
         """Initialize the Docker builder.
 
         Args:

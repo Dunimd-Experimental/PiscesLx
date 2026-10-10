@@ -74,6 +74,11 @@ Note:
 
 from typing import Dict
 
+from utils.dc import PiscesLxLogger
+from utils.paths import PiscesLxPaths
+
+_LOG = PiscesLxLogger("Yv.Multimodal", file_path=PiscesLxPaths.get_log_file("Yv.Multimodal"), enable_file=True)
+
 class YvHardwareAdaptiveConfig:
     """Hardware adapter that derives configuration tiers from detected devices.
     

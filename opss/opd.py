@@ -129,7 +129,7 @@ class PiscesLxOPDTrainer:
             else:
                 teacher_logits_list.append(None)
 
-        loss_dict = compute_opd_loss(
+        loss_dict = PiscesLxOpd.compute_opd_loss(
             student_logits=student_logits,
             teacher_logits_list=teacher_logits_list,
             labels=labels,

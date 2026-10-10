@@ -173,8 +173,15 @@ class PiscesLxClassExposureTool:
                 f"\n"
             )
             tail = (doc + methods).split("\n")
-            body = "\n".join(head).rstrip("\n")
-            return body + "\n\n" + "\n".join(tail)
+            # The script guard runs the moment the file is executed as a program, so the
+            # class it calls must already be defined: append before the guard, not after.
+            guard = next((i for i, l in enumerate(head) if l.startswith("if __name__")), None)
+            if guard is None:
+                body = "\n".join(head).rstrip("\n")
+                return body + "\n\n" + "\n".join(tail)
+            before = "\n".join(head[:guard]).rstrip("\n")
+            after = "\n".join(head[guard:]).rstrip("\n")
+            return before + "\n\n" + "\n".join(tail).rstrip("\n") + "\n\n\n" + after + "\n"
         end = len(head)
         for j in range(existing + 1, len(head)):
             line = head[j]

@@ -139,7 +139,7 @@ class PiscesLxVRAMMonitor:
         self.low_pressure_count = 0
         self.current_tier = 0
 
-        self._profile = profile_gpu()
+        self._profile = PiscesLxVramController.profile_gpu()
 
     def check_and_adjust(self) -> bool:
         """Check VRAM and adjust settings if needed.

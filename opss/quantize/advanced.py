@@ -101,7 +101,7 @@ class PiscesLxAdvancedQuantizationConfig(PiscesLxOperatorConfig):
         """
 
         # Execute sensitivity analysis
-        sensitivity_op = SensitivityAnalysisOperator()
+        sensitivity_op = PiscesLxSensitivityAnalysisOperator()
         sensitivity_inputs = {
             "model": model,
             "test_data": test_data or [],
@@ -118,7 +118,7 @@ class PiscesLxAdvancedQuantizationConfig(PiscesLxOperatorConfig):
             raise RuntimeError(f"Sensitivity analysis failed: {sensitivity_result.error}")
 
         # Execute adaptive bit allocation
-        allocation_op = AdaptiveBitAllocationOperator()
+        allocation_op = PiscesLxAdaptiveBitAllocationOperator()
         allocation_inputs = {
             "model": model,
             "sensitivity_analysis": sensitivity_result.output or {},
@@ -172,7 +172,7 @@ class PiscesLxSensitivityAnalysisOperator(PiscesLxOperatorInterface):
         5. Rank layers by sensitivity
     
     Example:
-        >>> operator = SensitivityAnalysisOperator()
+        >>> operator = PiscesLxSensitivityAnalysisOperator()
         >>> result = operator.execute({
         ...     "model": model,
         ...     "test_data": calibration_data,
@@ -432,7 +432,7 @@ class PiscesLxAdaptiveBitAllocationOperator(PiscesLxOperatorInterface):
         3. Stop when target compression is achieved
     
     Example:
-        >>> operator = PiscesLxAdaptiveBitAllocationOperator()
+        >>> operator = PiscesLxPiscesLxAdaptiveBitAllocationOperator()
         >>> result = operator.execute({
         ...     "model": model,
         ...     "sensitivity_analysis": sensitivity_results,

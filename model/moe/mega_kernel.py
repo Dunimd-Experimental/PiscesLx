@@ -98,7 +98,7 @@ class YvMegaMoE(nn.Module):
             )
 
         max_wave_size = max(256, num_tokens // max(1, self.num_experts))
-        waves = _wave_schedule(expert_counts, max_wave_size)
+        waves = YvMegaKernel._wave_schedule(expert_counts, max_wave_size)
 
         for wave in waves:
             if not wave:

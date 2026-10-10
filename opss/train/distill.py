@@ -98,6 +98,8 @@ from utils.paths import PiscesLxPaths
 from configs.version import VERSION
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
 
+_LOG = PiscesLxLogger("PiscesLx.Opss.Train", file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Train"), enable_file=True)
+
 from tools.data.distill.offline_teacher_provider import PiscesLxTeacherProvider
 from .distill_loss import (
     PiscesLxDistillationLossConfig,

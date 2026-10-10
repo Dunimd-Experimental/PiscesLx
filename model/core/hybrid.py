@@ -179,7 +179,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional, Dict, Any, Tuple, List
+from typing import Optional, Dict, Any, Tuple, List, Union, Callable
 from dataclasses import dataclass
 from enum import Enum
 

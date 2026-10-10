@@ -1399,7 +1399,6 @@ __all__ = [
     "PiscesLxOPDTrainer",
     "PiscesLxGRMConfig",
     "PiscesLxGenerativeRewardModel",
-    "opd_loss",
 ]
 
 class PiscesLxDPOOperators:

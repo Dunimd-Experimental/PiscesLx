@@ -425,7 +425,7 @@ class PiscesLxTrainingPipelineOperator(PiscesLxTransformOperator):
             'double_press_window': 1.0,
         }
         
-        original_handler = signal.signal(signal.SIGINT, _signal_handler)
+        original_handler = signal.signal(signal.SIGINT, PiscesLxTrainingPipelineOperator._signal_handler)
         
         if resume_from:
             self.trainer.load_checkpoint(resume_from)

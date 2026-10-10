@@ -380,13 +380,14 @@ class PiscesLxToolsFlagshipComparator:
             
             comparison["comparisons"][flagship_model] = model_comparison
         
-        comparison["rankings"] = self._compute_rankings(piscesl1_results)
+        comparison["rankings"] = self._compute_rankings(piscesl1_results, model_name)
         comparison["gaps"] = self._identify_gaps(piscesl1_results)
         
         self.results = comparison
         return comparison
     
-    def _compute_rankings(self, piscesl1_results: Dict[str, float]) -> Dict[str, int]:
+    def _compute_rankings(self, piscesl1_results: Dict[str, float],
+                       model_name: str = "PiscesLx") -> Dict[str, int]:
         """Compute rankings for each benchmark."""
         rankings = {}
         

@@ -47,6 +47,9 @@ from utils.dc import PiscesLxLogger
 from .config import PiscesLxInferenceConfig
 from .core import PiscesLxInferenceEngine
 from .pipeline import PiscesLxInferencePipelineOperator, PiscesLxPromptEngineeringOperator
+from opss.infer.speculative import PiscesLxSpeculativeDecodingOperator
+from opss.infer.flash_attention import PiscesLxFlashAttention3Operator
+from opss.quantize.engine import PiscesLxQuantizationEngineOperator
 
 
 from utils.paths import PiscesLxPaths
@@ -313,44 +316,27 @@ class PiscesLxInferOrchestrator(PiscesLxBaseOperator):
         return self
     
     def _setup_acceleration(self):
-        """Setup acceleration components."""
-        # VLLM acceleration
+        """Wire the acceleration operators this build actually ships."""
         if self.infer_config.acceleration.use_vllm:
-            self.accelerators['vllm'] = VLLMAccelerationOperator(
-                tensor_parallel_size=self.infer_config.acceleration.tensor_parallel_size,
-                pipeline_parallel_size=self.infer_config.acceleration.pipeline_parallel_size,
-                gpu_memory_utilization=self.infer_config.acceleration.gpu_memory_utilization,
-                enforce_eager=self.infer_config.acceleration.enforce_eager
+            _LOG.warning(
+                "vLLM acceleration requested but PiscesL1 has no vLLM adapter: the "
+                "custom MoE/block-field graph is only executable by "
+                "PiscesLxInferenceEngine, so the flag is ignored"
             )
-        
-        # Speculative decoding
+
         if self.infer_config.acceleration.use_speculative_decoding:
-            self.accelerators['speculative'] = SpeculativeDecodingOperator()
-        
-        # Attention optimization
-        self.accelerators['attention'] = AttentionOptimizationOperator()
-        
-        # KV cache
-        self.accelerators['kv_cache'] = KVCacheOperator()
-        
+            self.accelerators['speculative'] = PiscesLxSpeculativeDecodingOperator()
+
+        self.accelerators['attention'] = PiscesLxFlashAttention3Operator()
+
         _LOG.info(f"Acceleration components setup: {list(self.accelerators.keys())}")
-    
+
     def _setup_quantization(self):
-        """Setup quantization components."""
-        # Quantized inference
-        self.quantizers['main'] = QuantizationInferenceOperator(
-            quant_method=self.infer_config.quantization.quant_method,
-            bits=self.infer_config.quantization.bits,
-            group_size=self.infer_config.quantization.group_size,
-            symmetric=self.infer_config.quantization.symmetric
-        )
-        
-        # Mixed precision
-        self.quantizers['mixed_precision'] = MixedPrecisionInferenceOperator(
-            precision=self.infer_config.dtype
-        )
-        
+        """Wire the quantization operators this build actually ships."""
+        self.quantizers['main'] = PiscesLxQuantizationEngineOperator()
+
         _LOG.info(f"Quantization components setup: {list(self.quantizers.keys())}")
+
     def add_inference_callback(self, callback: Callable[[str, Dict[str, Any]], None]):
         """
         Add inference callback function.

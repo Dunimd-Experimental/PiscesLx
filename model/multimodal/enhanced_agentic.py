@@ -40,6 +40,11 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass, field
 from enum import Enum
 import json
+
+from utils.dc import PiscesLxLogger
+from utils.paths import PiscesLxPaths
+
+_LOG = PiscesLxLogger("Yv.Multimodal", file_path=PiscesLxPaths.get_log_file("Yv.Multimodal"), enable_file=True)
 import time
 
 

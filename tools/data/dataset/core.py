@@ -345,7 +345,6 @@ class PiscesLxDataset(TorchDataset):
             "labels": ids.clone(),
             "pixel_values": pixel_values,
             "audio_input": audio_input if audio_input is not None else {"input_values": None},
-            "doc_input": doc_input,
             "video_frames": video_frames,
         }
 

@@ -74,6 +74,7 @@ Note:
 """
 
 import torch
+import numpy as np
 from ..utils.device import YvDeviceResolver
 import torch.nn as nn
 import torch.nn.functional as F

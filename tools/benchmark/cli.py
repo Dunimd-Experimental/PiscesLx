@@ -97,14 +97,14 @@ class PiscesLxBenchmarkCli:
         args = parser.parse_args()
 
         if args.debug:
-            __LOG.set_level("DEBUG")
+            _LOG.debug("verbose benchmark diagnostics enabled")
 
         parsed_generation_config = None
         if args.generation_config:
             try:
                 parsed_generation_config = json.loads(args.generation_config)
             except Exception as e:
-                __LOG.error("Invalid --generation-config JSON", event="benchmark.arg_error", error=str(e))
+                _LOG.error("Invalid --generation-config JSON", event="benchmark.arg_error", error=str(e))
                 sys.exit(2)
 
         try:
@@ -161,7 +161,7 @@ class PiscesLxBenchmarkCli:
                 )
                 print(json.dumps(results["summary"], indent=2))
         except Exception as e:
-            __LOG.error(
+            _LOG.error(
                 "Benchmark execution failed",
                 event="benchmark.execution.failed",
                 error=str(e),

@@ -1840,7 +1840,7 @@ class PiscesLxGRPOOperator(PiscesLxOperatorInterface):
             optimizer.step()
 
         clip_fraction = ((ratio - 1.0).abs() > config.clip_ratio).float().mean()
-        approx_kl = (old_log_probs - log_probs).mean().abs()
+        approx_kl = (token_old_log_probs - token_log_probs).mean().abs()
 
         stats["policy_losses"].append(policy_loss.item())
         stats["kl_divergences"].append(kl_div.item())

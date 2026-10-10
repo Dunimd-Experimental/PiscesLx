@@ -1132,14 +1132,14 @@ class YvDeepSeekMoELayer(YvDynamicMoELayer):
                                 param.size(1), param.size(1),
                                 device=param.device, dtype=param.dtype
                             )
-                            q = _qr_safe(q)
+                            q = PiscesLxDtypeSafe.qr_safe(q)
                             param.copy_(q[:param.size(0), :])
                         else:
                             q = torch.randn(
                                 param.size(0), param.size(0),
                                 device=param.device, dtype=param.dtype
                             )
-                            q = _qr_safe(q)
+                            q = PiscesLxDtypeSafe.qr_safe(q)
                             param.copy_(q[:, :param.size(1)])
     
     def _apply_spectral_initialization(self) -> None:
@@ -1162,8 +1162,8 @@ class YvDeepSeekMoELayer(YvDynamicMoELayer):
                             device=param.device, dtype=param.dtype
                         )
                         
-                        u = _qr_safe(u)
-                        v = _qr_safe(v.T)
+                        u = PiscesLxDtypeSafe.qr_safe(u)
+                        v = PiscesLxDtypeSafe.qr_safe(v.T)
                         v = v.T
                         
                         spectral_shift = 0.02 * (expert_idx / max(1, self.num_experts - 1))
@@ -1205,14 +1205,14 @@ class YvDeepSeekMoELayer(YvDynamicMoELayer):
                                     param.size(1), param.size(1),
                                     device=param.device, dtype=param.dtype
                                 )
-                                q = _qr_safe(q)
+                                q = PiscesLxDtypeSafe.qr_safe(q)
                                 param.copy_(q[:param.size(0), :])
                             else:
                                 q = torch.randn(
                                     param.size(0), param.size(0),
                                     device=param.device, dtype=param.dtype
                                 )
-                                q = _qr_safe(q)
+                                q = PiscesLxDtypeSafe.qr_safe(q)
                                 param.copy_(q[:, :param.size(1)])
 
                         elif group_idx == 1:
@@ -1220,7 +1220,7 @@ class YvDeepSeekMoELayer(YvDynamicMoELayer):
                             param.copy_(torch.randn_like(param) * scale)
 
                             spectral_shift = 0.01 * (i / max(1, num_experts - 1))
-                            u, s, v = _svd_safe(param, full_matrices=False)
+                            u, s, v = PiscesLxDtypeSafe.svd_safe(param, full_matrices=False)
                             s = s * (1.0 + spectral_shift)
                             param.copy_(torch.mm(u * s.unsqueeze(0), v))
                         

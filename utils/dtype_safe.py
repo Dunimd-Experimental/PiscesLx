@@ -40,7 +40,7 @@ and never a hot-path concern.
 """
 
 import torch
-__all__ = ["qr_safe", "svd_safe"]
+__all__ = ["PiscesLxDtypeSafe"]
 
 class PiscesLxDtypeSafe:
     """Module-level operations of dtype_safe, exposed through a class (§6.2)."""

@@ -56,8 +56,6 @@ import time
 from pathlib import Path
 
 from opss.knowledge import PiscesLxKnowledgeBuilder, PiscesLxKnowledgeBuilderConfig
-if __name__ == "__main__":
-    PiscesLxKnowledgeBuildCli.main()
 
 class PiscesLxKnowledgeBuildCli:
     """Module-level operations of run_build, exposed through a class (§6.2)."""
@@ -295,3 +293,7 @@ class PiscesLxKnowledgeBuildCli:
             result = builder.build_from_texts(texts)
 
         print(f"\nDone! {result['num_slots']:,} slots written to {result['store_path']}")
+
+
+if __name__ == "__main__":
+    PiscesLxKnowledgeBuildCli.main()

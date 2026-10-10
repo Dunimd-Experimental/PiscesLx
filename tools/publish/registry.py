@@ -88,6 +88,7 @@ from datetime import datetime
 
 from utils.dc import PiscesLxLogger
 from utils.paths import PiscesLxPaths
+from .config import PiscesLxPublishConfig
 
 _LOG = PiscesLxLogger("PiscesLx.Publish.Registry", file_path=PiscesLxPaths.get_log_file("PiscesLx.Publish.Registry"), enable_file=True)
 
@@ -123,7 +124,7 @@ class PiscesLxPublishRegistry:
         "quay.io",
     ]
 
-    def __init__(self, config: 'PiscesLxPublishConfig'):
+    def __init__(self, config: PiscesLxPublishConfig):
         """Initialize the registry publisher.
 
         Args:
