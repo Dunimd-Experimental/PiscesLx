@@ -147,7 +147,17 @@ from __future__ import annotations
 
 **所有"禁止"必须转成 `tools/check/` 下可机检的脚本**（类内实现，守 §4.1/§4.2），违规输出文件名 + 行号并在 CI/测试中失败：
 
-命名规范 · 项目名拼写 · 顶层裸函数（AST 扫模块级 `def`）· `import logging` · 版权头逐字校验 · 硬编码（绝对路径 / `cuda:\d` / magic number）· EnTA/Encre/水印残留引用 · document/agent 作为独立模态的残留标识符 · 引擎加载外部模型。
+命名规范 · 项目名拼写 · 顶层裸函数（AST 扫模块级 `def`）· `import logging` · 版权头逐字校验 · 硬编码（绝对路径 / `cuda:\d` / magic number）· EnTA/Encre/水印残留引用 · document/agent 作为独立模态的残留标识符 · 引擎加载外部模型 · 断裂导入 · **包导出真实性**（`__all__` 与 PEP 562 惰性表的每个名字必须确有绑定）· 未完成标记（TODO/占位替换语/具体方法里的 `raise NotImplementedError`；抽象契约与 `{{VERSION}}` 模板记号不计）。
+
+一条命令跑全：`python -m tools.check`（`--quiet` 出行数，`--json` 落工件）。
+
+机制类主张另需可执行证明，且必须进入验收命令，不能靠人手工跑：
+`python manage.py test --stage 10` 逐个子进程执行 `tools/test/test_*.py`
+（SBF 常量重算、SBF 机制断言、注意力掩码广播、MoE 路由契约）。
+
+权重交付类主张同样要有机检证据：`python tools/dev/verify_checkpoint.py --checkpoint ... --model_config ... --corpus ...`
+分别回答"能否 strict 载入 / 与同配置新建模型逐参数比对是否真的被更新 / 在真实留出文本上的困惑度"。
+一步未训的 `final_model.pt` 在这三项下必然失败——这正是它存在的目的。
 
 **验收以脚本结果为准，不以人工声明为准。** 无法机检的禁令（禁造假、禁缺创新）→ 用强制证据：真实日志、真实权重 hash、证明文档，纳入交付清单核验。
 
