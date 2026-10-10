@@ -49,6 +49,7 @@ from .forward import PiscesLxForwardChecker
 from .generation import PiscesLxGenerationChecker
 from .optimization import PiscesLxOptimizationChecker
 from .memory_opt import PiscesLxMemoryOptChecker
+from .regressions import PiscesLxRegressionSuiteChecker
 
 __all__ = [
     "PiscesLxEnvironmentChecker",
@@ -60,4 +61,5 @@ __all__ = [
     "PiscesLxGenerationChecker",
     "PiscesLxOptimizationChecker",
     "PiscesLxMemoryOptChecker",
+    "PiscesLxRegressionSuiteChecker",
 ]

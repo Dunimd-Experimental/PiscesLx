@@ -44,7 +44,7 @@ scheduler:
 
 data:
   batch_size: 1
-  sequence_length: 512
+  sequence_length: 128
   num_workers: 0
   pin_memory: false
   prefetch_factor: 2
@@ -52,9 +52,9 @@ data:
     - "data/corpus_smoke"
 
 training:
-  max_steps: 30
-  save_steps: 10
-  eval_steps: 10
+  max_steps: 12
+  save_steps: 6
+  eval_steps: 6
   log_steps: 1
   gradient_accumulation_steps: 1
   gradient_checkpointing: false

@@ -54,6 +54,7 @@ from .stages import (
     PiscesLxGenerationChecker,
     PiscesLxOptimizationChecker,
     PiscesLxMemoryOptChecker,
+    PiscesLxRegressionSuiteChecker,
 )
 
 
@@ -86,6 +87,7 @@ class PiscesLxTestRunner:
         7: "Stage 7",
         8: "Stage 8",
         9: "Stage 9",
+        10: "Stage 10",
     }
     
     QUICK_STAGES = {1, 2, 3, 4, 5}
@@ -100,6 +102,7 @@ class PiscesLxTestRunner:
         7: 3,
         8: 4,
         9: 6,
+        10: 4,
     }
     
     def __init__(
@@ -130,7 +133,7 @@ class PiscesLxTestRunner:
         Returns:
             PiscesLxTestReport containing all results
         """
-        return self._run_stages(stages={1, 2, 3, 4, 5, 6, 7, 8, 9})
+        return self._run_stages(stages={1, 2, 3, 4, 5, 6, 7, 8, 9, 10})
     
     def run_quick_check(self) -> PiscesLxTestReport:
         """
@@ -185,6 +188,9 @@ class PiscesLxTestRunner:
         
         if 9 in stages:
             self._run_stage_9(report)
+        
+        if 10 in stages:
+            self._run_stage_10(report)
         
         report.finish()
         return report
@@ -249,6 +255,14 @@ class PiscesLxTestRunner:
         for name, status, message, duration in results:
             report.add_result("Stage 8", name, status, message, duration)
     
+    def _run_stage_10(self, report: PiscesLxTestReport) -> None:
+        """Run Stage 10: Mechanism Regression Suites."""
+        checker = PiscesLxRegressionSuiteChecker(
+            root_path=str(self.root_path), verbose=self.verbose
+        )
+        for name, status, message, duration in checker.run():
+            report.add_result("Stage 10", name, status, message, duration)
+
     def _run_stage_9(self, report: PiscesLxTestReport) -> None:
         """Run Stage 9: Memory Optimization Check."""
         checker = PiscesLxMemoryOptChecker(
