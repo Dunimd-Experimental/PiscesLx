@@ -252,9 +252,7 @@ from .multimodal import (
     YvUnifiedReasoner,
     YvVisionEncoder,
     YvAudioEncoder,
-    YvDocEncoder,
     YvVideoEncoder,
-    YvAgenticEncoder,
     YvDynamicModalFusion,
 )
 
@@ -437,9 +435,7 @@ __all__ = [
     "YvUnifiedReasoner",
     "YvVisionEncoder",
     "YvAudioEncoder",
-    "YvDocEncoder",
     "YvVideoEncoder",
-    "YvAgenticEncoder",
     "YvDynamicModalFusion",
 
     "YvCoTMemoryReasoner",

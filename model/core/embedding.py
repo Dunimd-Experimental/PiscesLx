@@ -1157,8 +1157,6 @@ class YvMultimodalEmbeddingProjector(nn.Module):
         vision_proj (nn.Sequential): Vision/image projection network.
         audio_proj (nn.Sequential): Audio projection network.
         video_proj (nn.Sequential): Video projection network.
-        doc_proj (nn.Sequential): Document projection network.
-        agentic_proj (nn.Sequential): Agentic projection network.
     
     Example:
         >>> projector = YvMultimodalEmbeddingProjector(
@@ -1239,20 +1237,6 @@ class YvMultimodalEmbeddingProjector(nn.Module):
             nn.Linear(hidden_size, hidden_size, bias=False, device=device, dtype=dtype)
         )
         
-        self.doc_proj = nn.Sequential(
-            nn.Linear(doc_dim, hidden_size, bias=False, device=device, dtype=dtype),
-            nn.LayerNorm(hidden_size, device=device, dtype=dtype),
-            nn.GELU(),
-            nn.Linear(hidden_size, hidden_size, bias=False, device=device, dtype=dtype)
-        )
-        
-        self.agentic_proj = nn.Sequential(
-            nn.Linear(agentic_dim, hidden_size, bias=False, device=device, dtype=dtype),
-            nn.LayerNorm(hidden_size, device=device, dtype=dtype),
-            nn.GELU(),
-            nn.Linear(hidden_size, hidden_size, bias=False, device=device, dtype=dtype)
-        )
-        
     def forward(
         self,
         features: torch.Tensor,
@@ -1270,7 +1254,6 @@ class YvMultimodalEmbeddingProjector(nn.Module):
                 - "vision" or "image": For visual features
                 - "audio": For audio features
                 - "video": For video features
-                - "document" or "doc": For document features
                 - "agentic": For agent action features
         
         Returns:
@@ -1290,9 +1273,6 @@ class YvMultimodalEmbeddingProjector(nn.Module):
             "image": self.vision_proj,
             "audio": self.audio_proj,
             "video": self.video_proj,
-            "document": self.doc_proj,
-            "doc": self.doc_proj,
-            "agentic": self.agentic_proj,
         }
         
         projector = modality_projectors.get(modality)

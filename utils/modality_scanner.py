@@ -7,7 +7,6 @@ _MODALITY_SIGNALS = {
     'image': {'image', 'pixel_values', 'images', 'img', 'img_path', 'image_path', 'picture', 'pic'},
     'video': {'video', 'video_frames', 'video_path', 'mp4', 'avi'},
     'audio': {'audio', 'audio_values', 'audio_input', 'audio_path', 'wav', 'waveform', 'sound'},
-    'doc': {'doc', 'docs', 'document', 'doc_path', 'pdf'},
 }
 
 

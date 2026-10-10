@@ -76,6 +76,7 @@ Note:
 """
 
 import torch
+from ..utils.device import YvDeviceResolver
 import torch.nn as nn
 import torch.nn.functional as F
 import asyncio
@@ -89,7 +90,6 @@ from abc import ABC, abstractmethod
 from utils.dc import PiscesLxLogger
 from .vision import YvSpatioTemporalRoPE3D
 from .audio import YvAudioEncoder  
-from .doc import YvDocEncoder
 
 if TYPE_CHECKING:
     from ..modeling import YvModel
@@ -264,7 +264,6 @@ class YvSelfDevelopedGenerator(nn.Module):
            - Waveform synthesis head
         
         4. Document Components:
-           - YvDocEncoder for document processing
            - Structured content generation
     
     Key Features:
@@ -326,7 +325,6 @@ class YvSelfDevelopedGenerator(nn.Module):
         # Utilize existing multimodal encoders
         self.vision_components = self._init_vision_components()
         self.audio_components = self._init_audio_components() 
-        self.doc_components = self._init_doc_components()
         
         _LOG.info(f"Initialized self-developed generator with {config.hidden_size}D backbone")
     
@@ -405,7 +403,6 @@ class YvSelfDevelopedGenerator(nn.Module):
         
         return components
     
-    def _init_doc_components(self) -> Dict[str, nn.Module]:
         """Initialize document components using existing encoder.
         
         Creates document generation modules including the existing document
@@ -834,7 +831,7 @@ class YvTextToImageBackend(YvGenerationBackend):
 
         device = self._device
         if device == "auto":
-            device = "cuda" if torch.cuda.is_available() else "cpu"
+            device = YvDeviceResolver.resolve(device)
 
         self._pipeline = DiffusionPipeline.from_pretrained(
             self.model_name,
@@ -955,7 +952,7 @@ class YvTextToAudioBackend(YvGenerationBackend):
 
         device = self._device
         if device == "auto":
-            device = "cuda" if torch.cuda.is_available() else "cpu"
+            device = YvDeviceResolver.resolve(device)
 
         self._pipeline = AudioLDM2Pipeline.from_pretrained(
             self.model_name,

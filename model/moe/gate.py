@@ -265,7 +265,7 @@ class YvMoEGate(nn.Module):
         self.w_expert_orient = nn.Parameter(torch.tensor(0.05, device=device, dtype=dtype))
 
         # Modal-Aware affinity
-        n_modalities = getattr(cfg, 'n_modalities', 7) if cfg is not None else 7
+        n_modalities = getattr(cfg, 'n_modalities', 5) if cfg is not None else 7
         self.n_modalities = n_modalities
         self.expert_modal_affinity = nn.Parameter(
             YvNumericalGuard.nan_to_num(torch.zeros(num_experts, n_modalities, device=device, dtype=dtype))
@@ -1944,7 +1944,7 @@ class YvModalAwareRouter(nn.Module):
         hidden_size: int,
         num_experts: int,
         top_k: int = 2,
-        n_modalities: int = 7,
+        n_modalities: int = 5,
         n_cross_modal_experts: int = 0,
         affinity_alpha: float = 1.0,
         device=None,
@@ -2064,7 +2064,7 @@ class YvUltraSparseGate(nn.Module):
         tier1_topk: int = 1,
         tier2_topk: int = 2,
         tier3_topk: int = 4,
-        n_modalities: int = 7,
+        n_modalities: int = 5,
         device=None,
         dtype=None,
     ):

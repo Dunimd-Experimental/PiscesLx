@@ -1165,7 +1165,7 @@ class PiscesLxTrainingOperator(object):
 
             if any(token in name for token in ("reasoner", "generator", "mtp_heads", "task_head", "eval_head")):
                 rank = max(2, base_rank // 4)
-            elif name.startswith(("vision.", "video.", "doc.", "agent_encoder.", "agentic.")):
+            elif name.startswith(("vision.", "video.", "agentic.")):
                 rank = max(2, base_rank // 2)
             elif name.startswith("audio."):
                 rank = max(4, (base_rank * 3) // 4) if "audio" in active_modalities else max(2, base_rank // 2)

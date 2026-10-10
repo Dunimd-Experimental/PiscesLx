@@ -425,8 +425,7 @@ cpu_memory_budget: 137438953472
 
 n_cross_modal_experts: 4
 modal_affinity_alpha: 1.0
-n_modalities: 7
-
+n_modalities: 5
 rdt_max_loops: 3
 rdt_spectral_radius: 0.95
 rdt_convergence_threshold: 0.99

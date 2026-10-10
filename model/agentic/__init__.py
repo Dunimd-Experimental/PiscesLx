@@ -38,7 +38,6 @@ Architecture Overview:
     1. Core Agent (YvAgentic): The foundational agent implementation with reasoning
        and action capabilities, supporting multi-step task execution and tool integration.
 
-    2. Encoder (YvAgenticEncoder): Specialized encoder for processing agent-specific
        inputs, handling prompt engineering, context management, and state serialization.
 
     3. Enhanced Components: Advanced planning, orchestration, evaluation, and memory
@@ -73,7 +72,6 @@ Usage Example:
 
 Dependencies:
     - model.multimodal.agentic: Core agent implementation
-    - model.multimodal.agentic_encoder: Agent input/output encoding
     - model.multimodal.enhanced_agentic: Advanced agent capabilities
     - model.multimodal.react_agentic: ReAct framework implementation
     - model.multimodal.state_machine: State management infrastructure
@@ -85,7 +83,6 @@ Note:
 """
 
 from ..multimodal.agentic import YvAgentic
-from ..multimodal.agentic_encoder import YvAgenticEncoder
 from ..multimodal.enhanced_agentic import (
     YvLongTermPlanner,
     YvToolOrchestrator,
@@ -102,7 +99,6 @@ from ..multimodal.tool_executor import YvToolExecutor, YvToolResult
 
 __all__ = [
     "YvAgentic",
-    "YvAgenticEncoder",
     "YvLongTermPlanner",
     "YvToolOrchestrator",
     "YvSelfEvaluator",

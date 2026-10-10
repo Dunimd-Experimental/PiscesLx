@@ -678,7 +678,6 @@ class YvConfig:
     lazy_init_vision_encoder: bool = True
     lazy_init_audio_encoder: bool = True
     lazy_init_video_encoder: bool = True
-    lazy_init_doc_encoder: bool = True
     lazy_init_modal_fusion: bool = False
     lazy_init_reasoner: bool = False
     lazy_init_speculative_decoder: bool = True
@@ -930,7 +929,7 @@ class YvConfig:
     modal_aware_routing: bool = True
     n_cross_modal_experts: int = 0
     modal_affinity_alpha: float = 1.0
-    n_modalities: int = 7
+    n_modalities: int = 5  # 4 modalities (text/image/audio/video) + 1 cross-modal sentinel
 
     use_recurrent_modal_refiner: bool = True
     rdt_max_loops: int = 3

@@ -91,7 +91,6 @@ Architecture Overview:
          * Audio transformer architecture
          * Supports streaming audio
        
-       - Document Encoder: YvDocEncoder
          * Processes document images
          * Layout-aware encoding
          * OCR integration support
@@ -101,7 +100,6 @@ Architecture Overview:
          * Temporal modeling
          * Frame sampling strategies
        
-       - Agentic Encoder: YvAgenticEncoder
          * Processes agentic/action inputs
          * Action space encoding
          * State representation
@@ -204,6 +202,7 @@ Note:
 """
 
 import torch
+from ..utils.device import YvDeviceResolver
 from torch import nn
 import torch.nn.functional as F
 from .norms import YvRMSNorm
@@ -221,9 +220,7 @@ from ..multimodal import (
     YvMoVEVisionEncoder,
     YvSparseCutRouter,
     YvAudioEncoder,
-    YvDocEncoder,
     YvVideoEncoder,
-    YvAgenticEncoder,
     YvDynamicModalFusion
 )
 # RCA: Recursive Cross-Modal Attention (ACM TOMM 2026)
@@ -576,7 +573,6 @@ class YvModel(nn.Module):
         vision (YvVisionEncoder): Vision encoder.
         video (YvVideoEncoder): Video encoder.
         audio (YvAudioEncoder): Audio encoder.
-        doc (YvDocEncoder): Document encoder.
         modal_fusion: Modal fusion module.
         lm_head (nn.Linear): Language modeling head.
         task_head (nn.Linear): Task classification head.
@@ -670,7 +666,7 @@ class YvModel(nn.Module):
         self.config = cfg
 
         if device is None:
-            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            device = YvDeviceResolver.resolve(device)
         if dtype is None:
             dtype = torch.bfloat16 if device.type == 'cuda' else torch.float32
 
@@ -844,21 +840,9 @@ class YvModel(nn.Module):
             self.audio = None
         self._lazy_initialized['audio'] = self.audio is not None
 
-        _needs_doc = 'doc' in self._modalities
-        self._lazy_doc_encoder = None
-        if _needs_doc and _lazy_flag('doc', getattr(cfg, 'lazy_init_doc_encoder', True)):
-            self.doc = None
-        elif _needs_doc:
-            self.doc = YvDocEncoder(cfg, device=device, dtype=dtype)
-        else:
-            self.doc = None
-        self._lazy_initialized['doc'] = self.doc is not None
-
-        _needs_multimodal = _needs_vision or _needs_video or _needs_audio or _needs_doc
-        if getattr(cfg, 'use_agentic', False) and _needs_multimodal:
-            self.agent_encoder = YvAgenticEncoder(cfg, device=device, dtype=dtype)
-        else:
-            self.agent_encoder = None
+        # document and agent are NOT modalities (docs/prompts/UPGRADE_03_ARCH.md 3.3.1):
+        # documents enter through the agent+text path, tool calling is text-level.
+        _needs_multimodal = _needs_vision or _needs_video or _needs_audio
 
         # Unified multimodal fusion 鈥?absorbs Dynamic/Enhanced/RecurrentRefiner/SyncFusion/RCA
         if _needs_multimodal:
@@ -1292,7 +1276,6 @@ class YvModel(nn.Module):
             self._lazy_initialized['video'] = True
         return self.video
 
-    def _lazy_get_doc_encoder(self):
         if self.doc is None:
             self.doc = YvDocEncoder(self.cfg, device=self._device, dtype=self._dtype)
             self._lazy_initialized['doc'] = True
@@ -1302,7 +1285,7 @@ class YvModel(nn.Module):
         """Check if a component has been lazy initialized.
 
         Args:
-            component: Component name ('vision', 'audio', 'video', 'doc', 'rca',
+            component: Component name ('vision', 'audio', 'video', 'rca',
                       'seer', 'vericot', 'crv', 'comet', 'long_context',
                       'reasoner', 'agentic', 'speculative', 'task_head',
                       'eval_head', 'mtp_heads')
@@ -1899,13 +1882,10 @@ class YvModel(nn.Module):
         images=None,
         audio=None,
         video=None,
-        docs=None,
         labels=None,
         agent_mode=False,
         task=None,
         max_steps=None,
-        agent_obs=None,
-        agent_embed=None,
         past_key_values=None,
         use_cache=False,
         attention_mask=None,
@@ -1920,7 +1900,7 @@ class YvModel(nn.Module):
         Processing Pipeline:
             1. Agent Mode Check: If agent_mode=True, delegate to agentic module
             2. Text Embedding: Convert input_ids to embeddings
-            3. Multimodal Encoding: Process images, audio, video, docs
+            3. Multimodal Encoding: Process images, audio, video
             4. Modal Fusion: Combine multimodal features with text
             5. Layer Processing: Pass through transformer/hybrid layers
             6. Output Generation: Compute logits, losses, and auxiliary outputs
@@ -1929,7 +1909,6 @@ class YvModel(nn.Module):
             - images: Vision encoder processes image tensors
             - audio: Audio encoder processes spectrograms
             - video: Video encoder processes video frames
-            - docs: Document encoder processes document images
             - agent_embed/agent_obs: Agentic encoder for RL inputs
         
         Args:
@@ -1943,7 +1922,6 @@ class YvModel(nn.Module):
             task: Task specification for agent mode.
             max_steps: Maximum steps for agent mode.
             agent_obs: Agent observations for agentic encoder.
-            agent_embed: Pre-computed agent embeddings.
             past_key_values: Cached key-value states for incremental decoding.
             use_cache: Whether to use KV caching. Default: False.
             attention_mask: Attention mask [batch, seq_len].
@@ -2039,35 +2017,6 @@ class YvModel(nn.Module):
             modal_features['video'] = (
                 vid_out['features'] if isinstance(vid_out, dict) and 'features' in vid_out else vid_out
             )
-
-        if docs is not None and getattr(self, 'doc', None) is not None:
-            doc_out = self.doc(docs)
-            doc_features = (
-                doc_out['features'] if isinstance(doc_out, dict) and 'features' in doc_out else doc_out
-            )
-            modal_features['doc'] = doc_features
-            modal_features['document'] = doc_features
-
-        if agent_embed is not None:
-            agent_input = {
-                'observations': agent_embed.get('observations', []),
-                'actions': agent_embed.get('actions', []),
-                'reflections': agent_embed.get('reflections', []),
-                'current_state': agent_embed.get('current_state', None),
-                'task_context': agent_embed.get('task_context', None)
-            }
-            modal_features['agentic'] = self.agent_encoder(agent_input)
-
-        if agent_obs is not None:
-            agent_obs_input = {
-                'observations': agent_obs.get('observations', []),
-                'actions': agent_obs.get('actions', []),
-                'reflections': agent_obs.get('reflections', []),
-                'current_state': agent_obs.get('current_state', None),
-                'task_context': agent_obs.get('task_context', None)
-            }
-            agent_feat = self.agent_encoder(agent_obs_input)
-            modal_features['agentic'] = agent_feat
 
         # === Unified Multimodal Fusion ===
         fused_features = None

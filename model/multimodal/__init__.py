@@ -26,7 +26,7 @@ from __future__ import annotations
 """Yv Multimodal Module - Unified Multimodal Processing for PiscesLx.
 
 This module provides comprehensive multimodal processing capabilities for the
-Yv model, integrating vision, audio, video, document, and agentic
+Yv model, integrating vision, audio and video
 modalities into a unified architecture matching the latest large language
 model designs.
 
@@ -36,7 +36,6 @@ Module Components:
        - YvVideoEncoder: Video encoding with temporal modeling
        - YvAudioEncoder: Multi-task audio feature extraction
        - YvDocEncoder: Document understanding with layout analysis
-       - YvAgenticEncoder: Agent-specific encoding
        - YvSemanticEncoder: Semantic text representation
     
     2. Fusion Components:
@@ -121,9 +120,7 @@ Note:
 from .vision import YvVisionEncoder, YvSpatioTemporalRoPE3D, YvSigLIPVisionEncoder, YvMoVEVisionEncoder, YvSparseCutRouter
 from .video import YvVideoEncoder
 from .audio import YvAudioEncoder
-from .doc import YvDocEncoder
 from .agentic import YvAgentic
-from .agentic_encoder import YvAgenticEncoder
 from .attention import YvCrossModalAttention
 from .fusion import YvDynamicModalFusion, YvRecurrentModalRefiner
 from .enhanced_fusion import YvEnhancedModalFusion, YvModalFusionConfig
@@ -149,9 +146,7 @@ __all__ = [
     "YvSparseCutRouter",
     "YvVideoEncoder",
     "YvAudioEncoder",
-    "YvDocEncoder",
     "YvAgentic",
-    "YvAgenticEncoder",
     "YvCrossModalAttention",
     "YvDynamicModalFusion",
     "YvRecurrentModalRefiner",

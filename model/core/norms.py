@@ -563,6 +563,21 @@ class YvUnifiedRotaryEmbedding(nn.Module):
     per‑dimension adjustments.  No algorithm‑variant branching.
     """
 
+    @staticmethod
+    def _mr_radices_for(half: int, device, mode: str):
+        """MrRoPE per-frequency radices for a width of ``half``.
+
+        MrRoPE (Zeng et al. 2026) assigns each frequency its own progressive
+        radix; ``standard`` mode is the identity (all ones), which is why the
+        multiplier form is used rather than a conditional branch.
+        """
+        import torch as _torch
+        width = max(int(half), 1)
+        if mode == 'pro':
+            ramp = _torch.arange(1, width + 1, device=device, dtype=_torch.float32)
+            return 1.0 + 0.1 * (ramp / width)
+        return _torch.ones(width, device=device, dtype=_torch.float32)
+
     def __init__(
         self,
         dim: int,
@@ -604,11 +619,7 @@ class YvUnifiedRotaryEmbedding(nn.Module):
         # ── MrRoPE mixed radices (always built) ──
         if use_mr_rope:
             with torch.no_grad():
-                if mr_rope_mode == 'pro':
-                    rad = torch.arange(1, half + 1, device=device, dtype=torch.float32)
-                    rad = 1.0 + 0.1 * (rad / (half))  # progressive ramp
-                else:
-                    rad = torch.ones(half, device=device, dtype=torch.float32)
+                rad = self._mr_radices_for(half, device, mr_rope_mode)
             self.register_buffer("mr_radices", rad, persistent=False)
 
         # ── Dynamic learned parameters (always built when use_dynamic) ──
@@ -702,8 +713,13 @@ class YvUnifiedRotaryEmbedding(nn.Module):
         base_freq = 1.0 / (self.dynamic_base ** (torch.arange(0, embed_dim, 2, device=device).float() / embed_dim))
 
         if self.use_mr_rope:
-            mr = self.mr_radices[:half].to(device)
-            freqs = torch.outer(t, base_freq * mr)
+            # The buffer was sized for the construction dim; a caller may pass a
+            # different embed_dim, so regenerate for this width instead of
+            # silently slicing to a mismatched length.
+            mr = self.mr_radices
+            if mr.numel() != half:
+                mr = self._mr_radices_for(half, device, self.mr_rope_mode)
+            freqs = torch.outer(t, base_freq * mr.to(device))
         else:
             freqs = torch.outer(t, base_freq)
 

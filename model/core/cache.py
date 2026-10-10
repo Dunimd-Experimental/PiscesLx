@@ -154,6 +154,7 @@ Note:
 
 import math
 import torch
+from ..utils.device import YvDeviceResolver
 import torch.nn.functional as F
 from dataclasses import dataclass, field
 from typing import Optional, Tuple, Dict, Any, List, Union
@@ -332,7 +333,7 @@ class YvCacheConfig:
     n_heads: int = 32
     head_dim: int = 128
     dtype: torch.dtype = torch.float16
-    device: str = "cuda"
+    device: str = YvDeviceResolver.AUTO
 
     cache_type: YvCacheType = YvCacheType.HYBRID
 
@@ -350,6 +351,9 @@ class YvCacheConfig:
             self.eviction_policy = YvEvictionPolicy(self.eviction_policy)
         if isinstance(self.cache_type, str):
             self.cache_type = YvCacheType(self.cache_type)
+        # Resolve the "auto" sentinel once, here, so no consumer ever hands a
+        # placeholder device string to tensor.to().
+        self.device = YvDeviceResolver.as_string(self.device)
 
 class YvCacheBlock:
     """Individual cache block for paged attention systems.
@@ -1781,7 +1785,7 @@ class YvUnifiedCacheManager:
                 n_heads=getattr(config, 'n_head', getattr(config, 'num_heads', 32)),
                 head_dim=getattr(config, 'head_dim', 128),
                 dtype=getattr(config, 'dtype', torch.float16),
-                device=str(getattr(config, 'device', 'cuda')),
+                device=YvDeviceResolver.as_string(getattr(config, 'device', None)),
             )
 
         self._lock = threading.Lock()

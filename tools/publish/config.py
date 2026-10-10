@@ -304,7 +304,7 @@ class PiscesLxPublishMetadataConfig:
         ...     architecture="Yv",
         ...     parameters="7B",
         ...     context_length=10485760,
-        ...     modalities=["text", "image", "audio", "video", "document", "agentic"],
+        ...     modalities=["text", "image", "audio", "video"],
         ...     license="Apache-2.0"
         ... )
     """
