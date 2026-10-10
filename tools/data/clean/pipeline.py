@@ -29,7 +29,7 @@ import json
 import hashlib
 import pandas as pd
 from typing import Optional, Dict, Any, List, Tuple, Callable, Iterator
-from datasets import load_from_disk, PiscesLxDataset, concatenate_datasets
+from datasets import load_from_disk, Dataset, concatenate_datasets
 from dataclasses import dataclass, field
 from enum import Enum
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
@@ -207,7 +207,7 @@ class PiscesLxDatasetCleaner:
         **clean_kwargs: Any
     ) -> Tuple[int, int]:
         if not os.path.exists(input_path):
-            raise FileNotFoundError(f"PiscesLxDataset path does not exist: {input_path}")
+            raise FileNotFoundError(f"Dataset path does not exist: {input_path}")
 
         config = config or PiscesLxDataCleaningConfig(
             min_text_length=int(clean_kwargs.get("min_length", 1)),
@@ -275,7 +275,7 @@ class PiscesLxDatasetCleaner:
         df = df[mask]
 
         df = df.dropna(how="all")
-        cleaned = PiscesLxDataset.from_pandas(df, preserve_index=False)
+        cleaned = Dataset.from_pandas(df, preserve_index=False)
         cleaned.save_to_disk(output_path)
 
         return len(df), original_size
@@ -595,7 +595,7 @@ class PiscesLxDatasetCleaner:
                                 lambda x: cleaner.clean_media(str(x), mtype) if pd.notna(x) else None
                             )
                     if len(df) > 0:
-                        chunk.append(PiscesLxDataset.from_pandas(df))
+                        chunk.append(Dataset.from_pandas(df))
                     del df, sub
                     gc.collect()
                 return concatenate_datasets(chunk) if chunk else None
@@ -656,7 +656,7 @@ class PiscesLxDatasetCleaner:
             in_p = os.path.join(input_dir, name)
             if os.path.isdir(in_p) and not name.endswith("_clean"):
                 if not PiscesLxDatasetCleaner.is_download_complete(in_p):
-                    _LOG.debug(f"PiscesLxDataset {name} download not complete, skip")
+                    _LOG.debug(f"Dataset {name} download not complete, skip")
                     continue
                 out_p = os.path.join(output_dir, f"{name}_clean")
                 if not os.path.exists(out_p):
@@ -707,13 +707,13 @@ class PiscesLxDatasetCleaner:
 
         try:
             if not os.path.exists(input_path):
-                _LOG.debug(f"PiscesLxDataset does not exist: {input_path}")
+                _LOG.debug(f"Dataset does not exist: {input_path}")
                 return (0, 0)
 
             try:
                 dataset = load_from_disk(input_path)
                 if len(dataset) == 0:
-                    _LOG.debug(f"PiscesLxDataset {dataset_name} is empty, skip")
+                    _LOG.debug(f"Dataset {dataset_name} is empty, skip")
                     return (0, 0)
                 _LOG.debug(f"Processing dataset: {dataset_name} ({len(dataset)} rows)")
             except Exception as e:
@@ -782,7 +782,7 @@ class PiscesLxDatasetCleaner:
 
         if cleaned_rows:
             df = pd.DataFrame(cleaned_rows)
-            ds = PiscesLxDataset.from_pandas(df)
+            ds = Dataset.from_pandas(df)
             ds.save_to_disk(output_path)
             return (len(cleaned_rows), total)
 

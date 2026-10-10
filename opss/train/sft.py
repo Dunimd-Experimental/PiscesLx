@@ -40,7 +40,7 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
-from torch.utils.data import PiscesLxDataset, DataLoader
+from torch.utils.data import Dataset, DataLoader
 from torch.cuda.amp import GradScaler, autocast
 
 try:
@@ -125,8 +125,8 @@ class PiscesLxSFTTrainingConfig:
             self.use_bf16 = False
 
 
-class PiscesLxSFTDataset(PiscesLxDataset):
-    """PiscesLxDataset for SFT training."""
+class PiscesLxSFTDataset(Dataset):
+    """Dataset for SFT training."""
     
     def __init__(
         self,

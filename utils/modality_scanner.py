@@ -33,7 +33,7 @@ reaches the model through the agent+text path (docs/prompts/UPGRADE_03_ARCH.md 3
 
 from typing import Optional, Set
 import torch
-from torch.utils.data import PiscesLxDataset, DataLoader
+from torch.utils.data import Dataset, DataLoader
 
 _MODALITY_SIGNALS = {
     'image': {'image', 'pixel_values', 'images', 'img', 'img_path', 'image_path', 'picture', 'pic'},
@@ -49,7 +49,7 @@ class PiscesLxModalityScanner:
 
     @staticmethod
     def _scan_hf_dataset(ds) -> Set[str]:
-        """Scan HuggingFace PiscesLxDataset features/columns for modality signals."""
+        """Scan HuggingFace Dataset features/columns for modality signals."""
         modalities = {'text'}
         col_names = set()
         if hasattr(ds, 'column_names'):
@@ -85,13 +85,13 @@ class PiscesLxModalityScanner:
         """Scan a dataset to detect which modalities are present.
 
         Args:
-            dataset: HuggingFace PiscesLxDataset, PyTorch PiscesLxDataset, or DataLoader.
+            dataset: HuggingFace Dataset, PyTorch Dataset, or DataLoader.
             num_samples: Number of samples to inspect for key-based detection.
 
         Returns:
             Set of modality names: {'text'}, {'text', 'image'}, etc.
         """
-        # Try HF PiscesLxDataset schema first (fast, no data loading)
+        # Try HF Dataset schema first (fast, no data loading)
         if hasattr(dataset, 'column_names') or hasattr(dataset, 'features'):
             modalities = PiscesLxModalityScanner._scan_hf_dataset(dataset)
             if len(modalities) > 1:

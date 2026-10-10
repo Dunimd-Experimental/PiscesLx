@@ -60,7 +60,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import PiscesLxDataset, DataLoader
+from torch.utils.data import Dataset, DataLoader
 from typing import Any, Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass, field
 import math

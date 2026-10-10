@@ -50,7 +50,7 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 
 import torch
-from torch.utils.data import PiscesLxDataset, DataLoader, IterableDataset
+from torch.utils.data import Dataset, DataLoader, IterableDataset
 from torch.utils.data.dataset import T_co
 import numpy as np
 
@@ -149,7 +149,7 @@ class PiscesLxDataConfig:
         })
 
 
-class PiscesLxBaseDataset(PiscesLxDataset):
+class PiscesLxBaseDataset(Dataset):
     """Base dataset class for PiscesLx."""
     
     def __init__(
@@ -163,7 +163,7 @@ class PiscesLxBaseDataset(PiscesLxDataset):
         Args:
             config: Data configuration.
             tokenizer: Tokenizer for encoding text.
-            split: PiscesLxDataset split ('train', 'val', 'test').
+            split: Dataset split ('train', 'val', 'test').
         """
         self.config = config
         self.tokenizer = tokenizer
@@ -401,7 +401,7 @@ class PiscesLxMultimodalDataset(PiscesLxBaseDataset):
         Args:
             config: Data configuration.
             tokenizer: Text tokenizer.
-            split: PiscesLxDataset split.
+            split: Dataset split.
             vision_encoder: Optional vision encoder for image processing.
             audio_encoder: Optional audio encoder for audio processing.
         """
@@ -684,7 +684,7 @@ class PiscesLxDataModule:
         if stage in ("test", "predict"):
             self._test_dataset = self._create_dataset("test")
     
-    def _create_dataset(self, split: str) -> PiscesLxDataset:
+    def _create_dataset(self, split: str) -> Dataset:
         """Create dataset for given split."""
         if self.config.multimodal_fusion:
             return PiscesLxMultimodalDataset(

@@ -43,7 +43,7 @@ import threading
 
 import torch
 import torch.nn as nn
-from torch.utils.data import PiscesLxDataset, DataLoader
+from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 import numpy as np
 

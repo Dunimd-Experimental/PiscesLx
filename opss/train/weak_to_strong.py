@@ -69,7 +69,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-from torch.utils.data import PiscesLxDataset, DataLoader
+from torch.utils.data import Dataset, DataLoader
 
 from utils.dc import PiscesLxLogger
 from utils.paths import PiscesLxPaths

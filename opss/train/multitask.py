@@ -41,7 +41,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import PiscesLxDataset, DataLoader, ConcatDataset
+from torch.utils.data import Dataset, DataLoader, ConcatDataset
 
 from utils.dc import PiscesLxLogger
 from utils.paths import PiscesLxPaths
@@ -90,10 +90,10 @@ class PiscesLxMultitaskTrainingConfig:
                 self.initial_task_weights[task] = 1.0
 
 
-class PiscesLxMultitaskDataset(PiscesLxDataset):
-    """PiscesLxDataset for multitask training."""
+class PiscesLxMultitaskDataset(Dataset):
+    """Dataset for multitask training."""
     
-    def __init__(self, task_datasets: Dict[str, PiscesLxDataset], task_names: List[str]):
+    def __init__(self, task_datasets: Dict[str, Dataset], task_names: List[str]):
         self.task_datasets = task_datasets
         self.task_names = task_names
         self._LOG = PiscesLxLogger("PiscesLx.Opss.Train",file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Train"), enable_file=True)
@@ -295,7 +295,7 @@ class PiscesLxMultitaskTrainingOperator(PiscesLxOperatorInterface):
             )
     
     def _create_task_datasets(self, task_data_paths: Dict[str, str], tokenizer: Any, 
-                             config: PiscesLxMultitaskTrainingConfig) -> Dict[str, PiscesLxDataset]:
+                             config: PiscesLxMultitaskTrainingConfig) -> Dict[str, Dataset]:
         """Create datasets for each task."""
         task_datasets = {}
         
@@ -325,7 +325,7 @@ class PiscesLxMultitaskTrainingOperator(PiscesLxOperatorInterface):
         """Create SFT dataset."""
         # Implementation would load and process SFT data
         # This is a simplified placeholder
-        class PiscesLxSFTPlaceholderDataset(PiscesLxDataset):
+        class PiscesLxSFTPlaceholderDataset(Dataset):
             def __init__(self, size=100):
                 self.size = size
             def __len__(self): return self.size
@@ -336,7 +336,7 @@ class PiscesLxMultitaskTrainingOperator(PiscesLxOperatorInterface):
     
     def _create_dpo_dataset(self, data_path: str, tokenizer: Any, config: PiscesLxMultitaskTrainingConfig):
         """Create DPO dataset."""
-        class PiscesLxDPOPlaceholderDataset(PiscesLxDataset):
+        class PiscesLxDPOPlaceholderDataset(Dataset):
             def __init__(self, size=50):
                 self.size = size
             def __len__(self): return self.size
@@ -352,7 +352,7 @@ class PiscesLxMultitaskTrainingOperator(PiscesLxOperatorInterface):
     
     def _create_classification_dataset(self, data_path: str, tokenizer: Any, config: PiscesLxMultitaskTrainingConfig):
         """Create classification dataset."""
-        class PiscesLxClassificationPlaceholderDataset(PiscesLxDataset):
+        class PiscesLxClassificationPlaceholderDataset(Dataset):
             def __init__(self, size=75):
                 self.size = size
             def __len__(self): return self.size
@@ -367,7 +367,7 @@ class PiscesLxMultitaskTrainingOperator(PiscesLxOperatorInterface):
     
     def _create_generic_dataset(self, data_path: str, tokenizer: Any, config: PiscesLxMultitaskTrainingConfig):
         """Create generic dataset."""
-        class PiscesLxGenericPlaceholderDataset(PiscesLxDataset):
+        class PiscesLxGenericPlaceholderDataset(Dataset):
             def __init__(self, size=50):
                 self.size = size
             def __len__(self): return self.size
@@ -376,7 +376,7 @@ class PiscesLxMultitaskTrainingOperator(PiscesLxOperatorInterface):
         
         return PiscesLxGenericPlaceholderDataset(min(config.max_samples_per_task or 50, 50))
     
-    def _run_multitask_training(self, model: nn.Module, dataset: PiscesLxDataset, 
+    def _run_multitask_training(self, model: nn.Module, dataset: Dataset, 
                                config: PiscesLxMultitaskTrainingConfig, optimizer: torch.optim.Optimizer,
                                uncertainty_weighting: Optional[PiscesLxUncertaintyWeighting], 
                                device: torch.device) -> Dict[str, Any]:

@@ -1256,9 +1256,9 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             from utils.modality_scanner import PiscesLxModalityScanner
             detected_modalities = PiscesLxModalityScanner.scan_dataset(train_ds)
             if detected_modalities == {'text'}:
-                _LOG.info(f"PiscesLxDataset {ds_name} is text-only, skipping multimodal encoders")
+                _LOG.info(f"Dataset {ds_name} is text-only, skipping multimodal encoders")
             else:
-                _LOG.info(f"PiscesLxDataset {ds_name} detected modalities: {detected_modalities}")
+                _LOG.info(f"Dataset {ds_name} detected modalities: {detected_modalities}")
 
             if idx == 0:
                 self.initialize_training(
@@ -2050,7 +2050,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         return self._build_default_dataloader(split="val")
 
     def _build_default_dataloader(self, split: str):
-        from torch.utils.data import PiscesLxDataset, DataLoader
+        from torch.utils.data import Dataset, DataLoader
 
         seq_len = int(getattr(self.train_config.data, "sequence_length", 0) or 0)
         batch_size = int(getattr(self.train_config.data, "batch_size", 1) or 1)
@@ -2064,7 +2064,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         )
         pad_to_multiple_of = 8 if use_pad_multiple else None
 
-        class PiscesLxJsonlTextDataset(PiscesLxDataset):
+        class PiscesLxJsonlTextDataset(Dataset):
             def __init__(self, samples: List[str], seq_len: int, tokenizer: Optional[Any] = None, packing: bool = False):
                 self.samples = samples
                 self.seq_len = seq_len
@@ -2207,7 +2207,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
                 continue
             p = Path(path)
             if not p.exists():
-                _LOG.warning("PiscesLxDataset path not found", path=str(p))
+                _LOG.warning("Dataset path not found", path=str(p))
                 continue
             if p.suffix.lower() in (".jsonl", ".json"):
                 with open(p, "r", encoding="utf-8") as f:

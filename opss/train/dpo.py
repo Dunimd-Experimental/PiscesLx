@@ -81,7 +81,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import PiscesLxDataset, DataLoader
+from torch.utils.data import Dataset, DataLoader
 from torch.cuda.amp import GradScaler, autocast
 import transformer_engine.pytorch as te
 from transformer_engine.common.recipe import Format, DelayedScaling
@@ -240,9 +240,9 @@ class PiscesLxGRMConfig:
     grm_use_implicit_reward: bool = True
 
 
-class PiscesLxDPODataset(PiscesLxDataset):
+class PiscesLxDPODataset(Dataset):
     """
-    PiscesLxDataset for DPO training with preference pairs.
+    Dataset for DPO training with preference pairs.
     
     This dataset loads preference data in JSONL format where each sample
     contains a prompt, chosen response, and rejected response.

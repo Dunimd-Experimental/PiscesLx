@@ -52,7 +52,7 @@ import threading
 
 import torch
 import torch.nn as nn
-from torch.utils.data import PiscesLxDataset, DataLoader
+from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 
 from utils.dc import PiscesLxLogger
@@ -93,7 +93,7 @@ class PiscesLxBenchmarkConfig:
     verbose: bool = True
 
 
-class PiscesLxBenchmarkDataset(PiscesLxDataset):
+class PiscesLxBenchmarkDataset(Dataset):
     """Base benchmark dataset class."""
     
     def __init__(self, data: List[Dict[str, Any]], tokenizer: Any):
@@ -142,7 +142,7 @@ class PiscesLxMMLUDataset(PiscesLxBenchmarkDataset):
         
         Args:
             tokenizer: Tokenizer for encoding inputs.
-            split: PiscesLxDataset split ('test' or 'dev').
+            split: Dataset split ('test' or 'dev').
             subjects: List of subjects to evaluate. If None, uses all.
         """
         from datasets import load_dataset

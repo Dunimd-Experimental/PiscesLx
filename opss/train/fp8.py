@@ -50,7 +50,7 @@ from itertools import chain
 
 import torch
 import torch.nn as nn
-from torch.utils.data import PiscesLxDataset, DataLoader
+from torch.utils.data import Dataset, DataLoader
 
 import transformer_engine.pytorch as te
 from transformer_engine.common.recipe import Format, DelayedScaling, _Format
@@ -149,7 +149,7 @@ class PiscesLxFP8TrainingConfig:
     resume_from: Optional[str] = None
 
 
-class PiscesLxTextDataset(PiscesLxDataset):
+class PiscesLxTextDataset(Dataset):
     """
     Standard text dataset for language modeling.
     

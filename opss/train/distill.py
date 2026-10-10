@@ -86,7 +86,7 @@ from datetime import datetime
 
 import torch
 import torch.nn as nn
-from torch.utils.data import PiscesLxDataset, DataLoader
+from torch.utils.data import Dataset, DataLoader
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 import torch.distributed as dist
@@ -208,8 +208,8 @@ class PiscesLxDistillationConfig:
             self.use_bf16 = False
 
 
-class PiscesLxDistillationDataset(PiscesLxDataset):
-    """PiscesLxDataset for knowledge distillation training."""
+class PiscesLxDistillationDataset(Dataset):
+    """Dataset for knowledge distillation training."""
     
     def __init__(
         self,

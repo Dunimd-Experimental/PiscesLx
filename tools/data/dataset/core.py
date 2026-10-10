@@ -29,7 +29,7 @@ import threading
 import queue
 import time
 from datasets import load_from_disk
-from torch.utils.data import PiscesLxDataset as TorchDataset
+from torch.utils.data import Dataset as TorchDataset
 from typing import Optional, Dict, Any, List, Callable, Union
 from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor

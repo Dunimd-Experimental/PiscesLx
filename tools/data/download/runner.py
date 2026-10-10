@@ -38,7 +38,7 @@ from functools import wraps
 from utils.dc import PiscesLxLogger
 from utils.log_bridge import PiscesLxThirdPartyLogBridge
 from .caches import PiscesLxToolsDataDownloadCache
-from datasets import load_from_disk, PiscesLxDataset
+from datasets import load_from_disk, Dataset
 from tools.data.clean import PiscesLxDatasetCleaner
 from .config import PiscesLxToolsDataConfigLoader, PiscesLxToolsDataDownloadConfig, PiscesLxToolsDatasetItem
 from .sources import PiscesLxToolsDataSourceRouter
@@ -211,7 +211,7 @@ class PiscesLxToolsDataDatasetDownload:
         try:
             if not hasattr(ds, "save_to_disk"):
                 _LOG.error(
-                    f"Cannot save dataset {name}: expected a HuggingFace PiscesLxDataset, got {type(ds).__name__}"
+                    f"Cannot save dataset {name}: expected a HuggingFace Dataset, got {type(ds).__name__}"
                 )
                 return None
 
@@ -254,7 +254,7 @@ class PiscesLxToolsDataDatasetDownload:
 
         existing_state = resume_manager.load_state(save_name)
         if existing_state and existing_state.status == "completed":
-            logger.info(f"PiscesLxDataset {save_name} already completed, skipping")
+            logger.info(f"Dataset {save_name} already completed, skipping")
             return save_name
 
         state = PiscesLxDataDownloadState(
@@ -438,7 +438,7 @@ class PiscesLxToolsDataDatasetDownload:
                 if len(df_cleaned) == 0:
                     continue
 
-                new_ds = PiscesLxDataset.from_pandas(df_cleaned, preserve_index=False)
+                new_ds = Dataset.from_pandas(df_cleaned, preserve_index=False)
                 new_ds.save_to_disk(raw_dir)
             except Exception as e:
                 continue
@@ -660,7 +660,7 @@ class PiscesLxToolsDataDatasetDownload:
 
         save_path = os.path.join(self._DATA, save_name)
         if os.path.exists(save_path):
-            _LOG.info(f"PiscesLxDataset already exists: {save_path}")
+            _LOG.info(f"Dataset already exists: {save_path}")
             return True
 
         task = (dataset_name, save_name, "", [source], self._DATA, max_samples, self._retry_config)

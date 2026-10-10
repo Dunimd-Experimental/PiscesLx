@@ -29,7 +29,7 @@ import math
 import pandas as pd
 from collections import Counter
 from typing import Dict, Any, List, Optional, Tuple, Set
-from datasets import load_from_disk, PiscesLxDataset
+from datasets import load_from_disk, Dataset
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -600,7 +600,7 @@ class PiscesLxToolsDataQualityController:
     def analyze_dataset_quality(self, dataset_path: str) -> Dict[str, Any]:
         try:
             if not os.path.exists(dataset_path):
-                return {"error": "PiscesLxDataset path does not exist"}
+                return {"error": "Dataset path does not exist"}
 
             if os.path.isdir(dataset_path):
                 dataset = load_from_disk(dataset_path)
