@@ -119,7 +119,7 @@ Note:
     Expert count and top-k should be tuned based on computational budget.
 """
 
-from .gate import YvMoEGate, YvPathMoEGate, YvPhiBalancing, moe_init_weights
+from .gate import YvGateInitializer, YvMoEGate, YvPathMoEGate, YvPhiBalancing
 from .layer import (
     YvDynamicMoELayer,
     YvExpertChoiceRouter,

@@ -64,7 +64,12 @@ from .calibration import (
     PiscesLxCalibrationDataLoaderOperator,
     PiscesLxActivationCollectorOperator,
 )
-from .advanced import PiscesLxAdvancedQuantizationConfig, PiscesLxSensitivityAnalysisOperator, PiscesLxAdaptiveBitAllocationOperator
+from .advanced import (
+    PiscesLxAdvancedQuantizer,
+    PiscesLxAdvancedQuantizationConfig,
+    PiscesLxSensitivityAnalysisOperator,
+    PiscesLxAdaptiveBitAllocationOperator,
+)
 from .pipeline import PiscesLxQuantizationPipelineConfig, PiscesLxQuantizationPipelineOperator
 from .engine import PiscesLxQuantizationEngineConfig, PiscesLxQuantizationEngineOperator, PiscesLxFP8Format, PiscesLxScaleMethod, PiscesLxFP8QuantizationEngine
 

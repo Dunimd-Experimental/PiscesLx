@@ -261,44 +261,6 @@ class YvARES(nn.Module):
             uncertainties.append(1.0 - max_act)
 
         return uncertainties
-
-
-def detect_cot_failure_modes(
-    reasoning_steps: List[str],
-    final_answer: str
-) -> List[Tuple[str, float]]:
-    """Detect CoT failure modes.
-
-    Args:
-        reasoning_steps: Textual reasoning steps.
-        final_answer: Final answer text.
-
-    Returns:
-        List of (failure_mode, confidence) tuples.
-    """
-    failures = []
-
-    # Check for premature conclusion
-    if len(reasoning_steps) < 3 and len(final_answer.split()) > 5:
-        failures.append(("premature_conclusion", 0.7))
-
-    # Check for circular reasoning
-    step_texts = [s.lower() for s in reasoning_steps]
-    for i in range(len(step_texts)):
-        for j in range(i + 1, len(step_texts)):
-            if step_texts[i] in step_texts[j] or step_texts[j] in step_texts[i]:
-                failures.append(("circular_reasoning", 0.6))
-                break
-
-    # Check for hallucination (repeated phrases without new info)
-    if len(reasoning_steps) > 5:
-        unique_steps = set(step_texts)
-        if len(unique_steps) < len(step_texts) * 0.7:
-            failures.append(("hallucination", 0.5))
-
-    return failures
-
-
 class YvCRVIntegration(nn.Module):
     """Batch-compatible CRV wrapper for YvModel forward integration.
 
@@ -340,3 +302,45 @@ class YvCRVIntegration(nn.Module):
             'confidence': torch.tensor(score, device=hidden_states.device),
             'crv_loss': torch.tensor(0.0, device=hidden_states.device),
         }
+
+class YvVerificationFactory:
+    """Operations formerly exposed as module-level functions of verification.
+
+    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
+"""
+
+    @staticmethod
+    def detect_cot_failure_modes(
+        reasoning_steps: List[str],
+        final_answer: str
+    ) -> List[Tuple[str, float]]:
+        """Detect CoT failure modes.
+
+        Args:
+            reasoning_steps: Textual reasoning steps.
+            final_answer: Final answer text.
+
+        Returns:
+            List of (failure_mode, confidence) tuples.
+        """
+        failures = []
+
+        # Check for premature conclusion
+        if len(reasoning_steps) < 3 and len(final_answer.split()) > 5:
+            failures.append(("premature_conclusion", 0.7))
+
+        # Check for circular reasoning
+        step_texts = [s.lower() for s in reasoning_steps]
+        for i in range(len(step_texts)):
+            for j in range(i + 1, len(step_texts)):
+                if step_texts[i] in step_texts[j] or step_texts[j] in step_texts[i]:
+                    failures.append(("circular_reasoning", 0.6))
+                    break
+
+        # Check for hallucination (repeated phrases without new info)
+        if len(reasoning_steps) > 5:
+            unique_steps = set(step_texts)
+            if len(unique_steps) < len(step_texts) * 0.7:
+                failures.append(("hallucination", 0.5))
+
+        return failures

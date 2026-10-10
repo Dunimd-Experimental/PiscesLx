@@ -1119,13 +1119,21 @@ class YvGenerator:
 
 
 # Factory function
-def create_generator(config: Optional[Any] = None) -> YvGenerator:
-    """Create a YvGenerator instance.
-    
-    Args:
-        config: Model configuration.
-        
-    Returns:
-        Initialized generator.
-    """
-    return YvGenerator(config)
+
+class YvGeneratorFactory:
+    """Operations formerly exposed as module-level functions of generator.
+
+    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
+"""
+
+    @staticmethod
+    def create_generator(config: Optional[Any] = None) -> YvGenerator:
+        """Create a YvGenerator instance.
+
+        Args:
+            config: Model configuration.
+
+        Returns:
+            Initialized generator.
+        """
+        return YvGenerator(config)

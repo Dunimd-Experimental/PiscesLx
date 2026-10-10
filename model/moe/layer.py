@@ -109,7 +109,7 @@ from model.utils import YvNumericalGuard
 
 from utils.dc import PiscesLxLogger
 from .expert_evolution import YvExpertEvolution
-from .gate import moe_init_weights, YvMoEGate, YvStableMoEGate, YvPathMoEGate
+from .gate import YvGateInitializer, YvMoEGate, YvStableMoEGate, YvPathMoEGate
 from .gate import YvMoEGate as _YvMoEGate
 from .gate import YvPhiBalancing as _YvPhiBalancing
 from .expert import YvExpert, YvSharedExpert, YvExpertConfig, YvExpertType, YvExpertMode

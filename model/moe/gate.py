@@ -97,32 +97,6 @@ from utils.dc import PiscesLxLogger
 
 from utils.paths import PiscesLxPaths
 _LOG = PiscesLxLogger("Yv.Moe", file_path=PiscesLxPaths.get_log_file("Yv.Moe"), enable_file=True)
-
-def moe_init_weights(m):
-    """Initialize weights for linear layers in MoE modules.
-    
-    Applies Kaiming uniform initialization to linear layer weights
-    and zeros bias parameters. This initialization scheme is suitable
-    for ReLU-family activations commonly used in MoE experts.
-    
-    Args:
-        m (nn.Module): A PyTorch module to initialize.
-            Only affects nn.Linear modules.
-    
-    Example:
-        >>> expert = nn.Linear(4096, 11008)
-        >>> expert.apply(moe_init_weights)
-    
-    Note:
-        Should be applied to expert modules after construction.
-        Uses Kaiming uniform with a=sqrt(5) for compatibility.
-    """
-    if isinstance(m, nn.Linear):
-        nn.init.kaiming_uniform_(m.weight, a=math.sqrt(5))
-        if m.bias is not None:
-            nn.init.zeros_(m.bias)
-
-
 # Paper: Shazeer et al., "Outrageously Large Neural Networks: The Sparsely-Gated Mixture-of-Experts Layer", ICLR 2017, arXiv:1701.06538; DeepSeek-AI, "DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Language Model", arXiv:2405.04434; DeepSeek-AI, "DeepSeek-V3 Technical Report", arXiv:2412.19437
 class YvMoEGate(nn.Module):
     """Expert routing gate for MoE with top-k selection and load balancing.
@@ -2165,3 +2139,34 @@ class YvUltraSparseGate(nn.Module):
         expert_counts = expert_counts / total_tokens
         balance_loss = self.num_experts * (avg_scores * expert_counts).sum()
         return balance_loss * self.load_balance_alpha
+
+class YvGateInitializer:
+    """Operations formerly exposed as module-level functions of gate.
+
+    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
+"""
+
+    @staticmethod
+    def moe_init_weights(m):
+        """Initialize weights for linear layers in MoE modules.
+
+        Applies Kaiming uniform initialization to linear layer weights
+        and zeros bias parameters. This initialization scheme is suitable
+        for ReLU-family activations commonly used in MoE experts.
+
+        Args:
+            m (nn.Module): A PyTorch module to initialize.
+                Only affects nn.Linear modules.
+
+        Example:
+            >>> expert = nn.Linear(4096, 11008)
+            >>> expert.apply(moe_init_weights)
+
+        Note:
+            Should be applied to expert modules after construction.
+            Uses Kaiming uniform with a=sqrt(5) for compatibility.
+        """
+        if isinstance(m, nn.Linear):
+            nn.init.kaiming_uniform_(m.weight, a=math.sqrt(5))
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)

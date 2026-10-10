@@ -625,37 +625,43 @@ class YvSampler:
 
         return token_indices.unsqueeze(-1), top_scores, beam_indices
 
+class YvSamplerFactory:
+    """Operations formerly exposed as module-level functions of sampler.
 
-def create_sampler(
-    strategy: str = "top_k_top_p",
-    temperature: float = 1.0,
-    top_k: int = 50,
-    top_p: float = 0.9,
-    **kwargs
-) -> YvSampler:
-    """Factory function to create a configured sampler.
-    
-    Convenience function for creating a YvSampler with common
-    parameters without explicitly creating a YvSamplingConfig.
-    
-    Args:
-        strategy: Sampling strategy name. Default: "top_k_top_p".
-        temperature: Sampling temperature. Default: 1.0.
-        top_k: Top-k parameter. Default: 50.
-        top_p: Top-p parameter. Default: 0.9.
-        **kwargs: Additional parameters passed to YvSamplingConfig.
-        
-    Returns:
-        Configured YvSampler instance.
-    
-    Example:
-        >>> sampler = create_sampler(temperature=0.7, top_k=40)
-    """
-    config = YvSamplingConfig(
-        strategy=strategy,
-        temperature=temperature,
-        top_k=top_k,
-        top_p=top_p,
+    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
+"""
+
+    @staticmethod
+    def create_sampler(
+        strategy: str = "top_k_top_p",
+        temperature: float = 1.0,
+        top_k: int = 50,
+        top_p: float = 0.9,
         **kwargs
-    )
-    return YvSampler(config)
+    ) -> YvSampler:
+        """Factory function to create a configured sampler.
+
+        Convenience function for creating a YvSampler with common
+        parameters without explicitly creating a YvSamplingConfig.
+
+        Args:
+            strategy: Sampling strategy name. Default: "top_k_top_p".
+            temperature: Sampling temperature. Default: 1.0.
+            top_k: Top-k parameter. Default: 50.
+            top_p: Top-p parameter. Default: 0.9.
+            **kwargs: Additional parameters passed to YvSamplingConfig.
+
+        Returns:
+            Configured YvSampler instance.
+
+        Example:
+            >>> sampler = YvSamplerFactory.create_sampler(temperature=0.7, top_k=40)
+        """
+        config = YvSamplingConfig(
+            strategy=strategy,
+            temperature=temperature,
+            top_k=top_k,
+            top_p=top_p,
+            **kwargs
+        )
+        return YvSampler(config)

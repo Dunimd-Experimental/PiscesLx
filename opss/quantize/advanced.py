@@ -649,3 +649,11 @@ class PiscesLxAdaptiveBitAllocationOperator(PiscesLxOperatorInterface):
             "memory_savings_mb": (original_memory - quantized_memory) / 1024 / 1024,
             "savings_ratio": savings_ratio
         }
+
+class PiscesLxAdvancedQuantizer:
+    """Operations formerly exposed as module-level functions of advanced.
+
+    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
+"""
+
+

@@ -159,3 +159,11 @@ class PiscesLxQuartetTrainer:
     def get_compression_ratio(self) -> float:
         """Get weight compression ratio from FP4."""
         return 4.0  # FP32 -> FP4 is 8x, BF16 -> FP4 is 4x
+
+class PiscesLxQuartetQuantizer:
+    """Operations formerly exposed as module-level functions of quartet.
+
+    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
+"""
+
+

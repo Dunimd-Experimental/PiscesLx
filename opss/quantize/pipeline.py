@@ -51,7 +51,12 @@ from typing import Any, Dict, Optional, List, Tuple, Union
 from configs.version import VERSION
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus, PiscesLxOperatorConfig
 from .methods import PiscesLxQuantizationConfig, PiscesLxQuantizationOperatorFactory
-from .advanced import PiscesLxAdvancedQuantizationConfig, PiscesLxSensitivityAnalysisOperator, PiscesLxAdaptiveBitAllocationOperator
+from .advanced import (
+    PiscesLxAdvancedQuantizer,
+    PiscesLxAdvancedQuantizationConfig,
+    PiscesLxSensitivityAnalysisOperator,
+    PiscesLxAdaptiveBitAllocationOperator,
+)
 from .calibration import PiscesLxCalibrationConfig, PiscesLxCalibrationDataLoaderOperator, PiscesLxActivationCollectorOperator
 
 

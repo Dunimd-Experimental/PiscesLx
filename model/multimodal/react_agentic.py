@@ -1382,16 +1382,22 @@ class YvReActAgentic(nn.Module):
         """Clear all stored checkpoints."""
         self._checkpoint_storage.clear()
 
+class YvReActFactory:
+    """Operations formerly exposed as module-level functions of react_agentic.
 
-def create_react_agentic(hidden_size: int = 4096, 
-                         max_steps: int = 20) -> YvReActAgentic:
-    """Factory function to create ReAct Agentic.
-    
-    Args:
-        hidden_size: Hidden size for neural modules
-        max_steps: Maximum ReAct steps
-        
-    Returns:
-        ReAct Agentic instance
-    """
-    return YvReActAgentic(hidden_size, max_steps)
+    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
+"""
+
+    @staticmethod
+    def create_react_agentic(hidden_size: int = 4096, 
+                             max_steps: int = 20) -> YvReActAgentic:
+        """Factory function to create ReAct Agentic.
+
+        Args:
+            hidden_size: Hidden size for neural modules
+            max_steps: Maximum ReAct steps
+
+        Returns:
+            ReAct Agentic instance
+        """
+        return YvReActAgentic(hidden_size, max_steps)

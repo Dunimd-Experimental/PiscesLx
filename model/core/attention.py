@@ -171,28 +171,6 @@ from opss.infer.fused_mla import PiscesLxFusedMLAProjector
 from utils.paths import PiscesLxPaths
 
 _CACHED_CAUSAL_MASKS: dict = {}
-
-def _get_causal_sdpa_mask(
-    seq_len: int,
-    kv_len: int,
-    device: torch.device,
-    dtype: torch.dtype,
-    diagonal: int | None = None,
-) -> torch.Tensor:
-    if diagonal is None:
-        diagonal = kv_len - seq_len + 1
-    key = (seq_len, kv_len, diagonal)
-    if key not in _CACHED_CAUSAL_MASKS:
-        causal_mask = torch.triu(
-            torch.ones(seq_len, kv_len, dtype=torch.bool),
-            diagonal=diagonal,
-        )
-        _CACHED_CAUSAL_MASKS[key] = causal_mask.cpu()
-    bool_mask = _CACHED_CAUSAL_MASKS[key].to(device=device)
-    sdpa_mask = torch.zeros(seq_len, kv_len, device=device, dtype=dtype)
-    sdpa_mask.masked_fill_(bool_mask, float('-inf'))
-    return sdpa_mask
-
 _LOG = PiscesLxLogger("Yv.Core", file_path=PiscesLxPaths.get_log_file("Yv.Core"), enable_file=True)
 
 
@@ -6127,3 +6105,31 @@ class YvLatentCondensedAttention(nn.Module):
         output = output_flat.view(b, n_h, t, hd)
 
         return output, k_latent, v_latent
+
+class YvAttentionMaskFactory:
+    """Operations formerly exposed as module-level functions of attention.
+
+    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
+"""
+
+    @staticmethod
+    def _get_causal_sdpa_mask(
+        seq_len: int,
+        kv_len: int,
+        device: torch.device,
+        dtype: torch.dtype,
+        diagonal: int | None = None,
+    ) -> torch.Tensor:
+        if diagonal is None:
+            diagonal = kv_len - seq_len + 1
+        key = (seq_len, kv_len, diagonal)
+        if key not in _CACHED_CAUSAL_MASKS:
+            causal_mask = torch.triu(
+                torch.ones(seq_len, kv_len, dtype=torch.bool),
+                diagonal=diagonal,
+            )
+            _CACHED_CAUSAL_MASKS[key] = causal_mask.cpu()
+        bool_mask = _CACHED_CAUSAL_MASKS[key].to(device=device)
+        sdpa_mask = torch.zeros(seq_len, kv_len, device=device, dtype=dtype)
+        sdpa_mask.masked_fill_(bool_mask, float('-inf'))
+        return sdpa_mask
