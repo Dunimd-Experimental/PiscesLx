@@ -1185,47 +1185,37 @@ class YvStableMoEGate(nn.Module):
 # Select top-k experts
         top_scores, top_idx = torch.topk(scores, min(self.top_k, self.num_experts), dim=-1)
 
-        # Apply capacity limitation - optimized batched processing
-        final_scores = []
-        final_indices = []
-        
-        # Vectorized capacity check
+        # Capacity limitation. The weights and indices stay in the [tokens, top_k]
+        # shape every other gate in this module returns, because both MoE layers and the
+        # fused dispatch address assignments by token position. Over an expert's capacity
+        # the lowest-scoring slots are zeroed — the token then falls through to the shared
+        # expert — instead of folding the result into a compacted variable-length list,
+        # which silently paired tokens with the wrong experts on the non-fused path.
+        weights = F.softmax(top_scores, dim=-1, dtype=torch.float32).type_as(top_scores)
+        allowed = torch.ones_like(top_idx, dtype=torch.bool)
+
         expert_counts = torch.bincount(top_idx.flatten(), minlength=self.num_experts)
-        overloaded_experts = (expert_counts > tokens_per_expert).nonzero().squeeze(-1)
-        
-        if len(overloaded_experts) > 0:
-            # Process overloaded experts
-            for expert_id in overloaded_experts.tolist():
-                mask = (top_idx == expert_id).any(dim=-1)
-                if mask.sum() > tokens_per_expert:
-                    expert_scores = scores[mask, expert_id]
-                    _, top_indices = torch.topk(expert_scores, tokens_per_expert)
-                    keep_mask = torch.zeros_like(expert_scores, dtype=torch.bool)
-                    keep_mask[top_indices] = True
-                    mask[mask.clone()] = keep_mask
-                
-                if mask.any():
-                    final_scores.append(scores[mask])
-                    final_indices.append(torch.full_like(scores[mask], expert_id))
-        else:
-            # Fast path: no capacity overflow
-            for expert_id in range(self.num_experts):
-                mask = (top_idx == expert_id).any(dim=-1)
-                if mask.any():
-                    final_scores.append(scores[mask])
-                    final_indices.append(torch.full_like(scores[mask], expert_id))
-        
-        # Use uniform distribution if there is no valid routing
-        if len(final_scores) == 0:
-            uniform_expert = torch.randint(0, self.num_experts, (x_flat.size(0),), device=x.device)
-            final_scores = [torch.ones(x_flat.size(0), device=x.device) / self.top_k]
-            final_indices = [uniform_expert]
-        
+        overloaded = (expert_counts > tokens_per_expert).nonzero().squeeze(-1)
+        for expert_id in overloaded.tolist():
+            slots = (top_idx == expert_id)
+            positions = slots.any(dim=-1).nonzero(as_tuple=True)[0]
+            surplus = int(positions.numel()) - tokens_per_expert
+            if surplus <= 0:
+                continue
+            ranked = torch.topk(scores[positions, expert_id], surplus, largest=False)
+            dropped = positions[ranked.indices]
+            allowed[dropped] = allowed[dropped] & ~slots[dropped]
+
+        weights = weights * allowed.to(weights.dtype)
+        total = weights.sum(dim=-1, keepdim=True)
+        weights = weights * (total > 0).to(weights.dtype) / total.clamp(
+            min=YvNumericalGuard.get_eps(total.dtype))
+
         # Update bias for load balancing
         if self.training:
             self._update_expert_bias_stable(top_idx)
-        
-        return torch.cat(final_scores), torch.cat(final_indices), torch.tensor(0.0, device=x.device)
+
+        return weights, top_idx, torch.tensor(0.0, device=x.device)
 
 # Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvExpertOrientedRouter(nn.Module):
