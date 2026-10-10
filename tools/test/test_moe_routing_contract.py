@@ -141,6 +141,27 @@ class PiscesLxMoeRoutingContractTest:
                         f"{cls_name} MoE non-fused path stays finite")
 
     @classmethod
+    def check_path_gate_recomputes_when_shape_changes(cls) -> None:
+        """PathMoE's shared assignment must never be replayed onto another batch."""
+        from model.moe.gate import YvPathMoEGate
+
+        inner = cls._gate()
+        shared = YvPathMoEGate(inner, stage_size=4)
+        shared.train()
+        small = torch.randn(1, 5, HIDDEN)
+        big = torch.randn(1, cls.TOKENS, HIDDEN)
+        _, idx_small, _ = shared(small)
+        _, idx_big, _ = shared(big)
+        cls._expect(int(idx_big.shape[0]) == cls.TOKENS,
+                    "the stage re-routes when the token count changes instead of "
+                    f"handing {idx_small.shape[0]} cached rows to {cls.TOKENS} tokens")
+        # Within one batch the stage still shares a single assignment.
+        first, _, _ = shared(big)
+        second, _, _ = shared(big)
+        cls._expect(bool(torch.equal(first, second)),
+                    "layers inside a stage keep sharing one routing decision")
+
+    @classmethod
     def _expect(cls, condition: bool, message: str) -> None:
         if not condition:
             raise AssertionError(message)
@@ -153,6 +174,7 @@ class PiscesLxMoeRoutingContractTest:
             cls.check_capacity_drops_by_zeroing,
             cls.check_dispatch_accepts_the_gate,
             cls.check_layers_run_fused_and_plain,
+            cls.check_path_gate_recomputes_when_shape_changes,
         )
         failures = 0
         for check in checks:

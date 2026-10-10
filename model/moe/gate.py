@@ -1764,6 +1764,7 @@ class YvPathMoEGate(nn.Module):
         self.gate = gate
         self.stage_size = stage_size
         self._cache: Optional[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = None
+        self._cache_signature = None
         self._layer_idx = 0
 
     @classmethod
@@ -1780,8 +1781,18 @@ class YvPathMoEGate(nn.Module):
         return cls._shared_gates[key]
 
     def forward(self, x: torch.Tensor):
-        if self._layer_idx == 0:
+        # The shared assignment is only valid for the input it was computed from.
+        # A stage that mixes shapes — a warm-up probe on a shorter sequence, a
+        # train/eval phase change, or a stage left half-consumed by the previous
+        # forward — must re-route, otherwise the stale [tokens, top_k] tensors of a
+        # different batch are handed to a layer whose token count no longer matches.
+        signature = (x.numel() // max(1, x.shape[-1]), self.training)
+        if signature != self._cache_signature:
+            self._cache = None
+            self._layer_idx = 0
+        if self._layer_idx == 0 or self._cache is None:
             self._cache = self.gate(x)
+            self._cache_signature = signature
         result = self._cache
         if result is None:
             raise RuntimeError("YvPathMoEGate: cache is None on layer_idx != 0")
@@ -1790,6 +1801,7 @@ class YvPathMoEGate(nn.Module):
 
     def reset(self):
         self._cache = None
+        self._cache_signature = None
         self._layer_idx = 0
 
     def extra_repr(self) -> str:
