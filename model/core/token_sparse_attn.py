@@ -181,6 +181,45 @@ class YvTokenSparseAttention(nn.Module):
         forced = torch.cat([block_ids[..., :-1], diagonal], dim=-1)
         return torch.where(has_diagonal, block_ids, forced)
 
+    def _additive_mask_bias(
+        self, attention_mask: Optional[torch.Tensor], batch: int, seq_len: int,
+        num_qblocks: int, block: int, width: int,
+        key_global: torch.Tensor, query_global: torch.Tensor,
+    ) -> Optional[torch.Tensor]:
+        """Gather a caller-supplied square additive mask onto the selected (query, key) pairs.
+
+        A square mask is additive over pairs, not a key-side vector, so it cannot ride the
+        padding lane (that would forbid every key) and it cannot be ignored either: it may
+        carry ALiBi slopes or a window pattern. It is therefore gathered with the same ids the
+        keys used. The gathered tensor has the score tensor's shape, which is the price of
+        honouring arbitrary pair structure; positions past ``seq_len`` are clamped here and
+        forbidden by the padding bias instead.
+        """
+        if attention_mask is None or attention_mask.dim() < 2:
+            return None
+        mask = attention_mask
+        if tuple(mask.shape[-2:]) != (seq_len, seq_len):
+            return None
+        rows = mask.reshape(-1, seq_len, seq_len)
+        if rows.shape[0] not in (1, batch):
+            raise ValueError(
+                f"square mask batch {rows.shape[0]} is neither 1 nor {batch}"
+            )
+        flat = rows.reshape(rows.shape[0], seq_len * seq_len)
+        # The two indices live on different axes of the score tile: the query index varies over
+        # the key slots (last axis), the key index over the queries inside a block (one before
+        # it). Inserting the axes that way lets the arithmetic broadcast into ``[B, H, n, block,
+        # width*block]`` instead of forcing both onto the same rank.
+        q_index = query_global.reshape(1, 1, num_qblocks, block, 1).clamp(max=seq_len - 1)
+        k_index = key_global.unsqueeze(-2).clamp(max=seq_len - 1)
+        row_index = torch.zeros(1, 1, 1, 1, 1, dtype=torch.long, device=mask.device)
+        if rows.shape[0] == batch:
+            row_index = row_index + torch.arange(
+                batch, device=mask.device).view(batch, 1, 1, 1, 1)
+        offset = (row_index * (seq_len * seq_len) + q_index * seq_len + k_index).reshape(-1)
+        gathered = flat.reshape(-1).gather(0, offset)
+        return gathered.view(batch, self.num_heads, num_qblocks, block, width * block)
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -262,6 +301,11 @@ class YvTokenSparseAttention(nn.Module):
         key_bias = key_bias.gather(1, key_global.reshape(B, -1)).view(
             B, H, num_qblocks, width * block).unsqueeze(3)
         scores = scores + key_bias
+
+        additive = self._additive_mask_bias(
+            attention_mask, B, T, num_qblocks, block, width, key_global, query_global)
+        if additive is not None:
+            scores = scores + additive
         scores = scores.masked_fill(~intra_causal, float('-inf'))
 
         # A row whose every candidate is forbidden would soften to NaN. Its own key is in

@@ -105,14 +105,27 @@ class PiscesLxAttentionMaskShapeTests:
                     else "ACCEPTED - silent broadcast is possible again")
 
     def check_causal_mask_actually_masks(self) -> None:
-        """The mask must change the result, proving it is applied rather than ignored."""
-        unmasked = self.module(self.states, None)
+        """The mask must be honoured, and causality must not depend on it.
+
+        A causal mask can no longer be the probe: this lane enforces causality structurally
+        (docs/proofs/05), so adding one is idempotent by construction (measured |delta| = 0.0)
+        and a "did it change anything" test would fail on a correct module. The probe is
+        therefore a mask that *conflicts* with causality - forbidding a key that lies in the
+        past - which no internal rule can reproduce; the idempotence of the causal mask is
+        asserted alongside it as the structural statement itself.
+        """
+        base = self.module(self.states, None)
         causal = torch.full((self.SEQ, self.SEQ), -1e4)
         causal.triu_(1)
-        masked = self.module(self.states, causal)
-        differs = float((unmasked - masked).norm()) > 1e-6
-        self.record("effect::causal mask applied", differs,
-                    f"|delta| = {float((unmasked - masked).norm()):.4e}")
+        causal_delta = float((base - self.module(self.states, causal)).norm())
+        self.record("effect::causal mask is redundant (structural)", causal_delta == 0.0,
+                    f"|delta| = {causal_delta:.4e} with the lane causal by construction")
+
+        past_forbidden = torch.zeros(self.SEQ, self.SEQ)
+        past_forbidden[:, 0] = -1e4
+        honoured_delta = float((base - self.module(self.states, past_forbidden)).norm())
+        self.record("effect::non-redundant mask applied", honoured_delta > 1e-6,
+                    f"|delta| = {honoured_delta:.4e} when a past key is forbidden")
 
     def run(self) -> int:
         """Execute all checks; non-zero exit on any failure."""
