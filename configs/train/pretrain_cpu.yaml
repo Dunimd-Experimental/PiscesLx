@@ -80,7 +80,12 @@ training:
   # outright - the ceiling has to track what this host actually has, not what it once had.
   # 2.6 stays above the measured 2.51 GB peak and below today's availability. A breach still
   # writes a checkpoint before aborting, so the steps already run are not lost.
-  memory_budget_gb: 2.6
+  # 2026-10-11 later the same evening: a 0.1B run aborted at step 8 with a measured footprint
+  # of 2.65 GB while the host offered 8.84 GB of free commit - the declaration, not the host,
+  # was the binding constraint. 3.2 clears that floor with room for the checkpoint writes; the
+  # build gate still refuses the run outright if the host cannot back the number, so raising it
+  # cannot turn a shortage into a native crash.
+  memory_budget_gb: 3.2
   # Sized for one foreground invocation on this host: ~10 s/step at batch 1 / seq 32,
   # so 30 steps plus model construction and two checkpoint writes fit in one command.
   max_steps: 30
