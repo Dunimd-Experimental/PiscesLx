@@ -1807,3 +1807,43 @@ RPI 把每条 trace 写成块贡献方向经寻址投影 `W(k×d)` 的像，保�
    经 3.2 提到 4.2。步中超限仍会**先写检查点再中止**，跨窗口续训即靠此。
 3. 本机单次只能推进约 8–30 步，真正收敛必须走续训循环或换算力平台。
 
+---
+
+## 63 · A72 的量化效果链，与 A73（文档承诺的"续训"从未工作过）
+
+**A72 效果链（同一 0.1B、同一评测口径，`tools/dev/verify_checkpoint.py`）**：
+
+| 检查点 | 被改动参数 | 完全未变 | 留出集 CE（均匀基线 11.9293） |
+|--------|-----------|---------|------------------------------|
+| `budget_abort_step_8.pt`（修 A72 前） | 498 / 578 | **80** | 12.3215 |
+| `a72_step8.pt`（四个注意力门接上后） | 506 / 578 | **72** | 12.3562 |
+| `keep_adamw_step20.pt`（再补 2 层×4 个路由门） | **514 / 578** | **64** | **12.1710** |
+
+即两处修复共让 **16 个"注册了却永不训练"的参数**开始接收梯度；CE 也随步数从 12.32
+降到 12.17（仍高于均匀基线，尚未达标，但方向首次正确）。仍为 0 梯度的参数已换了一批：
+`attention.aux_kv_gate`（调用方门控的休眠分支：`extra_kv=None` 时该分支立刻返回）、
+`mamba3_block.trapezoidal.dt_proj.bias`、`ss_duality.conv_mode.D`、`router.w_hicl/w_got`
+（辅助头投影权重，只有 `_should_compute_aux_head` 放行时才参与前向）—— 属另一类"休眠分支"，
+待逐一判定是接线还是摘除。
+
+**A73｜`--resume_ckpt` 会把模型包成 LoRA，导致续训必然失败**（提交 `32679ea`）。
+`manage.py` 的帮助文本与 README 都写明 `--resume_ckpt` 是"继续被中断的训练：载入权重、
+优化器状态与进度"，但旗舰策略的判据是
+`adapter_run = (stage ∈ ADAPTER_STAGES) or bool(resume_ckpt or model_name_or_path)`，
+把"从基座权重做适配训练"与"继续同一轮的中断训练"合成一个布尔。实测（退出码 1）：
+
+```
+RuntimeError: Error(s) in loading state_dict for PeftModelForCausalLM
+```
+
+—— 续训把模型包成 `PeftModelForCausalLM`，整模型权重装不进适配器外壳而 strict 载入失败。
+**结论：从零训练的档位从来没有过可用的续训**，本机 8–30 步窗口因此是硬墙。
+修法：适配器只由**基座权重**（`model_name_or_path`）触发，把两件事拆回各自本来的信号。
+实测：同一命令改为 `adapter_run=False lora_enabled=False`，日志出现
+`Resumed training from …keep_adamw_step20.pt`，步号自 20 续到 22/23/24/25/26 ——
+**跨窗口累积成立**，这是本机把 0.1B 推向收敛的唯一机制。
+
+**同时确认的事实**：Ink 路径（`optimizer.name=adamw8bit`）在声明 4.6 GB 下正常推进，
+稳态足迹实测 4.22 GB（第 11 步被 4.20 声明拦下）；AdamW 稳态 2.65 GB。此前记的
+"换 adamw 才不崩"已在本节更正。
+
