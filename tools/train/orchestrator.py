@@ -593,8 +593,17 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         # From-scratch stages must train every parameter in the configured dtype and
         # must save at the cadence the stage configuration declared.
         stage_name = str(getattr(self.stage, "value", self.stage) or "")
-        base_checkpoint = str(params.get("resume_ckpt") or params.get("model_name_or_path") or "").strip()
-        adapter_run = (stage_name in self.ADAPTER_STAGES) or bool(base_checkpoint)
+        # A base weight to adapt and this trainer's own mid-run state are different things and
+        # were read as one. `--resume_ckpt` is documented (manage.py, README) as "resume
+        # interrupted training: loads model weights, optimiser state and progress", but the
+        # clause below also treated it as a base model, so resuming flipped the policy to
+        # 4-bit + LoRA, built a PeftModelForCausalLM and then died on
+        # `load_state_dict(..., strict=True)` because a full-model checkpoint does not fit an
+        # adapter wrapper - i.e. the documented resume never worked for a from-scratch stage,
+        # and no run could be continued past one host window. Only a *base weight* asks for an
+        # adapter; a resume rebuilds the same model it is continuing.
+        base_weight = str(params.get("model_name_or_path") or "").strip()
+        adapter_run = (stage_name in self.ADAPTER_STAGES) or bool(base_weight)
 
         if adapter_run:
             if q is not None:
