@@ -145,6 +145,7 @@ from utils.device import PiscesLxDeviceResolver
 from utils.host_memory import (
     PiscesLxHostMemoryBudget,
     PiscesLxHostMemoryBudgetError,
+    BYTES_PER_PARAMETER_AT_BUILD,
 )
 from utils.seed import PiscesLxDeterminism
 from utils.paths import PiscesLxPaths
@@ -694,12 +695,30 @@ class PiscesLxTrainingOperator(object):
             return section.get(key, fallback)
         return getattr(section, key, fallback)
 
-    def reserve_host_memory_for_build(self) -> None:
-        """Refuse to start a model build that cannot fit in the declared budget."""
+    def reserve_host_memory_for_build(self, estimated_params: int = 0) -> None:
+        """Refuse to start a model build that cannot fit in the declared budget.
+
+        The gate asks for the *build's* footprint, not the whole declared ceiling. A ceiling
+        bounds the run's steady state, and demanding all of it up front makes a host that has
+        2.60 GB free reject a 2.60 GB declaration even when the build needs a fraction of it -
+        which is what happened on 2026-10-11 and blocked every local run (docs/audit/00 A70).
+        Without a parameter estimate the ceiling itself is the only honest requirement:
+        guessing lower would convert a refusal into a native allocation crash, the very
+        failure this gate exists to prevent.
+        """
         if not self._memory_budget.enabled():
             return
-        self._memory_budget.require_headroom(
-            required_gb=self._memory_budget.budget_gb, stage="model build")
+        if estimated_params > 0:
+            required_gb = estimated_params * BYTES_PER_PARAMETER_AT_BUILD / (1024 ** 3)
+        else:
+            required_gb = self._memory_budget.budget_gb
+        self._memory_budget.require_headroom(required_gb=required_gb, stage="model build")
+
+    def _model_parameter_count(self) -> int:
+        """Parameters currently on the model, or 0 before it exists."""
+        if self.model is None:
+            return 0
+        return sum(p.numel() for p in self.model.parameters())
 
     def _materialize_model_components(self) -> None:
         """Force the training-relevant optional components into existence first.
@@ -711,7 +730,7 @@ class PiscesLxTrainingOperator(object):
         the saved state_dict depend on which code paths executed, so the weight no longer
         strict-loads into a bare model. Building them up front removes all three.
         """
-        self.reserve_host_memory_for_build()
+        self.reserve_host_memory_for_build(self._model_parameter_count())
         ensure_training_modules = getattr(self.model, "ensure_training_modules", None)
         if ensure_training_modules is None:
             return
@@ -804,7 +823,9 @@ class PiscesLxTrainingOperator(object):
         # model is the native allocation, so a guard placed after it can only report the
         # crash it was meant to prevent (a 3.00 GB declared budget against 0.36 GB of free
         # commit once died with `DefaultCPUAllocator: not enough memory` — docs/audit A25).
-        self.reserve_host_memory_for_build()
+        # The parameter count comes from the meta-device probe in step 1, so the requirement
+        # scales with what is about to be built rather than with the declared ceiling.
+        self.reserve_host_memory_for_build(_total_params)
 
         # Step 2a: handle CPU init path cache load (non-meta, quant+lora)
         cache_path = None

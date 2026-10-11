@@ -667,6 +667,13 @@ class YvModel(nn.Module):
 
         if device is None:
             device = YvDeviceResolver.resolve(device)
+        else:
+            # A caller may hand over a device *string* - 'meta' from the parameter-count probe,
+            # 'cuda:0'/'cpu' from configuration. Everything downstream reads ``device.type``,
+            # which a string does not carry, so the meta-device estimate died on it and the
+            # whole feasibility check was silently skipped (docs/audit/00 A69). Normalising to
+            # torch.device keeps 'meta' intact and leaves a real resolver choice alone.
+            device = torch.device(device)
         if dtype is None:
             dtype = torch.bfloat16 if device.type == 'cuda' else torch.float32
 

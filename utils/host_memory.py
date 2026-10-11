@@ -48,7 +48,11 @@ BYTES_PER_KIB = 1024.0
 #: A run is refused when less than this much commit charge is left, even if the declared
 #: budget is larger: below it the operating system itself starts failing to allocate.
 MINIMUM_USABLE_COMMIT_GB = 0.5
-
+#: Commit charge a model build costs per stored parameter, measured rather than assumed:
+#: constructing the 224.7M-parameter host tier committed 6.81 GB (docs/audit/00 §13), i.e.
+#: 30.3 B/param. The multiple over the stored weights is transient fp32 and block machinery,
+#: which is why a build gate must scale with the parameter count and not with the ceiling.
+BYTES_PER_PARAMETER_AT_BUILD = 30.3
 
 class PiscesLxHostMemoryBudgetError(RuntimeError):
     """Raised when a measured footprint or remaining commit charge breaches the budget."""
@@ -199,9 +203,12 @@ class PiscesLxHostMemoryBudget:
         available = self.available_commit_gb()
         limit = available if self.budget_gb is None else min(available, self.budget_gb)
         if limit < max(required_gb, MINIMUM_USABLE_COMMIT_GB):
+            # Three decimals on purpose: two quantities that disagree by a few megabytes both
+            # print as "2.60" at two decimals, which reads as a self-contradiction
+            # ("it needs 2.60 but only 2.60 is usable") instead of a shortfall.
             raise PiscesLxHostMemoryBudgetError(
-                f"refusing {stage}: it needs {required_gb:.2f} GB but only "
-                f"{limit:.2f} GB is usable (host free commit {available:.2f} GB, "
+                f"refusing {stage}: it needs {required_gb:.3f} GB but only "
+                f"{limit:.3f} GB is usable (host free commit {available:.3f} GB, "
                 f"declared budget {self.budget_gb})")
 
     def guard(self, stage: str) -> float:
