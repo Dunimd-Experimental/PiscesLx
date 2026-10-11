@@ -941,6 +941,68 @@ class YvConfig:
     use_sparse_cut: bool = True
     sparse_cut_ratio: float = 0.5
 
+    # --- Knobs that the modules read with a silent `getattr(cfg, key, default)` fallback ---
+    # Declared here so the value the code already assumes is also the value configuration can
+    # set: an undeclared read is a hidden constant, and NO-UNDECLARED-CONFIG-READ existed to
+    # say so (docs/audit/00 §70). Each default is the fallback at the read site it cites, not
+    # a new choice.
+    mr_rope_mode: str = 'pro'  # model/core/attention.py:5298
+    linear_rope_scale: float = 1.0  # model/core/attention.py:5302
+    aux_kv_gate_init: float = 0.0  # model/core/attention.py:5368
+    deepnorm_beta: float = 0.13  # model/core/blocks.py:1439
+    deepnorm_alpha: float = 0.87  # model/core/blocks.py:1440
+    layer_route_lora_rank: int = 8  # model/core/blocks.py:1551
+    layer_route_lora_scale: float = 1.0  # model/core/blocks.py:1552
+    layer_route_gate_reg: float = 0.01  # model/core/blocks.py:1553
+    memory_threshold_high: float = 0.85  # model/core/blocks.py:1561
+    memory_threshold_low: float = 0.60  # model/core/blocks.py:1562
+    checkpoint_frequency: int = 1  # model/core/blocks.py:1563
+    use_distributed_attn_gather: bool = False  # model/core/blocks.py:2280
+    kv_cache_max_size: int = 8192  # model/core/cache.py:1778
+    quantization_enabled: bool = True  # model/core/cache.py:1779
+    lyx_anchor_bits: int = 8  # model/core/cache.py:1826
+    lyx_residual_bits: int = 4  # model/core/cache.py:1827
+    lyx_anchor_ratio: float = 0.25  # model/core/cache.py:1828
+    lyx_progressive: bool = True  # model/core/cache.py:1829
+    starkv_compression_target: float = 0.75  # model/core/cache.py:1839
+    enable_starkv: bool = True  # model/core/cache.py:1841
+    use_lynx_quant: bool = True  # model/core/cache.py:2185
+    mamba3_use_trapezoidal: bool = True  # model/core/hybrid.py:1086
+    mamba3_use_complex: bool = True  # model/core/hybrid.py:1087
+    mamba3_use_mimo: bool = True  # model/core/hybrid.py:1088
+    ssm_state_dim: int = 16  # model/core/hybrid.py:1197
+    ssm_expansion_factor: int = 2  # model/core/hybrid.py:1198
+    ssm_use_fp32_dt: bool = True  # model/core/hybrid.py:1199
+    ssm_use_relu_dt: bool = True  # model/core/hybrid.py:1200
+    hybrid_total_steps: int = 100000  # model/core/hybrid.py:1226
+    cache_config: Optional[Any] = None  # model/core/model.py:733
+    mhc_streams: int = 4  # model/core/model.py:1196
+    mhc_permutations: int = 8  # model/core/model.py:1197
+    classifier_dropout: float = 0.1  # model/core/model.py:2773
+    moe_routing_temperature: float = 3.0  # model/moe/gate.py:177
+    moe_temperature_min: float = 1.5  # model/moe/gate.py:178
+    moe_temperature_max: float = 5.0  # model/moe/gate.py:179
+    moe_bias_update_rate: float = 0.05  # model/moe/hicl_router.py:140
+    moe_dropout: float = 0.0  # model/moe/layer.py:682
+    max_gpu_experts: int = 4  # model/moe/layer.py:707
+    diversity_ortho_weight: float = 0.01  # model/moe/layer.py:1267
+    diversity_entropy_weight: float = 0.01  # model/moe/layer.py:1268
+    diversity_variance_weight: float = 0.01  # model/moe/layer.py:1269
+    audio_sampling_rate: int = 16000  # model/multimodal/audio.py:176
+    audio_n_mels: int = 128  # model/multimodal/audio.py:177
+    audio_n_fft: int = 1024  # model/multimodal/audio.py:178
+    audio_hop_length: int = 512  # model/multimodal/audio.py:179
+    audio_win_length: int = 1024  # model/multimodal/audio.py:180
+    use_agentic: bool = False  # model/multimodal/fusion.py:440
+    max_rca_rounds: int = 3  # model/multimodal/fusion.py:557
+    rca_convergence_threshold: float = 0.995  # model/multimodal/fusion.py:558
+    fusion_inject_interval: int = 4  # model/multimodal/rca_fusion.py:224
+    vision_use_sdpa: bool = True  # model/multimodal/vision.py:510
+    num_reasoning_steps: int = 4  # model/reasoning/reasoner/enhancer.py:188
+    enable_multi_path_core: bool = True  # model/reasoning/reasoner/unified.py:182
+    mpr_threshold: float = 0.6  # model/reasoning/reasoner/unified.py:183
+    mpr_seq_len_threshold: int = 512  # model/reasoning/reasoner/unified.py:184
+
     def __post_init__(self):
         """Initialize computed fields after dataclass construction.
         
