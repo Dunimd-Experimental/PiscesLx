@@ -1041,7 +1041,7 @@ class YvConfig:
     KNOWLEDGE_POOL_BILLIONS = 314.0   # 628 x 0.5B store
     block_rank: int = 512                       # scoring bottleneck width
     block_trace_dim: int = 0                    # k, addressing trace width; 0 = derive from d
-    block_trace_dim_ratio: float = 0.65         # k/d floor for RPI alignment tau >= 0.6
+    block_alignment_target: float = 0.60        # RPI alignment floor (see docs/proofs/rpi_trace_width.md)
     block_pool_slots: int = 2                   # device-resident blocks (see Fermi 3.1)
     block_gamma_max: float = 0.5                # A1(i) bound on the multiplicative gate
     block_beta_bound: float = 0.25              # A1(ii) bound constant c on the beta branch
@@ -1128,12 +1128,19 @@ class YvConfig:
         if self.block_trace_dim <= 0 and self.hidden_size > 0:
             # RPI writes each trace as the block's contribution direction seen through the
             # addressing projector W (k x d), i.e. an order-preserving image of the content
-            # ordering in row(W) subset of R^d. The image degrades as k/d falls
-            # (tau ~ (2/pi) arcsin(sqrt(k/d))); measured Kendall tau = 1.000 at k = d versus
-            # 0.227 at k = d/8. A fixed k = 256 against d = 4096 gives k/d = 0.0625 and an
-            # expected tau ~ 0.11, so RPI would do nothing at flagship scale. Derived from d,
-            # not tuned: tau >= 0.6 requires k/d >= 0.65 (docs/design/10 §4).
-            self.block_trace_dim = max(8, int(math.ceil(self.block_trace_dim_ratio * self.hidden_size)))
+            # ordering restricted to row(W). Projecting a fixed direction pair onto a uniform
+            # random k-subspace of R^d preserves their sign with probability
+            # tau = (2/pi) arcsin(sqrt(k/d)) (the arcsine law of projected signs), so the
+            # Kendall alignment RPI inherits is a function of k/d alone. Inverting it gives the
+            # *smallest* width reaching a requested tau: k = d sin^2(pi tau / 2). Measured
+            # agreement: tau = 1.000 at k = d (formula: 1.000), 0.227 at k = d/8 (formula: 0.230),
+            # 0.613 at the derived k for tau = 0.6 (formula: 0.600). A fixed k = 256 against
+            # d = 4096 sits at k/d = 0.0625, i.e. tau ~ 0.11, which would make RPI a no-op at
+            # flagship scale; the width is therefore derived, never tuned. k > d buys nothing
+            # because rank(W) <= d, hence the cap.
+            tau = min(max(self.block_alignment_target, 0.0), 1.0)  # clamp to the probability range
+            width = self.hidden_size * math.sin(0.5 * math.pi * tau) ** 2  # inverse arcsine law
+            self.block_trace_dim = max(8, min(self.hidden_size, int(math.ceil(width))))
 
     @classmethod
     def from_json(cls, path: str) -> 'YvConfig':
