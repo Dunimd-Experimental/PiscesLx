@@ -2083,3 +2083,23 @@ loss 的 8 个键都声明在 `PiscesLxTrainingConfig` 自身），因此可安�
 `self.distributed`（重命名，非同名），通用实现会把它当未知键丢掉，故保留显式映射；
 ② `moe:` / `advanced_operators:` / `fp8:` —— 整块 dict 直接赋给对象，不做逐键解析。
 这两类留在原样，并在报告中登记为"非同名映射需专门处理"。
+
+---
+
+## 69 · 关闭 §60 的"待手术"清单：删掉两个零引用死模块（−3224 行 / −94 静态违规）
+
+§60 把 `multimodal/enhanced_agentic.py` 与 `moe/diversity.py` 列为"已核实为死、但需谨慎摘
+`__init__` 再导出"。本轮按正确口径（模块级 + **导出名级**）复核后完成：
+
+| 文件 | 行数 | 类数 | 唯一外部引用 |
+|---|---|---|---|
+| `model/multimodal/enhanced_agentic.py` | 2238 | 19 | `model/agentic/__init__.py` 的再导出 |
+| `model/moe/diversity.py` | 986 | 6 | `model/moe/__init__.py` 的再导出 |
+
+摘除内容（全部注入路径）：两处 import 块、两组 `__all__` 条目、`model/agentic/__init__.py`
+文档字符串里的依赖清单行、`model/moe/__init__.py` 文档字符串的
+"4. Diversity Regularization (diversity.py)" 整段。
+
+**结算**：`import model` 通过；`manage.py test --stage 10` **exit=0**；
+`tools/check` errors **4058 → 3964（−94）**、warnings 1（删除的两个文件本身就是违规源）。
+§60 的待手术清单至此关闭；剩余待清项为 114 个"声明却无人读"的配置字段（同族，留作下一批）。
