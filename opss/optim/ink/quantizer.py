@@ -131,6 +131,56 @@ class PiscesLxInkBlockQuantizer:
         self._int8_max = 127.0
         self._int4_max = 7.0
     
+    @staticmethod
+    def _quantise_block_rows(rows, divisor, clip_lo, clip_hi):
+        """Quantise aligned block rows; rows is [blocks, width] float32."""
+        block_max = rows.abs().max(dim=1, keepdim=True).values.clamp(min=1e-12)
+        scales = block_max / divisor
+        quantised = torch.clamp(torch.round(rows / scales), min=clip_lo, max=clip_hi).to(torch.int8)
+        return quantised, scales
+
+    def _quantise_flat_blocks(self, flat, block_size, divisor, clip_lo, clip_hi):
+        """Quantise a flat tensor as an aligned head plus one ragged tail block.
+
+        Padding the tensor up to a whole number of blocks allocated a second full-size
+        fp32 copy of every parameter, twice per step (momentum and variance). Splitting the
+        aligned head from the tail performs the same arithmetic per element with no extra
+        copy, which is what made the host's commit charge fail during training.
+        """
+        num_elements = flat.numel()
+        full_blocks = num_elements // block_size
+        quantised_parts = []
+        scale_parts = []
+        if full_blocks:
+            rows = flat[:full_blocks * block_size].view(full_blocks, block_size)
+            rows_q, rows_s = self._quantise_block_rows(rows.float(), divisor, clip_lo, clip_hi)
+            quantised_parts.append(rows_q.reshape(-1))
+            scale_parts.append(rows_s.reshape(-1))
+        tail = flat[full_blocks * block_size:]
+        if tail.numel():
+            rows_q, rows_s = self._quantise_block_rows(tail.float().unsqueeze(0), divisor, clip_lo, clip_hi)
+            quantised_parts.append(rows_q.reshape(-1))
+            scale_parts.append(rows_s.reshape(-1))
+        return torch.cat(quantised_parts), torch.cat(scale_parts)
+
+    def _dequantise_flat_blocks(self, quantised, scales, block_size, num_elements, dtype):
+        """Reconstruct a flat tensor written by ``_quantise_flat_blocks``."""
+        out = torch.empty(num_elements, dtype=dtype, device=quantised.device)
+        full_blocks = num_elements // block_size
+        position = 0
+        block_index = 0
+        if full_blocks:
+            rows = quantised[:full_blocks * block_size].view(full_blocks, block_size)
+            out[:full_blocks * block_size] = (rows.to(dtype)
+                                              * scales[block_index:block_index + full_blocks].unsqueeze(-1)
+                                              ).reshape(-1)
+            position = full_blocks * block_size
+            block_index = full_blocks
+        if position < num_elements:
+            rows = quantised[position:num_elements].unsqueeze(0)
+            out[position:num_elements] = (rows.to(dtype) * scales[block_index].reshape(1, 1)).reshape(-1)
+        return out
+
     def quantize_int8(
         self,
         tensor: torch.Tensor,
@@ -158,39 +208,10 @@ class PiscesLxInkBlockQuantizer:
         """
         block_size = block_size or self.momentum_block_size
         original_shape = tensor.shape
-        original_dtype = tensor.dtype
-        device = tensor.device
-        
-        flat_tensor = tensor.flatten().float()
-        num_elements = flat_tensor.numel()
-        
-        num_blocks = (num_elements + block_size - 1) // block_size
-        padded_size = num_blocks * block_size
-        
-        if padded_size > num_elements:
-            padding = torch.zeros(
-                padded_size - num_elements,
-                dtype=torch.float32,
-                device=device
-            )
-            flat_tensor = torch.cat([flat_tensor, padding])
-        
-        blocks = flat_tensor.view(num_blocks, block_size)
-        
-        block_max = blocks.abs().max(dim=1, keepdim=True).values.clamp(min=1e-12)
-        scales = block_max / self._int8_max
-        
-        scaled_blocks = blocks / scales
-        
-        quantized_blocks = torch.clamp(
-            torch.round(scaled_blocks),
-            min=-128.0,
-            max=127.0
-        ).to(torch.int8)
-        
-        quantized_flat = quantized_blocks.flatten()[:num_elements]
-        
-        return quantized_flat.view(original_shape), scales.squeeze(-1)
+        flat = tensor.reshape(-1)
+        quantized_flat, scales = self._quantise_flat_blocks(
+            flat, block_size, self._int8_max, -128.0, 127.0)
+        return quantized_flat.view(original_shape), scales
     
     def dequantize_int8(
         self,
@@ -233,12 +254,12 @@ class PiscesLxInkBlockQuantizer:
             )
             flat_quantized = torch.cat([flat_quantized, padding])
 
-        blocks = flat_quantized.view(num_blocks, block_size)
-        scaled_blocks = blocks * scales.unsqueeze(-1)
-
-        result = scaled_blocks.flatten()[:num_elements]
-
-        return result.view(original_shape)
+        # Reconstruct straight from the aligned-head-plus-tail layout written by
+        # _quantise_flat_blocks: padding the stored buffer first cost a full-size
+        # temporary per parameter per step.
+        return self._dequantise_flat_blocks(
+            flat_quantized, scales.reshape(-1), block_size, num_elements, scales.dtype
+        ).view(original_shape)
     
     def quantize_int4(
         self,
@@ -404,6 +425,134 @@ class PiscesLxInkBlockQuantizer:
         
         return unpacked
     
+    def _variance_log_grid(self, rows: torch.Tensor, levels: int):
+        """Log-uniform grid for non-negative block rows; returns (codes, log_lo, log_step).
+
+        Variance is a running sum of squares: non-negative and spanning several orders of
+        magnitude inside one block, which is exactly the distribution a symmetric absmax codec
+        destroys (an entry two orders below its block maximum rounds to 0, and 0 in the
+        denominator turns Adam's bounded sign step into an unbounded one). Coding log(v)
+        instead makes the error multiplicative and uniform: with step = (log vmax - log
+        vmin)/(levels-2) every positive entry satisfies exp(-step/2) <= v_hat/v <= exp(step/2).
+        Code 0 is reserved for a true zero, so an entry that has never seen a gradient
+        reconstructs as exactly 0 and cannot inflate the denominator either way.
+        """
+        tiny = torch.finfo(torch.float32).tiny
+        row_max = rows.max(dim=1, keepdim=True).values
+        row_min = torch.where(rows > 0, rows, torch.full_like(rows, float("inf"))
+                              ).min(dim=1, keepdim=True).values
+        has_positive = row_max > 0
+        log_hi = torch.where(has_positive, row_max.clamp_min(tiny).log(),
+                             torch.zeros_like(row_max))
+        log_lo = torch.where(has_positive & (row_min > 0) & (row_min < float("inf")),
+                             row_min.clamp_min(tiny).log(), log_hi)
+        intervals = max(levels - 2, 1)
+        log_step = ((log_hi - log_lo) / intervals).clamp(min=0.0)
+        positive = rows > 0
+        log_rows = rows.clamp_min(tiny).log()
+        codes = torch.where(
+            positive,
+            (1.0 + (log_rows - log_lo) / log_step.clamp_min(tiny)).round().clamp(
+                min=1.0, max=float(levels - 1)),
+            torch.zeros_like(rows),
+        )
+        return codes.to(torch.uint8), log_lo.squeeze(-1), log_step.squeeze(-1)
+
+    def _pack_unsigned_nibbles(self, codes: torch.Tensor) -> torch.Tensor:
+        """Pack two 4-bit unsigned codes per byte (low nibble first)."""
+        flat = codes.reshape(-1).to(torch.uint8)
+        num_elements = flat.numel()
+        if num_elements % 2:
+            flat = torch.cat([flat, torch.zeros(1, dtype=torch.uint8, device=flat.device)])
+        pairs = flat.view(-1, 2)
+        return (pairs[:, 1] << 4) | pairs[:, 0]
+
+    def _unpack_unsigned_nibbles(self, packed: torch.Tensor, num_elements: int) -> torch.Tensor:
+        """Inverse of ``_pack_unsigned_nibbles`` truncated to ``num_elements`` codes."""
+        bytes_ = packed.reshape(-1).to(torch.uint8)
+        low = bytes_ & 0x0F
+        high = (bytes_ >> 4) & 0x0F
+        return torch.stack([low, high], dim=-1).reshape(-1)[:num_elements]
+
+    def quantize_variance_log(
+        self,
+        variance: torch.Tensor,
+        block_size: Optional[int] = None,
+        bits: Optional[int] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Quantise non-negative state on a per-block log grid.
+
+        Args:
+            variance: Non-negative tensor (any shape, flattened into blocks)
+            block_size: Elements per block (default: variance_block_size)
+            bits: 8 or 4, i.e. 256 or 16 codes per block
+
+        Returns:
+            (codes, log_lo, log_step) -- codes are packed two-per-byte when bits == 4,
+            one per element otherwise; log_lo/log_step hold one float32 per block.
+        """
+        block_size = block_size or self.variance_block_size
+        bits = bits or self.variance_bits
+        levels = 256 if bits == 8 else 16
+        flat = variance.reshape(-1).float()
+        num_elements = flat.numel()
+        full_blocks = num_elements // block_size
+
+        code_parts, lo_parts, step_parts = [], [], []
+        if full_blocks:
+            rows = flat[:full_blocks * block_size].view(full_blocks, block_size)
+            codes, log_lo, log_step = self._variance_log_grid(rows, levels)
+            code_parts.append(codes.reshape(-1))
+            lo_parts.append(log_lo)
+            step_parts.append(log_step)
+        tail = flat[full_blocks * block_size:]
+        if tail.numel():
+            codes, log_lo, log_step = self._variance_log_grid(tail.unsqueeze(0), levels)
+            code_parts.append(codes.reshape(-1))
+            lo_parts.append(log_lo)
+            step_parts.append(log_step)
+        codes = torch.cat(code_parts)
+        if bits == 4:
+            codes = self._pack_unsigned_nibbles(codes)
+        return codes, torch.cat(lo_parts), torch.cat(step_parts)
+
+    def dequantize_variance_log(
+        self,
+        codes: torch.Tensor,
+        log_lo: torch.Tensor,
+        log_step: torch.Tensor,
+        num_elements: int,
+        block_size: Optional[int] = None,
+        bits: Optional[int] = None,
+    ) -> torch.Tensor:
+        """Reconstruct variance written by ``quantize_variance_log`` as a flat tensor."""
+        block_size = block_size or self.variance_block_size
+        bits = bits or self.variance_bits
+        device = codes.device
+        if bits == 4:
+            codes = self._unpack_unsigned_nibbles(codes, num_elements)
+        else:
+            codes = codes.reshape(-1).to(torch.uint8)[:num_elements]
+        out = torch.zeros(num_elements, dtype=torch.float32, device=device)
+        position = 0
+        block_index = 0
+        full_blocks = num_elements // block_size
+        if full_blocks:
+            width = full_blocks * block_size
+            rows = codes[:width].view(full_blocks, block_size).to(torch.float32)
+            exponent = log_lo[block_index:block_index + full_blocks].unsqueeze(-1) \
+                + (rows - 1.0) * log_step[block_index:block_index + full_blocks].unsqueeze(-1)
+            out[:width] = torch.where(rows > 0, exponent.exp(), torch.zeros_like(exponent)
+                                      ).reshape(-1)
+            position = width
+            block_index = full_blocks
+        if position < num_elements:
+            rows = codes[position:num_elements].to(torch.float32)
+            exponent = log_lo[block_index] + (rows - 1.0) * log_step[block_index]
+            out[position:num_elements] = torch.where(
+                rows > 0, exponent.exp(), torch.zeros_like(exponent))
+        return out
+
     def quantize_momentum(
         self,
         momentum: torch.Tensor,
@@ -447,42 +596,42 @@ class PiscesLxInkBlockQuantizer:
     def quantize_variance(
         self,
         variance: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Quantize variance tensor using configured settings.
-        
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Quantize variance tensor using configured settings.
+
+        Variance is stored on the log grid rather than with the symmetric absmax codec:
+        the state is non-negative and heavy-tailed, and only the log grid keeps every
+        positive entry strictly positive after reconstruction (docs/proofs/02).
+
         Args:
             variance: Variance tensor to quantize
-        
+
         Returns:
-            Tuple of (quantized tensor, scales)
+            Tuple of (codes, log_lo, log_step)
         """
-        if self.variance_bits == 8:
-            return self.quantize_int8(variance, self.variance_block_size)
-        else:
-            return self.quantize_int4(variance, self.variance_block_size)
+        return self.quantize_variance_log(variance, self.variance_block_size)
     
     def dequantize_variance(
         self,
         quantized: torch.Tensor,
-        scales: torch.Tensor,
-        original_shape: Tuple[int, ...],
+        log_lo: torch.Tensor,
+        log_step: torch.Tensor,
+        num_elements: int,
     ) -> torch.Tensor:
-        """
-        Dequantize variance tensor using configured settings.
-        
+        """Dequantize variance tensor using configured settings.
+
         Args:
-            quantized: Quantized variance tensor
-            scales: Per-block scale factors
-            original_shape: Original tensor shape
-        
+            quantized: Codes written by ``quantize_variance``
+            log_lo: Per-block lower end of the log grid
+            log_step: Per-block log spacing
+            num_elements: Number of elements to reconstruct
+
         Returns:
-            Reconstructed variance tensor
+            Reconstructed variance tensor (flat)
         """
-        if self.variance_bits == 8:
-            return self.dequantize_int8(quantized, scales, original_shape, block_size=self.variance_block_size)
-        else:
-            return self.dequantize_int4(quantized, scales, original_shape, block_size=self.variance_block_size)
+        return self.dequantize_variance_log(
+            quantized, log_lo, log_step, num_elements,
+            block_size=self.variance_block_size)
 
     def compute_compression_ratio(
         self,

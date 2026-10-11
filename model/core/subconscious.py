@@ -41,6 +41,15 @@ class YvKnowledgeRouter(nn.Module):
         self.input_proj = nn.Linear(self.hidden_size, self.expert_input_dim, bias=False, device=device, dtype=dtype)
         self.router = nn.Linear(self.hidden_size, self.num_experts, bias=False, device=device, dtype=dtype)
         self.output_proj = nn.Linear(self.expert_input_dim, self.knowledge_dim, bias=False, device=device, dtype=dtype)
+        # The RL phase scores a state with this head. It is part of the router's declared
+        # architecture: attaching it later, from outside, would make the parameter set (and
+        # therefore the saved checkpoint's key set) depend on which code path ran first.
+        value_width = int(cfg.subconscious_value_head_width)
+        self.value_head = nn.Sequential(
+            nn.Linear(self.hidden_size, value_width, device=device, dtype=dtype),
+            nn.SiLU(),
+            nn.Linear(value_width, 1, device=device, dtype=dtype),
+        )
 
     def forward(self, h: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         router_logits = self.router(h)
@@ -115,7 +124,13 @@ class YvSubconsciousSystem(nn.Module):
             expert_summary = expert_output.mean(dim=1, keepdim=True)
             k_t = self.router.output_proj(expert_summary)
             self._current_k_t = k_t
-            s_t = self.state_evolver(self._current_s, h, k_t)
+            # The state is carried across samples, so the incoming copy is detached:
+            # the previous step's graph is freed rather than chained into this one
+            # (truncated backprop through the recurrent state). Inside this forward the
+            # layers below still read the live tensor, so the state evolver keeps its
+            # gradient.
+            carried = None if self._current_s is None else self._current_s.detach()
+            s_t = self.state_evolver(carried, h, k_t)
             self._current_s = s_t
         gamma, beta = self.film_generators[layer_idx](self._current_s)
         return {"scale": gamma, "shift": beta}

@@ -330,6 +330,7 @@ class PiscesLxManageCli:
             ("train_config", "--train_config"),
             ("dry_run", "--dry_run"),
             ("seq_len", "--seq_len"),
+            ("max_steps", "--max_steps"),
             ("quant", "--quant"),
             ("no_quant", "--no_quant"),
             ("rlhf", "--rlhf"),
@@ -529,8 +530,21 @@ class PiscesLxManageCli:
         parser.add_argument(
             '--seq_len', 
             type=int,  # Must be an integer value
-            default=512,  # Default to 512 tokens (standard for benchmarks)
-            help='Sequence length for benchmarking (for benchmarking)'
+            # Unset must mean "use the stage configuration". A 512 default here silently
+            # overrode configs/train/*.yaml data.sequence_length, which is what pushed the
+            # host-tier run past its memory budget.
+            default=None,
+            help='Override the configured sequence length (default: stage config value)'
+        )
+
+        # --max_steps: optimiser-step budget for the run.
+        # Unset means "use the stage configuration"; this is the same override the
+        # between-epochs-only check used to make unusable (docs/audit/00 §31, A8).
+        parser.add_argument(
+            '--max_steps',
+            type=int,
+            default=None,
+            help='Override the configured optimiser-step budget (default: stage config value)'
         )
 
         # -------------------------------------------------------------------------

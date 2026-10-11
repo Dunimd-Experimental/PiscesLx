@@ -25,8 +25,14 @@ version: "{{VERSION}}"
 stage: pretrain
 
 optimizer:
-  name: adamw
-  learning_rate: 5.0e-5
+  # Ink is the project's unified optimiser (8-bit states, sparse selection, GaLore/
+  # ROOT integration). Its name is what selects the Ink path in PiscesLxTrainer; the
+  # plain torch AdamW stays available by declaring `adamw`.
+  name: adamw8bit
+  # Training from scratch: 5e-5 is a fine-tuning magnitude. Measured on this host, a
+  # 4.3e-5 peak left next-token CE at 96.9 nats after 85 steps (uniform is 11.93), while
+  # 1e-3 on the same model and corpus drove it to 10.27 within 490 updates.
+  learning_rate: 1.0e-3
   weight_decay: 0.01
   betas:
     - 0.9
@@ -37,6 +43,9 @@ optimizer:
   galore_update_proj_gap: 200
 
 scheduler:
+  # Held at the pipeline's default shape: linear decay to half diverged on this host
+  # (total loss 657 -> 782 by batch 95 at a held 5e-4), so the smoke run keeps cosine and
+  # more steps instead of a hotter schedule. Registered as A11.
   name: cosine
   warmup_ratio: 0.01
   min_lr_ratio: 0.1
@@ -52,10 +61,29 @@ data:
     - "data/corpus_smoke"
 
 training:
-  max_steps: 12
-  save_steps: 6
-  eval_steps: 6
-  log_steps: 1
+  # Random state pinned for reproducibility (utils/seed.PiscesLxDeterminism). Two unpinned
+  # runs at the same 400-step budget differed by 0.43 held-out nats (docs/audit/00 §37),
+  # so any number quoted from this configuration must come from a pinned run.
+  seed: 20261011
+  # Hard host ceiling, enforced by utils/host_memory.PiscesLxHostMemoryBudget through
+  # PiscesLxTrainer: the build stage is refused if it cannot fit, and a step that breaches
+  # it aborts, rather than the run discovering the limit as a native allocation failure
+  # (SIGSEGV, no exception, no flushed log).
+  # The guard demands that the *remaining* commit charge cover the declared ceiling, so the
+  # number has to be one the host can actually honour. Measured daytime free commit on this
+  # 16 GB CPU box ranged 3.41-5.08 GB while other applications ran, and a 5.0 declaration
+  # therefore refused every build (docs/audit/00 §38). 2.5 was tried next and the guard
+  # aborted a run at step 270: the real peak of a 400-step 0.01B run with checkpoint writes
+  # is 2.51 GB, not the 2.07 GB measured across 20 steps without them. 3.0 clears that
+  # measured peak with margin while staying under the host's daytime availability, and a
+  # breach now writes a checkpoint before aborting so the steps already run are not lost.
+  memory_budget_gb: 3.0
+  # Sized for one foreground invocation on this host: ~10 s/step at batch 1 / seq 32,
+  # so 30 steps plus model construction and two checkpoint writes fit in one command.
+  max_steps: 30
+  save_steps: 10
+  eval_steps: 10
+  log_steps: 5
   gradient_accumulation_steps: 1
   gradient_checkpointing: false
   mixed_precision: none
@@ -67,8 +95,12 @@ loss:
   response_only_loss: false
 
 advanced_operators:
+  # The MoE gradient operator performs a second backward on the same graph, which fails
+  # with "Trying to backward through the graph a second time" from the second step
+  # (open defect, docs/audit/00-audit-report.md §13). Load balancing stays active through
+  # the in-graph auxiliary loss; only the extra second-order pass is off on this tier.
   moe_gradient:
-    enabled: true
+    enabled: false
   kfac:
     enabled: false
   multitask:

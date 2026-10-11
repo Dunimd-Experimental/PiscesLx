@@ -1,0 +1,45 @@
+D:\piscesl1\model\core\attention.py:5457: UserWarning: Converting a tensor with requires_grad=True to a scalar may lead to unexpected behavior.
+Consider using tensor.detach() first. (Triggered internally at C:\actions-runner\_work\pytorch\pytorch\pytorch\torch\csrc\autograd\generated\python_variable_methods.cpp:837.)
+  scale=float(self.scale),
+[DEBUG] Yv.Core: YvModel: __init__ start
+[DEBUG] Yv.Core: YvModel: initializing embedding...
+[DEBUG] Yv.Core: YvModel: initializing 2 transformer layers...
+[DEBUG] Yv.Core: YvModel: initializing TransformerBlock 1/2
+[DEBUG] Yv.Core: YvModel: backbone uses YvHybridBlock for all 2 layers
+[INFO] Yv.Moe: YvDynamicMoELayer: 4 experts (fine-grained x4), top-2 routing, 1 shared
+[INFO] Yv.Moe: YvDeepSeekMoELayer: Applied hybrid initialization for 4 experts
+[DEBUG] Yv.Core: YvModel: initializing TransformerBlock 2/2
+[DEBUG] Yv.Core: YvModel: initializing norm...
+[DEBUG] Yv.Core: YvModel: initializing dual injector...
+[DEBUG] Yv.Core: YvModel: initializing multimodal encoders...
+[DEBUG] Yv.Core: YvModel: initializing output heads...
+[DEBUG] Yv.Core: YvModel: total parameters = 70.61M
+[DEBUG] Yv.Core: YvModel: __init__ end
+[DEBUG] Yv.Core: YvModel: lazy-init subconscious block field...
+[INFO] Yv.Tokenizer: Using project tokenizer/: tokenizer
+[INFO] Yv.Tokenizer: Loading tokenizer from local path: tokenizer
+[INFO] Yv.Tokenizer: Successfully loaded tokenizer from: tokenizer
+[INFO] Yv.Tokenizer: Using project tokenizer/: tokenizer
+[INFO] Yv.Tokenizer: Loaded 47 special tokens from tokenizer_config.json
+[INFO] Yv.Tokenizer: Prepared 47 special tokens
+[INFO] Yv.Tokenizer: YvTokenizer initialized: vocab_size=154885, model_max_length=202752
+[DEBUG] Yv.Core: YvModel: lazy-init CRV...
+[DEBUG] Yv.Core: YvModel: lazy-init reasoner...
+[DEBUG] Yv.Core: YvModel: lazy-init VeriCoT/SPELL...
+[DEBUG] Yv.Core: YvModel: lazy-init SEER executor...
+keys=773 init_external_CE=12.3241 ln(V)=11.9293
+adamw  external_CE_after_8=11.9082
+Windows fatal exception: access violation
+
+Current thread 0x00004828 (most recent call first):
+  File "D:\piscesl1\tools\data\download\..\..\..\opss\optim\ink\sparse.py", line 267 in _update_importance
+  File "D:\piscesl1\tools\data\download\..\..\..\opss\optim\ink\sparse.py", line 440 in _structured_sparse_projection
+  File "D:\piscesl1\tools\data\download\..\..\..\opss\optim\ink\sparse.py", line 193 in select
+  File "D:\piscesl1\tools\data\download\..\..\..\opss\optim\ink\optimizer.py", line 361 in step
+  File "C:\Users\\u534e\u4e3a\AppData\Roaming\Python\Python314\site-packages\torch\utils\_contextlib.py", line 120 in decorate_context
+  File "C:\Users\\u534e\u4e3a\AppData\Roaming\Python\Python314\site-packages\torch\optim\optimizer.py", line 517 in wrapper
+  File "C:\Users\\u534e\u4e3a\AppData\Local\Temp\probe_ab2.py", line 36 in train_steps
+  File "C:\Users\\u534e\u4e3a\AppData\Local\Temp\probe_ab2.py", line 51 in <module>
+
+Current thread's C stack trace (most recent call first):
+  <cannot get C stack on this system>

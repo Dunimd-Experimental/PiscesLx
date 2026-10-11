@@ -129,9 +129,52 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional, Tuple, Union
+from typing import Dict, Optional, Tuple, Union
 from dataclasses import dataclass
 # Paper: Zhang & Sennrich, "Root Mean Square Layer Normalization", NeurIPS 2019, arXiv:1910.07467
+class YvFiLMModulation:
+    """The single implementation of the subconscious FiLM modulation.
+
+    ``scale``/``shift`` are produced by the knowledge router (the "查" side) and are applied
+    to the trunk's hidden states before the block's own paths, so the addressed knowledge
+    blocks sit on the gradient path of the language objective -- without this the router,
+    its state evolver and every FiLM generator compute into values nothing consumes, and the
+    search/compute separation trains nothing while still costing a forward pass.
+
+    The identity ``x * (1 + scale) + shift`` keeps the block at a neutral pass-through when
+    the router outputs zeros, which is what makes the modulation learnable from a
+    non-invasive start rather than a random re-scaling of the residual stream.
+    """
+
+    @staticmethod
+    def apply(hidden_states: torch.Tensor,
+              film_params: Optional[Dict[str, torch.Tensor]]) -> torch.Tensor:
+        """Modulate ``hidden_states`` with ``{"scale","shift"}``, or pass through.
+
+        Args:
+            hidden_states: [batch, seq, hidden_size].
+            film_params: None (no modulation) or a dict with "scale" and "shift" tensors
+                broadcastable to hidden_states.
+
+        Raises:
+            ValueError: if film_params lacks either key, or a component cannot broadcast.
+        """
+        if film_params is None:
+            return hidden_states
+        missing = [key for key in ("scale", "shift") if key not in film_params]
+        if missing:
+            raise ValueError(
+                f"YvFiLMModulation expected 'scale' and 'shift', missing {missing} "
+                f"(got keys {sorted(film_params)})")
+        scale, shift = film_params["scale"], film_params["shift"]
+        try:
+            return hidden_states * (1.0 + scale) + shift
+        except RuntimeError as exc:
+            raise ValueError(
+                f"YvFiLMModulation cannot broadcast scale {tuple(scale.shape)} / shift "
+                f"{tuple(shift.shape)} onto hidden states {tuple(hidden_states.shape)}") from exc
+
+
 class YvRMSNorm(nn.Module):
     """Root Mean Square Layer Normalization for efficient normalization.
     
@@ -905,7 +948,14 @@ class YvNorms:
             if m.bias is not None:
                 nn.init.zeros_(m.bias)
         elif isinstance(m, nn.Embedding):
-            nn.init.normal_(m.weight, mean=0, std=depth_std * math.sqrt(hidden_size))
+            # The trunk ties lm_head to the token embedding (model.py: lm_head.weight =
+            # embed.weight), so this std also sets the logit scale: with RMS-normalised
+            # hidden states, logit std = std * sqrt(hidden_size). hidden^-0.5 keeps logits
+            # at O(1) so a fresh model starts near the uniform loss ln(V). The previous
+            # depth_std * sqrt(hidden) rule made a tied head emit logits with std ~8, i.e.
+            # an initial next-token CE of ~118 nats against a uniform 11.9, initial gradient
+            # norms of ~5e2 (neutered by clipping to 1.0) and divergence at higher LR.
+            nn.init.normal_(m.weight, mean=0, std=1.0 / math.sqrt(hidden_size))
         elif hasattr(m, 'weight') and m.weight is not None:
             if m.weight.dim() >= 2:
                 nn.init.normal_(m.weight, mean=0, std=depth_std)

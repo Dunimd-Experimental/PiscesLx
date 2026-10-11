@@ -168,6 +168,7 @@ class PiscesLxRunCLI:
             ("train_config", "--train_config"),
             ("dry_run", "--dry_run"),
             ("seq_len", "--seq_len"),
+            ("max_steps", "--max_steps"),
             ("quant", "--quant"),
             ("no_quant", "--no_quant"),
             ("rlhf", "--rlhf"),

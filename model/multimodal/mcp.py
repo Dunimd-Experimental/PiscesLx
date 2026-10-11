@@ -282,7 +282,9 @@ class YvCoreMCPProtocol:
             tool_registry (Optional[YvMCPToolRegistry]): Registry providing
                 tool metadata and reasoning hooks.
         """
-        self.base_protocol = YvMCPProtocol(agent_id)
+        # YvMCPProtocol is a stateless factory of well-formed messages, so the adapter
+        # holds the factory itself rather than an instance of it.
+        self.message_factory = YvMCPProtocol
         self.agent_id = agent_id
         self.tool_registry = tool_registry
         self.execution_modes = {
@@ -329,8 +331,16 @@ class YvCoreMCPProtocol:
         if execution_mode == "auto" and self.tool_registry:
             execution_mode = await self._determine_execution_mode(tool_name, arguments)
         
-        # Use base protocol to create the message
-        message = await self.base_protocol.create_tool_call_message(tool_name, arguments, execution_mode)
+        # Build the envelope through the message factory.
+        message = self.message_factory.create_message(
+            message_type=YvMCPMessageType.TOOL_CALL,
+            sender_id=self.agent_id,
+            payload={
+                "tool_name": tool_name,
+                "arguments": arguments,
+                "execution_mode": execution_mode,
+            },
+        )
         
         # Add receiver-specific information
         message.payload["receiver_id"] = receiver_id

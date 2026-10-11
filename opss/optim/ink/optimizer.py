@@ -42,7 +42,7 @@ Usage:
     >>> config = PiscesLxInkConfig(
     ...     lr=1e-4,
     ...     momentum_bits=8,
-    ...     variance_bits=4,
+    ...     variance_bits=8,
     ...     sparse_ratio=0.01
     ... )
     >>> 
@@ -73,13 +73,21 @@ from .gradient import PiscesLxInkGradientCompressor
 from .moe import PiscesLxInkMoEManager
 from .checkpoint import PiscesLxInkCheckpointSelector
 
+#: Once the estimators have caught up with a stationary gradient, Adam's
+#: (m̂)/(sqrt(v̂) + eps) has magnitude ~1 per coordinate -- it behaves like sign(g).
+#: A ratio above this bound means the coordinate wants to move further than one
+#: learning rate in a single step, which is what a collapsed denominator produces.
+#: Clamping there is the trust region of docs/proofs/02 Theorem 2.
+MAX_COORDINATE_STEP = 1.0
+
 
 class PiscesLxInkOptimizer(Optimizer):
     """
     PyTorch-Compatible Ink Optimizer.
     
     This optimizer provides a drop-in replacement for AdamW with
-    INT8/INT4 state compression and sparse gradient selection.
+    INT8 state compression (variance on a per-block log grid) and sparse
+    gradient selection.
     
     The optimizer maintains compressed optimizer states internally
     while providing the standard PyTorch optimizer interface.
@@ -96,14 +104,14 @@ class PiscesLxInkOptimizer(Optimizer):
         ...     model.parameters(),
         ...     lr=1e-4,
         ...     momentum_bits=8,
-        ...     variance_bits=4
+        ...     variance_bits=8
         ... )
         >>> 
         >>> # With configuration object
         >>> config = PiscesLxInkConfig(
         ...     lr=1e-4,
         ...     momentum_bits=8,
-        ...     variance_bits=4,
+        ...     variance_bits=8,
         ...     sparse_ratio=0.01,
         ...     use_galore=True,
         ...     use_fp4=True,
@@ -143,7 +151,7 @@ class PiscesLxInkOptimizer(Optimizer):
         galore_rank: int = 128,
         amsgrad: bool = False,
         maximize: bool = False,
-        num_update_blocks: int = 4,
+        num_update_blocks: int = 1,
     ):
         """
         Initialize the Ink optimizer.
@@ -165,7 +173,7 @@ class PiscesLxInkOptimizer(Optimizer):
             galore_rank: Rank for GaLore projection (default: 128)
             amsgrad: Use AMSGrad variant (default: False)
             maximize: Maximize objective instead of minimize (default: False)
-            num_update_blocks: Number of blocks for block-wise updates (default: 4)
+            num_update_blocks: Parameters per step are 1/num_update_blocks (default: 1, all)
         """
         if config is None:
             config = PiscesLxInkConfig(
@@ -238,17 +246,18 @@ class PiscesLxInkOptimizer(Optimizer):
             enable_transformer=config.checkpoint_transformer,
         )
         
-        self._num_blocks = getattr(config, 'num_update_blocks', 4)
+        self._num_blocks = max(1, int(getattr(config, 'num_update_blocks', 1)))
         self._current_block_idx = 0
         
         self._param_names: Dict[int, str] = {}
         self._param_shapes: Dict[str, Tuple[int, ...]] = {}
         self._step: Dict[str, int] = {}
         
-        self._momentum_int8: Dict[str, torch.Tensor] = {}
+        self._momentum_codes: Dict[str, torch.Tensor] = {}
         self._momentum_scales: Dict[str, torch.Tensor] = {}
-        self._variance_int4: Dict[str, torch.Tensor] = {}
-        self._variance_scales: Dict[str, torch.Tensor] = {}
+        self._variance_codes: Dict[str, torch.Tensor] = {}
+        self._variance_log_lo: Dict[str, torch.Tensor] = {}
+        self._variance_log_step: Dict[str, torch.Tensor] = {}
         
         self._initialized = False
         self._global_step = 0
@@ -278,11 +287,11 @@ class PiscesLxInkOptimizer(Optimizer):
                 variance_blocks = (numel + self.config.variance_block_size - 1) // self.config.variance_block_size
                 
                 if self.config.momentum_bits == 8:
-                    self._momentum_int8[name] = torch.zeros(
+                    self._momentum_codes[name] = torch.zeros(
                         numel, dtype=torch.int8, device=param.device
                     )
                 else:
-                    self._momentum_int8[name] = torch.zeros(
+                    self._momentum_codes[name] = torch.zeros(
                         (numel + 1) // 2, dtype=torch.int8, device=param.device
                     )
                 
@@ -290,16 +299,14 @@ class PiscesLxInkOptimizer(Optimizer):
                     momentum_blocks, dtype=torch.float32, device=param.device
                 )
                 
-                if self.config.variance_bits == 4:
-                    self._variance_int4[name] = torch.zeros(
-                        (numel + 1) // 2, dtype=torch.int8, device=param.device
-                    )
-                else:
-                    self._variance_int4[name] = torch.zeros(
-                        numel, dtype=torch.int8, device=param.device
-                    )
-                
-                self._variance_scales[name] = torch.ones(
+                variance_code_elements = (numel + 1) // 2 if self.config.variance_bits == 4 else numel
+                self._variance_codes[name] = torch.zeros(
+                    variance_code_elements, dtype=torch.uint8, device=param.device
+                )
+                self._variance_log_lo[name] = torch.zeros(
+                    variance_blocks, dtype=torch.float32, device=param.device
+                )
+                self._variance_log_step[name] = torch.zeros(
                     variance_blocks, dtype=torch.float32, device=param.device
                 )
                 
@@ -358,7 +365,8 @@ class PiscesLxInkOptimizer(Optimizer):
                     grad = -grad
 
                 if id(param) in block_param_ids:
-                    sparse_grad, mask = self._sparse_selector.select(grad, name)
+                    sparse_grad, _selected_mask = self._sparse_selector.select(grad, name)
+                    sparse_grad = sparse_grad.reshape(-1)
 
                     galore_state = self._integrator.get_galore_state(name)
                     sparse_grad = self._integrator.apply_galore(sparse_grad, name, galore_state)
@@ -366,8 +374,8 @@ class PiscesLxInkOptimizer(Optimizer):
                     self._step[name] = self._step.get(name, 0) + 1
                     step = self._step[name]
 
-                    momentum = self._dequantize_momentum(name, param.shape)
-                    variance = self._dequantize_variance(name, param.shape)
+                    momentum = self._dequantize_momentum(name, param.shape).reshape(-1)
+                    variance = self._dequantize_variance(name, param.numel())
 
                     momentum = beta1 * momentum + (1 - beta1) * sparse_grad
                     variance = beta2 * variance + (1 - beta2) * sparse_grad ** 2
@@ -380,8 +388,28 @@ class PiscesLxInkOptimizer(Optimizer):
                     bias_correction1 = 1 - beta1 ** step
                     bias_correction2 = 1 - beta2 ** step
 
-                    update = momentum / (variance.sqrt() / math.sqrt(bias_correction2) + eps)
-                    update = update * (math.sqrt(bias_correction2) / bias_correction1)
+                    # Adam's bias-corrected estimators are m̂ = m/bc1 and v̂ = v/bc2, so the
+                    # step is (m/bc1)/(sqrt(v/bc2) + eps) (Kingma & Ba 2015, sec. 3). The
+                    # previous expression divided v by sqrt(bc2) *inside* the denominator and
+                    # then multiplied the whole update by sqrt(bc2)/bc1, which leaves an extra
+                    # factor bc2 in the numerator: early steps were ~1/bc2 times too small
+                    # (0.001× at t=1, 0.1× at t=100 with beta2=0.999), so the optimiser ran
+                    # while the parameters barely moved.
+                    denominator = (variance / bias_correction2).sqrt() + eps
+                    update = (momentum / bias_correction1) / denominator
+                    # Trust region. The log-grid variance codec (docs/proofs/02) keeps every
+                    # positive entry strictly positive, but a coordinate whose momentum has
+                    # not yet caught up with a sudden large gradient can still make
+                    # |m̂|/sqrt(v̂) exceed 1, which is a step larger than Adam's own sign step.
+                    # Capping the ratio at 1 bounds the per-coordinate displacement at lr, so
+                    # no quantisation artefact can move a weight further than the learning
+                    # rate intends (Theorem 2, docs/proofs/02).
+                    update = update.clamp(-MAX_COORDINATE_STEP, MAX_COORDINATE_STEP)
+                    # The update must carry the parameter's own geometry: a 0-dim
+                    # parameter (e.g. a learned scalar gate) has a one-element flat
+                    # block representation, and the block-wise dequantisation path
+                    # returns that as shape [1]. add_() would then refuse to broadcast.
+                    update = update.view(param.shape)
 
                     if weight_decay > 0:
                         param.add_(param, alpha=-lr * weight_decay)
@@ -403,35 +431,29 @@ class PiscesLxInkOptimizer(Optimizer):
         """Dequantize momentum from compressed representation."""
         if self.config.momentum_bits == 8:
             return self._quantizer.dequantize_int8(
-                self._momentum_int8[name],
+                self._momentum_codes[name],
                 self._momentum_scales[name],
                 shape,
                 block_size=self.config.momentum_block_size,
             )
         else:
             return self._quantizer.dequantize_int4(
-                self._momentum_int8[name],
+                self._momentum_codes[name],
                 self._momentum_scales[name],
                 shape,
                 block_size=self.config.momentum_block_size,
             )
     
-    def _dequantize_variance(self, name: str, shape: Tuple[int, ...]) -> torch.Tensor:
-        """Dequantize variance from compressed representation."""
-        if self.config.variance_bits == 4:
-            return self._quantizer.dequantize_int4(
-                self._variance_int4[name],
-                self._variance_scales[name],
-                shape,
-                block_size=self.config.variance_block_size,
-            )
-        else:
-            return self._quantizer.dequantize_int8(
-                self._variance_int4[name],
-                self._variance_scales[name],
-                shape,
-                block_size=self.config.variance_block_size,
-            )
+    def _dequantize_variance(self, name: str, num_elements: int) -> torch.Tensor:
+        """Dequantize variance from its per-block log grid (flat representation)."""
+        return self._quantizer.dequantize_variance_log(
+            self._variance_codes[name],
+            self._variance_log_lo[name],
+            self._variance_log_step[name],
+            num_elements,
+            block_size=self.config.variance_block_size,
+            bits=self.config.variance_bits,
+        )
     
     def _quantize_and_store_momentum(self, name: str, momentum: torch.Tensor):
         """Quantize and store momentum."""
@@ -444,22 +466,18 @@ class PiscesLxInkOptimizer(Optimizer):
                 momentum, self.config.momentum_block_size
             )
         
-        self._momentum_int8[name] = quantized
+        self._momentum_codes[name] = quantized
         self._momentum_scales[name] = scales
     
     def _quantize_and_store_variance(self, name: str, variance: torch.Tensor):
-        """Quantize and store variance."""
-        if self.config.variance_bits == 4:
-            quantized, scales = self._quantizer.quantize_int4(
-                variance, self.config.variance_block_size
-            )
-        else:
-            quantized, scales = self._quantizer.quantize_int8(
-                variance, self.config.variance_block_size
-            )
+        """Quantize and store variance on its per-block log grid."""
+        codes, log_lo, log_step = self._quantizer.quantize_variance_log(
+            variance, self.config.variance_block_size, self.config.variance_bits
+        )
         
-        self._variance_int4[name] = quantized
-        self._variance_scales[name] = scales
+        self._variance_codes[name] = codes
+        self._variance_log_lo[name] = log_lo
+        self._variance_log_step[name] = log_step
     
     def get_compression_ratio(self) -> float:
         """
@@ -526,10 +544,11 @@ class PiscesLxInkOptimizer(Optimizer):
         state_dict = super().state_dict()
         
         state_dict["ink_config"] = self.config.to_dict()
-        state_dict["momentum_int8"] = {k: v.clone() for k, v in self._momentum_int8.items()}
+        state_dict["momentum_codes"] = {k: v.clone() for k, v in self._momentum_codes.items()}
         state_dict["momentum_scales"] = {k: v.clone() for k, v in self._momentum_scales.items()}
-        state_dict["variance_int4"] = {k: v.clone() for k, v in self._variance_int4.items()}
-        state_dict["variance_scales"] = {k: v.clone() for k, v in self._variance_scales.items()}
+        state_dict["variance_codes"] = {k: v.clone() for k, v in self._variance_codes.items()}
+        state_dict["variance_log_lo"] = {k: v.clone() for k, v in self._variance_log_lo.items()}
+        state_dict["variance_log_step"] = {k: v.clone() for k, v in self._variance_log_step.items()}
         state_dict["step"] = self._step.copy()
         state_dict["global_step"] = self._global_step
         state_dict["param_names"] = self._param_names.copy()
@@ -556,7 +575,9 @@ class PiscesLxInkOptimizer(Optimizer):
             config_dict = state_dict["ink_config"]
             self.config = PiscesLxInkConfig(**config_dict)
         
-        for key in ["momentum_int8", "momentum_scales", "variance_int4", "variance_scales"]:
+        state_keys = ("momentum_codes", "momentum_scales",
+                      "variance_codes", "variance_log_lo", "variance_log_step")
+        for key in state_keys:
             if key in state_dict:
                 getattr(self, f"_{key}").update({
                     k: v.clone() for k, v in state_dict[key].items()

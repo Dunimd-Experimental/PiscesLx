@@ -62,7 +62,7 @@ class PiscesLxInkConfig(PiscesLxOperatorConfig):
         
     Memory Savings:
         - INT8 momentum: 4x compression (32bit → 8bit)
-        - INT8 variance: 4x compression (32bit → 8bit)
+        - 8-bit variance on a per-block log grid: 4x compression (32bit → 8bit)
         - Sparse gradients: Up to 100x reduction (only top-K% stored)
         - Orthogonal sparse: Enhanced diversity for sparse updates
         
@@ -86,8 +86,8 @@ class PiscesLxInkConfig(PiscesLxOperatorConfig):
         momentum_bits: Number of bits for momentum (8 = INT8)
         momentum_block_size: Block size for per-block quantization
         
-        # INT4 Variance Compression
-        variance_bits: Number of bits for variance (4 = INT4)
+        # Variance Compression (log-grid)
+        variance_bits: Number of bits for variance (4 or 8)
         variance_block_size: Block size for variance quantization
         
         # Sparse Gradient Selection
@@ -117,7 +117,7 @@ class PiscesLxInkConfig(PiscesLxOperatorConfig):
         >>> config = PiscesLxInkConfig(
         ...     lr=1e-3,
         ...     momentum_bits=8,
-        ...     variance_bits=4,
+        ...     variance_bits=8,
         ...     sparse_ratio=0.01
         ... )
         
@@ -125,7 +125,7 @@ class PiscesLxInkConfig(PiscesLxOperatorConfig):
         >>> config = PiscesLxInkConfig(
         ...     lr=1e-4,
         ...     momentum_bits=8,
-        ...     variance_bits=4,
+        ...     variance_bits=8,
         ...     sparse_ratio=0.01,
         ...     use_galore=True,
         ...     galore_rank=128,
@@ -148,7 +148,7 @@ class PiscesLxInkConfig(PiscesLxOperatorConfig):
     momentum_bits: int = 8
     momentum_block_size: int = 128
     
-    variance_bits: int = 4
+    variance_bits: int = 8
     variance_block_size: int = 256
     
     sparse_ratio: float = 0.01
@@ -195,6 +195,14 @@ class PiscesLxInkConfig(PiscesLxOperatorConfig):
     
     amsgrad: bool = False
     maximize: bool = False
+
+    #: Parameter-coverage divisor: each step updates ``1/num_update_blocks`` of the parameters.
+    #: It existed only as ``getattr(config, 'num_update_blocks', 4)`` in the optimizer, so
+    #: nothing could declare it and every run silently updated a quarter of the model per step
+    #: -- measured 76 updates per parameter over 281 global steps (docs/audit/00 §41).
+    #: 1 means every step touches every parameter, which is what the host tiers want because
+    #: their memory is not binding; raise it only when the update itself is the pressure.
+    num_update_blocks: int = 1
     
     def __post_init__(self):
         if hasattr(super(), '__post_init__'):
@@ -320,4 +328,5 @@ class PiscesLxInkConfig(PiscesLxOperatorConfig):
             "checkpoint_preserve_ratio": self.checkpoint_preserve_ratio,
             "amsgrad": self.amsgrad,
             "maximize": self.maximize,
+            "num_update_blocks": self.num_update_blocks,
         }

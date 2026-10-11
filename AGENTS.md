@@ -48,7 +48,7 @@ tools/check/       禁止项的可运行检查脚本
 
 1. **先查资料，别空想**：任何架构/算法设计前必须调研旗舰技术报告与最新论文。顺序：先调研 → 再设计 → 后实现，不可颠倒。
 2. **真实、可证明、是一个整体**：禁止模拟/伪造/敷衍/硬编码；每项创新附严格数学证明；模型改动必须带动全项目同步升级（配置/CLI/工具链/数据管线/服务/评测/文档/注释/测试）。
-3. **交付真实权重**：权重上 HuggingFace + ModelScope；源码备份 Gitee + GitHub（不含权重，含其余全部）；日常迭代用私用仓库。**没有权重，任务未完成。**
+3. **交付真实权重**：权重上 HuggingFace + ModelScope；源码备份 Gitee + GitHub（不含权重，含其余全部）；日常迭代只推**实验性仓库**（`gitee-exp` / `github-exp`），主仓库须待全部任务完成并通过验收后方可推送。**没有权重，任务未完成。**
 4. **诚实优先于达标**：能达标必须达标；确实不可达 → **给出不可达性证明 + 诚实报告 + 继续死磕其余战场**。严禁伪造达标。
 
 ## 3. 硬性口径（易踩错的三条）
@@ -191,7 +191,7 @@ from __future__ import annotations
 
 达标顺序 **P0 → P1 → P2**；低层未全达标时不得以"高层已达"为由忽略。
 
-- **P0 底线（100% 必达，否则任务不成立）**：真实权重、真实训练、无 mock/造假、权重上 HF+ModelScope、源码上 Gitee+GitHub、编码规范、MoE 非 Dense、查算分离为自身权重、模态 4 种、证明正确。
+- **P0 底线（100% 必达，否则任务不成立）**：真实权重、真实训练、无 mock/造假、权重上 HF+ModelScope、源码上 Gitee+GitHub（日常迭代只推实验性仓库）、编码规范、MoE 非 Dense、查算分离为自身权重、模态 4 种、证明正确。
 - **P1 核心（必须全达标，未达标就继续自主迭代）**：T4 训练 ≥1500 tok/s(FP16)、单步 ≤0.5s、显存峰值 ≤15GB、10000 步无 NaN；验证 Loss ≤2.3、MoE 负载 CV ≤0.3、查算分离使 MMLU 提升 ≥8 分；推理 ≥35 tok/s(4bit) / ≥60 tok/s(投机)、Prefill ≥3000 tok/s、TTFT ≤200ms、1M Prefill ≤15min、1M 推理显存 ≤14GB、知识块调取 ≤5ms/token；1M 输入 + 1M 输出。
 - **P2（尽力 + 诚实报告差距）**：边缘评测项、极限显存/延迟优化、额外模态质量。
 - **评测对标 DeepSeek-V4-Flash-0731 的 85%~95%，核心项 ≥90%**：Terminal Bench 2.1 ≥75.0、MMLU ≥85.0、MMLU-Pro ≥68.0、HumanEval ≥85.0、GSM8K ≥92.0、MATH ≥68.0、BBH ≥85.0、HellaSwag ≥88.0、ARC-C ≥93.0、GPQA-D ≥55.0、LiveCodeBench ≥62.0、AIME25 ≥60.0、MMMU ≥62.0、MMBench ≥85.0、TextVQA ≥80.0、MathVista ≥65.0、ChartQA ≥82.0、MT-Bench ≥8.8、AlpacaEval2 ≥55.0 LC%。
@@ -228,7 +228,10 @@ Tesla T4：16GB GDDR6 / Turing(sm_75) / **支持 FP16 Tensor Core，不支持 BF
 - **HuggingFace / ModelScope**：自主找数据集；**每次 checkpoint 产生后立即双上传**。
 - **数据集平台不提供**：自主在 HF/ModelScope/GitHub/公开语料搜集清洗打包，覆盖 4 模态全能力，禁低质/重复/有害。
 - **自主注册刷号**：可用临时邮箱/临时手机号 + 浏览器工具自主注册扩容。**所有自主账号密码统一 `Dunimd2026#`**。反封禁：不持续高频刷同一平台、随时切号、自动换 IP（代理/池/换出口）、分散负载、只用于正当训练评测。
-- **仓库**：权重 → HF + ModelScope；源码 → Gitee + GitHub 双备份（**不含权重**，含其余全部内容）；日常迭代 → 私用仓库。**禁止向 PiscesL1 主仓库提交代码**。每次重要变更 commit + push。
+- **仓库（四个 remote，已写入本地 `.git/config`）**：权重 → HF + ModelScope；源码 → Gitee + GitHub 双备份（**不含权重**，含其余全部内容）。
+  - **实验性仓库 = 日常迭代的唯一默认推送目标**：`gitee-exp` → https://gitee.com/dunimd-experimental/pisceslx.git ，`github-exp` → https://github.com/Dunimd-Experimental/PiscesLx.git ；**允许强制推送**（建议 `--force-with-lease`）。`remote.pushdefault` 与 `branch.master.remote` 均已指向 `gitee-exp`，故不带远端名的 `git push` 只会进实验性仓库。
+  - **主仓库**：`gitee` → https://gitee.com/dunimd/piscesl1.git ，`github` → https://github.com/Dunimd/PiscesL1.git 。允许推送但受时机约束：**必须等全部任务完成并通过验收清单之后**，且需显式写出远端名（`git push gitee master`）才会推送；在那之前不得推主仓库。
+  - 每次重要变更必须 commit + push 到实验性仓库；使用有意义的 commit message。
 
 ## 14. 禁令速查（24 条，详见 `UPGRADE_10_DELIVER.md` §10.2）
 

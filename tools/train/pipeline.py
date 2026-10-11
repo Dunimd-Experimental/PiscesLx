@@ -308,7 +308,7 @@ class PiscesLxTrainingPipelineOperator(PiscesLxTransformOperator):
                 and (self.trainer.global_step % self.train_config.save_steps == 0)
                 and (self.trainer.global_step != last_saved_step)
             ):
-                checkpoint_path = Path(self.train_config.output_dir) / f"checkpoint_step_{self.trainer.global_step}.pt"
+                checkpoint_path = Path(self.train_config.resolved_output_dir()) / f"checkpoint_step_{self.trainer.global_step}.pt"
                 self.trainer.save_checkpoint(str(checkpoint_path))
                 last_saved_step = int(self.trainer.global_step)
                 _LOG.info(f"Checkpoint saved at step {self.trainer.global_step}")
@@ -326,6 +326,15 @@ class PiscesLxTrainingPipelineOperator(PiscesLxTransformOperator):
             ):
                 last_eval_step = int(self.trainer.global_step)
                 self.execute_callbacks('evaluation_start', global_step=self.trainer.global_step)
+
+            # max_steps is a budget on optimiser steps, not on epochs: the loop below
+            # iterates the whole dataloader, and with one epoch holding 180 batches the
+            # between-epoch check never ran, so a run declared at 30 steps trained 180+.
+            if (self.train_config.max_steps > 0
+                    and self.trainer.global_step >= self.train_config.max_steps):
+                _LOG.info(f"Reached maximum steps ({self.train_config.max_steps}), "
+                          f"stopping inside epoch {epoch} after {batch_idx + 1} batches")
+                break
         
         if epoch_stats['batch_count'] > 0:
             epoch_stats['avg_loss'] = epoch_stats['total_loss'] / epoch_stats['batch_count']
@@ -456,7 +465,7 @@ class PiscesLxTrainingPipelineOperator(PiscesLxTransformOperator):
                     
                     if eval_stats['eval_loss'] < self.trainer.best_metric:
                         self.trainer.best_metric = eval_stats['eval_loss']
-                        best_path = Path(self.train_config.output_dir) / "best_model.pt"
+                        best_path = Path(self.train_config.resolved_output_dir()) / "best_model.pt"
                         self.trainer.save_checkpoint(str(best_path), 
                                                    metadata={'is_best': True})
                         training_history['best_checkpoint'] = str(best_path)
@@ -491,7 +500,7 @@ class PiscesLxTrainingPipelineOperator(PiscesLxTransformOperator):
         finally:
             signal.signal(signal.SIGINT, original_handler)
             
-            final_path = Path(self.train_config.output_dir) / "final_model.pt"
+            final_path = Path(self.train_config.resolved_output_dir()) / "final_model.pt"
             self.trainer.save_checkpoint(str(final_path), 
                                        metadata={'is_final': True})
             training_history['final_checkpoint'] = str(final_path)

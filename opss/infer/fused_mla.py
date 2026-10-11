@@ -73,7 +73,11 @@ class PiscesLxFusedMLAProjector(nn.Module):
         self.head_dim = head_dim
         self.kv_lora_rank = kv_lora_rank
         self.q_lora_rank = q_lora_rank
-        self.mla_rope_dim = mla_rope_dim
+        # The RoPE sub-vector is a *part* of each head, so it can never be wider than the
+        # head itself. Consumers clamp with min(mla_rope_dim, head_dim); the projection that
+        # produces it must clamp identically or K and V come back with a different width than
+        # Q (declared mla_rope_dim 64 with head_dim 16 built K at 64 and Q at 16).
+        self.mla_rope_dim = min(int(mla_rope_dim), int(head_dim))
         self.use_enhanced_mla = use_enhanced_mla
 
         # Fused [kv_compress | embedding_gate]: hidden -> 2*kv_lora_rank
@@ -91,7 +95,7 @@ class PiscesLxFusedMLAProjector(nn.Module):
         self._has_low_rank_q = q_lora_rank is not None  # for from_separate weight migration
 
         # RoPE decompress: kv_latent -> rope_dim
-        rope_out_dim = mla_rope_dim if use_enhanced_mla else head_dim
+        rope_out_dim = self.mla_rope_dim if use_enhanced_mla else head_dim
         self.rope_decompress = nn.Linear(kv_lora_rank, rope_out_dim, bias=False, device=device, dtype=dtype)
 
     @classmethod

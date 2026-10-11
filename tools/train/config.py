@@ -600,6 +600,10 @@ class PiscesLxTrainingConfig:
         mixed_precision: Mixed precision mode (fp32, fp16, bf16)
         gradient_checkpointing: Enable gradient checkpointing for memory saving
         flash_attention: Enable Flash Attention for faster training
+        memory_budget_gb: Hard ceiling on this process's host memory in GB. When declared,
+            the trainer refuses a build stage that cannot fit and aborts a running step that
+            breaches it, instead of letting the allocator fail natively (SIGSEGV, no Python
+            exception, no flushed log). None disables enforcement (accelerator hosts).
         
         # Distributed Configuration
         distributed: Enable distributed training
@@ -632,10 +636,21 @@ class PiscesLxTrainingConfig:
     """
     model_name: str = "pisceslx-base"
     output_dir: str = ".pisceslx/ckpt"
+    memory_budget_gb: Optional[float] = None
+    #: Random-state pin for the run. A metric from an unseeded run is a sample, not a
+    #: result: two host-tier runs at the same 400-step budget scored 11.2703 and 11.6965
+    #: held-out nats (docs/audit/00 §37), a spread wider than several P1 margins.
+    seed: Optional[int] = None
     max_steps: int = 100000
     save_steps: int = 1000
     eval_steps: int = 500
     log_steps: int = 10
+
+    # Names the stage file actually declared. A model config file may embed a
+    # `training_config` block; those values fill gaps but must never overrule what the
+    # stage file stated, otherwise two sources of truth decide the same switch and the
+    # winner is whichever was applied last.
+    stage_declared_keys: List[str] = field(default_factory=list)
     
     device: str = "cuda"
     mixed_precision: str = "bf16"
@@ -723,6 +738,17 @@ class PiscesLxTrainingConfig:
     def __post_init__(self):
         """Post initialization - do not auto-load config file."""
         pass
+
+    def resolved_output_dir(self) -> str:
+        """The checkpoint directory this run must actually write to.
+
+        ``output_dir`` is applied after construction (stage file, model config, CLI), so it
+        cannot be normalised in ``__post_init__``; every writer therefore asks for this
+        instead of reading the raw field. That is what let ``PISCESLX_HOME`` be ignored:
+        the trainer resolved it and the pipeline, which is what saves checkpoints, did not.
+        """
+        from utils.paths import PiscesLxPaths
+        return PiscesLxPaths.resolve_output_dir(self.output_dir)
     
     def load_stage_config(self, stage: PiscesLxTrainingStage):
         """
@@ -740,8 +766,52 @@ class PiscesLxTrainingConfig:
         except FileNotFoundError:
             pass
     
+    # Section members of a stage file that a model config's flat `training_config` block
+    # spells with the same name; used only to answer "did the stage file declare this?".
+    STAGE_KEY_ALIASES = {
+        "training": ("max_steps", "save_steps", "eval_steps", "log_steps", "packing",
+                     "mixed_precision", "flash_attention", "gradient_checkpointing",
+                     "gradient_accumulation_steps", "memory_budget_gb", "seed"),
+        "data": ("batch_size", "sequence_length", "num_workers", "pin_memory",
+                 "prefetch_factor"),
+        "optimizer": ("learning_rate", "weight_decay", "max_grad_norm"),
+        "scheduler": ("warmup_steps", "warmup_ratio", "min_lr_ratio", "name",
+                    "scheduler_name", "decay_steps", "warmup_type"),
+        "loss": ("loss_type", "response_only_loss"),
+    }
+
+    def _record_stage_declared_keys(self, config: Dict[str, Any]) -> None:
+        """Remember which switches the stage file itself declared."""
+        declared = set(self.stage_declared_keys) | set(config)
+        for section, aliases in self.STAGE_KEY_ALIASES.items():
+            body = config.get(section)
+            if isinstance(body, dict):
+                declared.update(alias for alias in aliases if alias in body)
+        self.stage_declared_keys = sorted(declared)
+
+    def _apply_declared_fields(self, body: Dict[str, Any], section: str) -> None:
+        """Apply every declared section key that is a real configuration field.
+
+        A hand-written ``if "key" in section`` chain silently drops any field added later:
+        ``memory_budget_gb`` and ``seed`` were both declared in configs/train/pretrain_cpu.yaml
+        and never reached the object, so the host-memory ceiling the configuration promised
+        was not enforced (docs/audit/00 §38). An unknown key is reported instead of ignored.
+
+        Args:
+            body: The section's parsed mapping.
+            section: Section name, used in the warning for an unrecognised key.
+        """
+        fields = type(self).__dataclass_fields__
+        for key, value in body.items():
+            if key in fields:
+                setattr(self, key, value)
+            else:
+                _LOG.warning(f"Stage config declares unknown key '{section}.{key}' — "
+                             "it is ignored; add the field or fix the spelling")
+
     def _apply_stage_file_config(self, config: Dict[str, Any]):
         """Apply configuration from loaded stage file."""
+        self._record_stage_declared_keys(config)
         if "optimizer" in config:
             opt = config["optimizer"]
             if "learning_rate" in opt:
@@ -785,24 +855,8 @@ class PiscesLxTrainingConfig:
         
         if "training" in config:
             train = config["training"]
-            if "max_steps" in train:
-                self.max_steps = train["max_steps"]
-            if "save_steps" in train:
-                self.save_steps = train["save_steps"]
-            if "eval_steps" in train:
-                self.eval_steps = train["eval_steps"]
-            if "log_steps" in train:
-                self.log_steps = train["log_steps"]
-            if "gradient_accumulation_steps" in train:
-                self.gradient_accumulation_steps = train["gradient_accumulation_steps"]
-            if "gradient_checkpointing" in train:
-                self.gradient_checkpointing = train["gradient_checkpointing"]
-            if "mixed_precision" in train:
-                self.mixed_precision = train["mixed_precision"]
-            if "flash_attention" in train:
-                self.flash_attention = train["flash_attention"]
-            if "packing" in train:
-                self.packing = train["packing"]
+            if isinstance(train, dict):
+                self._apply_declared_fields(train, "training")
 
         if "moe" in config:
             moe_cfg = config["moe"]
@@ -1118,7 +1172,13 @@ class PiscesLxTrainingConfig:
             config.kfac = adv_dict.get("kfac", config.kfac)
             config.multitask = adv_dict.get("multitask", config.multitask)
             config.modality_scheduler = adv_dict.get("modality_scheduler", config.modality_scheduler)
-        
+
+        # Stage-file schema. Every shipped configs/train/*.yaml declares its loop cadence
+        # under `training:` (plus `loss:`/`distributed:`), while the mapping above reads
+        # flat keys for programmatic dicts. Applying the stage reader here as well keeps a
+        # single schema for both entry points; it only assigns keys the file actually has.
+        config._apply_stage_file_config(config_dict)
+
         return config
     
     def save_to_json(self, filepath: str):

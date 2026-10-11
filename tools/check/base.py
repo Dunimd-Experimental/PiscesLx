@@ -72,6 +72,7 @@ class PiscesLxRuleId:
     DANGLING_EXPORT = "NO-DANGLING-EXPORT"
     INCOMPLETE_MARKER = "NO-STUB-NOR-TODO"
     SILENT_EXCEPT = "NO-SILENT-EXCEPT"
+    DETACHED_SCALAR_PARAM = "NO-DETACHED-SCALAR-PARAM"
 
     @classmethod
     def all_rules(cls) -> tuple:
@@ -445,7 +446,6 @@ class PiscesLxCheckReport:
             return "\n".join(out)
         if verbose:
             out.append("detail (rule: path:line: message)")
-            total = 0
             for rule, items in grouped.items():
                 limit = max_rows if max_rows else len(items)
                 shown = 0
@@ -455,8 +455,6 @@ class PiscesLxCheckReport:
                         break
                     out.append("  " + violation.render(self.root))
                     shown += 1
-                    total += 1
-                del total
         return "\n".join(out)
 
 

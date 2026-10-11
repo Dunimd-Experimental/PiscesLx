@@ -23,6 +23,8 @@
 
 from __future__ import annotations
 
+from ..config import SPARSITY_REG_WEIGHT_DEFAULT, GATE_SPARSITY_THRESHOLD_DEFAULT
+
 """Dynamic Mixture-of-Experts Routing Components for Yv Models.
 
 This module provides sophisticated routing mechanisms for MoE layers,
@@ -270,7 +272,7 @@ class YvMoEGate(nn.Module):
         self.sparse_gate_soft_moe = nn.Parameter(torch.tensor(5.0, device=device, dtype=dtype))
         self.sparse_gate_expert_orient = nn.Parameter(torch.tensor(5.0, device=device, dtype=dtype))
         self.gate_sparsity_threshold = 0.01
-        self.sparsity_reg_weight = 1e-6
+        self.sparsity_reg_weight = float(getattr(cfg, 'sparsity_reg_weight', SPARSITY_REG_WEIGHT_DEFAULT))
 
         # Pruning state: after training, unused routing heads are removed
         self._pruned_heads: set = set()

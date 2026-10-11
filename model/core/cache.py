@@ -603,6 +603,7 @@ class YvPagedCacheManager:
         self.device = config.device
 
         max_blocks = (config.max_cache_size * config.n_layers) // config.block_size + 100
+        self.max_blocks = max_blocks
         self.blocks: Dict[int, YvCacheBlock] = {}
         self.free_blocks: List[int] = []
         self.next_block_id = 0
@@ -611,30 +612,28 @@ class YvPagedCacheManager:
         self.block_tables: Dict[int, torch.Tensor] = {}
 
         self._cpu_fallback_count = 0
-        self._initialize_block_pool(min(1000, max_blocks))
 
-        if self._cpu_fallback_count > 0:
-            _LOG.warning(f"YvPagedCacheManager: {self._cpu_fallback_count} blocks fell back to CPU due to CUDA unavailability")
+    def _grow_pool(self) -> int:
+        """Materialise one block on demand and return its id.
 
-    def _initialize_block_pool(self, n_blocks: int):
-        """Pre-allocate a pool of blocks for efficient allocation.
-        
-        Args:
-            n_blocks: Number of blocks to pre-allocate.
-        
-        Note:
-            Pre-allocation reduces allocation latency during inference.
+        The pool used to be pre-filled with up to 1000 blocks at construction. A block holds
+        two ``[1, n_heads, block_size, head_dim]`` tensors, so for the default geometry that is
+        ~8 MB per block and ~8 GB per model -- paid at *build* time by every tier, including a
+        0.01B one, and before any token is generated. Training never reads the paged cache, so
+        this made the host's commit charge fail with a native allocation error before the first
+        step. Blocks are now created as they are needed, up to ``max_blocks``; the eviction path
+        and every bookkeeping invariant are unchanged.
         """
-        for _ in range(n_blocks):
-            block = YvCacheBlock(
-                self.next_block_id, self.block_size, self.n_heads, self.head_dim, self.dtype, self.device
-            )
-            if block.device != self.device and self.device.startswith("cuda"):
-                if block.device == "cpu":
-                    self._cpu_fallback_count += 1
-            self.blocks[self.next_block_id] = block
-            self.free_blocks.append(self.next_block_id)
-            self.next_block_id += 1
+        block = YvCacheBlock(
+            self.next_block_id, self.block_size, self.n_heads, self.head_dim, self.dtype, self.device
+        )
+        if block.device != self.device and self.device.startswith("cuda"):
+            if block.device == "cpu":
+                self._cpu_fallback_count += 1
+        self.blocks[self.next_block_id] = block
+        block_id = self.next_block_id
+        self.next_block_id += 1
+        return block_id
 
     def _allocate_block(self) -> Optional[int]:
         """Allocate a block from the pool.
@@ -651,6 +650,9 @@ class YvPagedCacheManager:
             self.blocks[block_id].filled_size = 0
             self.blocks[block_id].importance_score = 0.0
             return block_id
+
+        if len(self.blocks) < self.max_blocks:
+            return self._grow_pool()
 
         return self._evict_block()
 

@@ -40,6 +40,9 @@
 
 ## 8.4 HuggingFace
 
+- 组织：https://huggingface.co/Dunimd
+- 模型仓库（权重上传目标）：https://huggingface.co/Dunimd/PiscesL1
+  （命名按"组织 + 项目全名"确定；若站上实际仓库名不同，以站上为准并同步改此文件与 README）
 - 模型托管和分享
 - **权重上传（强制）**：训练产生的所有权重 checkpoint 必须上传
 - **数据集获取**：自己在此寻找训练数据集
@@ -47,6 +50,7 @@
 
 ## 8.5 ModelScope（魔塔社区）
 
+- 模型仓库（权重镜像上传目标）：https://www.modelscope.cn/models/mfchina2024/PiscesL1
 - 模型和数据集资源（自行寻找数据集）
 - **权重上传（强制）**：作为 HuggingFace 的镜像备份，权重同步上传
 - 社区支持
@@ -108,20 +112,29 @@
 - 同时必须同步上传到 **ModelScope（魔塔社区）**作为镜像备份
 - 每次训练产生 checkpoint 后**立即**上传两个平台
 
-**源代码仓库（强制）**：
-- 两个备份源代码仓库：**Gitee（码云）+ GitHub**
+**源代码仓库（强制，四个 remote 已写入本地 `.git/config`）**：
 - **⚠️ 关键规则**：源代码仓库**不包含权重**（权重只上 HF / ModelScope）；**必须包含原权重以外的其他全部内容**（代码、配置、文档、脚本、实验记录、评测结果、推导留痕等）
-- 每次重要变更后必须 commit + push 到两个仓库
 
-**私用 Git 仓库（隔离保护）**：
-- 你将获得一个**私用 Git 仓库**（非主仓库），用于日常开发迭代和版本管理
-- **禁止向 PiscesL1 主仓库提交任何代码**——所有变更只能提交到私用仓库
-- 私用仓库地址执行时提供；每次重要变更后必须 commit + push；使用有意义的 commit message
+**实验性仓库（日常迭代 = 唯一默认推送目标）**：
+- Gitee：https://gitee.com/dunimd-experimental/pisceslx.git —— remote 名 `gitee-exp`
+- GitHub：https://github.com/Dunimd-Experimental/PiscesLx.git —— remote 名 `github-exp`
+- **允许强制推送**；建议 `git push --force-with-lease gitee-exp master`（强推但保留一次可回退保护）
+- 本地已设 `remote.pushdefault=gitee-exp`、`branch.master.remote=gitee-exp`、`push.default=simple`
+  → **模型不带远端名执行 `git push` 时必然落到实验性仓库**，从机制上杜绝误推主仓库
+- 每次重要变更后必须 commit + push 到实验性仓库（两个都推），使用有意义的 commit message
+
+**主仓库（允许推送，但受时机约束）**：
+- Gitee：https://gitee.com/dunimd/piscesl1.git —— remote 名 `gitee`
+- GitHub：https://github.com/Dunimd/PiscesL1.git —— remote 名 `github`
+- **必须等全部任务完成、验收清单逐条通过之后**才可推送主仓库；且必须**显式写出远端名**
+  （`git push gitee master` / `git push github master`）。在此之前，日常迭代一律只进实验性仓库。
+- 主仓库同样**不含权重**；权重只走 HuggingFace + ModelScope。
 
 **保存原则（强制）**：
 1. 权重 → HuggingFace + ModelScope（双备份）
 2. 源代码 → Gitee + GitHub（双备份，不含权重，含其余全部内容）
-3. 日常迭代 → 私用 Git 仓库
+3. 日常迭代 → **实验性仓库**（`gitee-exp` / `github-exp`，默认推送目标，允许强推）；
+   主仓库（`gitee` / `github`）仅在全部任务完成并通过验收后，显式指名远端才推
 4. 不要依赖单一平台的持久存储——任何平台都可能回收资源
 5. 训练脚本必须支持 checkpoint 恢复，以应对平台中断
 

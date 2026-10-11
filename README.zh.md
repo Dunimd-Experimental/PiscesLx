@@ -1,6 +1,6 @@
 <div align="center">
 
-[![Encre Agent](https://img.shields.io/badge/Encre_Agent—通用型智能体旗舰-C71D23?style=for-the-badge&logo=gitee)](https://gitee.com/dunimd/encre.git)
+[![Encre Agent](https://img.shields.io/badge/Encre_Agent—通用型智能体旗舰-C71D23?style=for-the-badge&logo=gitee)](https://gitee.com/dunimd/encre-agent.git)
 
 </div>
 
@@ -31,7 +31,7 @@
 <a href="https://gitee.com/dunimd" target="_blank">
     <img alt="Gitee" src="https://img.shields.io/badge/Gitee-Dunimd-C71D23?style=flat-square&logo=gitee"/>
 </a>
-<a href="https://github.com/mf2023/piscesl1" target="_blank">
+<a href="https://github.com/Dunimd/PiscesL1" target="_blank">
     <img alt="GitHub" src="https://img.shields.io/badge/GitHub-PiscesL1-181717?style=flat-square&logo=github"/>
 </a>
 <a href="https://huggingface.co/dunimd" target="_blank">
@@ -200,7 +200,7 @@ python manage.py train --model_size 1.5B --dataset Chinese2 --force_quant --quan
 ```bash
 git clone https://gitee.com/dunimd/piscesl1.git
 # 或
-git clone https://github.com/mf2023/piscesl1.git
+git clone https://github.com/Dunimd/PiscesL1.git
 cd piscesl1
 python manage.py setup
 ```
@@ -214,7 +214,7 @@ python manage.py setup
 # 1. 克隆仓库
 git clone https://gitee.com/dunimd/piscesl1.git
 # 或
-git clone https://github.com/mf2023/piscesl1.git
+git clone https://github.com/Dunimd/PiscesL1.git
 cd piscesl1
 
 # 2. 环境安装
@@ -393,9 +393,14 @@ python manage.py download
 <h2 align="center">🌏 社区与引用</h2>
 
 - 欢迎提交 Issues 和 PRs！
-- Gitee: https://gitee.com/dunimd/piscesl1.git
-- GitHub: https://github.com/mf2023/piscesl1.git
-- ModelScope: https://www.modelscope.cn/models/mfchina2024/PiscesL1
+- Gitee — 主仓库（remote `gitee`，全部任务通过验收后方可推送）：https://gitee.com/dunimd/piscesl1.git
+- GitHub — 主仓库（remote `github`，同上）：https://github.com/Dunimd/PiscesL1.git
+- Gitee — 实验性（remote `gitee-exp`，日常迭代的**默认推送目标**，允许强推）：https://gitee.com/dunimd-experimental/pisceslx.git
+- GitHub — 实验性（remote `github-exp`，同上）：https://github.com/Dunimd-Experimental/PiscesLx.git
+- Encre Agent（GitHub）：https://github.com/Dunimd/encre-agent.git
+- Encre Agent（Gitee）：https://gitee.com/dunimd/encre-agent.git
+- HuggingFace（权重）：https://huggingface.co/Dunimd/PiscesL1
+- ModelScope（权重镜像）：https://www.modelscope.cn/models/mfchina2024/PiscesL1
 
 ---
 
@@ -573,7 +578,7 @@ python manage.py download
   title = {PiscesL1: A High-Performance Multimodal Mixture-of-Experts Model with Autonomous Training Agent},
   year = {2026},
   publisher = {GitHub},
-  url = {https://github.com/mf2023/piscesl1}
+  url = {https://github.com/Dunimd/PiscesL1}
 }
 ```
 

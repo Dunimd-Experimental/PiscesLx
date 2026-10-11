@@ -126,7 +126,6 @@ class PiscesLxSubconsciousTrainer:
 
         self._all_params = router_params + state_params + film_params
         if self.cfg.use_ppo:
-            self._ensure_value_head()
             self.rl_optimizer = torch.optim.AdamW(self._all_params, lr=self.cfg.rl_learning_rate, weight_decay=0.01)
 
         self._ppo_buffer: List[Dict[str, torch.Tensor]] = []
@@ -137,14 +136,6 @@ class PiscesLxSubconsciousTrainer:
             f"Phase: {self.phase.value}. "
             f"Params: {sum(p.numel() for p in self._all_params)/1e6:.1f}M"
         )
-
-    def _ensure_value_head(self):
-        if not hasattr(self.subconscious.router, 'value_head'):
-            self.subconscious.router.value_head = nn.Sequential(
-                nn.Linear(self.subconscious.router.hidden_size, 256),
-                nn.SiLU(),
-                nn.Linear(256, 1),
-            ).to(self.device)
 
     def warm_start_knowledge_field(self, teacher_embeddings: torch.Tensor) -> Dict[str, float]:
         _LOG.info(f"Warm start: verifying expert pool with {teacher_embeddings.shape[0]} teacher embeddings")

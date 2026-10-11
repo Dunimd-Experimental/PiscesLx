@@ -39,7 +39,10 @@ from tools.check.base import (
     PiscesLxSeverity,
 )
 from tools.check.checks_exports import PiscesLxDanglingExportCheck
-from tools.check.checks_errors import PiscesLxSilentExceptCheck
+from tools.check.checks_errors import (
+    PiscesLxDetachedScalarCheck,
+    PiscesLxSilentExceptCheck,
+)
 from tools.check.checks_hygiene import (
     PiscesLxDanglingImportCheck,
     PiscesLxEngineIsolationCheck,
@@ -66,6 +69,7 @@ class PiscesLxCheckCatalog:
         PiscesLxClassNamingCheck,
         PiscesLxTopLevelFunctionCheck,
         PiscesLxSilentExceptCheck,
+        PiscesLxDetachedScalarCheck,
         PiscesLxStdlibLoggingCheck,
         PiscesLxCopyrightHeaderCheck,
         PiscesLxProjectNameCheck,

@@ -43,17 +43,17 @@ This project and everyone participating in it is governed by our [Code of Conduc
 
 ### Reporting Bugs
 
-Before creating bug reports, please check the [existing issues](https://github.com/mf2023/piscesl1/issues) to see if the problem has already been reported. When you are creating a bug report, please include as many details as possible:
+Before creating bug reports, please check the [existing issues](https://github.com/Dunimd/PiscesL1/issues) to see if the problem has already been reported. When you are creating a bug report, please include as many details as possible:
 
 #### Before Submitting a Bug Report
 
 - **Check the documentation** for information that might help
-- **Check if the bug has already been reported** by searching on GitHub under [Issues](https://github.com/mf2023/piscesl1/issues)
+- **Check if the bug has already been reported** by searching on GitHub under [Issues](https://github.com/Dunimd/PiscesL1/issues)
 - **Determine which repository the problem should be reported in**
 
 #### How to Submit a Good Bug Report
 
-Bugs are tracked as [GitHub issues](https://github.com/mf2023/piscesl1/issues). Create an issue and provide the following information:
+Bugs are tracked as [GitHub issues](https://github.com/Dunimd/PiscesL1/issues). Create an issue and provide the following information:
 
 - **Use a clear and descriptive title** for the issue to identify the problem
 - **Describe the exact steps to reproduce the problem** in as many details as possible
@@ -89,7 +89,7 @@ RuntimeError: CUDA out of memory
 
 ### Suggesting Enhancements
 
-Enhancement suggestions are tracked as [GitHub issues](https://github.com/mf2023/piscesl1/issues). When creating an enhancement suggestion, please include:
+Enhancement suggestions are tracked as [GitHub issues](https://github.com/Dunimd/PiscesL1/issues). When creating an enhancement suggestion, please include:
 
 - **Use a clear and descriptive title** for the issue to identify the suggestion
 - **Provide a step-by-step description of the suggested enhancement** in as many details as possible
@@ -126,7 +126,7 @@ Enhancement suggestions are tracked as [GitHub issues](https://github.com/mf2023
 #### Clone the Repository
 
 ```bash
-git clone https://github.com/mf2023/piscesl1.git
+git clone https://github.com/Dunimd/PiscesL1.git
 cd piscesl1
 ```
 
@@ -406,14 +406,14 @@ class YvFlashAttention2(nn.Module):
 ### Communication Channels
 
 - **Gitee Issues** (Primary): Bug reports, feature requests - https://gitee.com/dunimd/piscesl1
-- **GitHub Issues** (Mirror): Alternative access - https://github.com/mf2023/piscesl1/issues
+- **GitHub Issues** (Mirror): Alternative access - https://github.com/Dunimd/PiscesL1/issues
 - **GitHub Discussions**: For questions and community interaction
 - **ModelScope**: Model weights - https://www.modelscope.cn/models/mfchina2024/PiscesL1
 
 ### Repositories
 
 - **Gitee** (Primary): https://gitee.com/dunimd/piscesl1.git
-- **GitHub** (Mirror): https://github.com/mf2023/piscesl1.git
+- **GitHub** (Mirror): https://github.com/Dunimd/PiscesL1.git
 
 ### Recognition
 

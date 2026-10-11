@@ -1220,11 +1220,20 @@ class YvVKernel(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         batch, seq_len, d_model = x.shape
 
-        if self._kernel_cache is None or self._cache_seq_len < seq_len:
-            self._kernel_cache = self._compute_kernel(seq_len, x.device, x.dtype)
-            self._cache_seq_len = seq_len
+        # The kernel is built from B/C/A, so a cached copy is a node of the graph that
+        # produced it. Reusing it across forwards is correct only when no graph is being
+        # built (generation); during training the next step would consume the previous
+        # step's already-freed graph. Recompute per training forward, cache otherwise.
+        cacheable = not torch.is_grad_enabled() or not self.training
+        if not cacheable or self._kernel_cache is None or self._cache_seq_len < seq_len:
+            kernel_full = self._compute_kernel(seq_len, x.device, x.dtype)
+            if cacheable:
+                self._kernel_cache = kernel_full
+                self._cache_seq_len = seq_len
+        else:
+            kernel_full = self._kernel_cache
 
-        kernel = self._kernel_cache[:seq_len]
+        kernel = kernel_full[:seq_len]
         kernel = kernel.permute(1, 0).unsqueeze(1)
 
         output = F.conv1d(
@@ -1393,7 +1402,12 @@ class YvFlashSSM(nn.Module):
         self.d_state = d_state
         self.d_conv = d_conv
 
-        self.in_proj = nn.Linear(d_model, 3 * d_model, bias=False)
+        # u and delta are d_model wide; B and C carry the state, so their width must be
+        # d_state and not a slice of d_model. Deriving BC from d_model made a
+        # state larger than the model width slice to an *empty* tensor, which einsum then
+        # reported as a broadcast failure two layers away.
+        self.bc_width = 2 * d_state
+        self.in_proj = nn.Linear(d_model, 2 * d_model + self.bc_width, bias=False)
         self.out_proj = nn.Linear(d_model, d_model, bias=False)
 
         self.conv1d = nn.Conv1d(d_model, d_model, kernel_size=d_conv, padding=d_conv-1, groups=d_model)
@@ -1430,7 +1444,7 @@ class YvFlashSSM(nn.Module):
         batch, seq_len, d_model = x.shape
 
         projected = self.in_proj(x)
-        u, delta, BC = projected.chunk(3, dim=-1)
+        u, delta, BC = torch.split(projected, [d_model, d_model, self.bc_width], dim=-1)
 
         u = rearrange(u, 'b l d -> b d l')
         u = self.conv1d(u)[:, :, :seq_len]
@@ -1440,8 +1454,13 @@ class YvFlashSSM(nn.Module):
 
         A = -torch.exp(self.A_log.float())
 
+        if BC.shape[-1] != self.bc_width:
+            raise RuntimeError(
+                f"YvFlashSSM expected {self.bc_width} state channels (2 x d_state="
+                f"{self.d_state}), got {BC.shape[-1]}: the scan would silently read an empty "
+                "B or C slice")
         B = BC[..., :self.d_state]
-        C = BC[..., self.d_state:2*self.d_state]
+        C = BC[..., self.d_state:2 * self.d_state]
 
         output = self._flash_scan(u, delta, A, B, C)
         output = output + u * self.D.unsqueeze(0).unsqueeze(0)

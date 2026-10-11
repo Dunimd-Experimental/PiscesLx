@@ -193,8 +193,8 @@ For questions about this Code of Conduct, please contact:
 For general project inquiries and non-conduct issues, please use:
 
 - **Gitee**: https://gitee.com/dunimd/piscesl1
-- **GitHub Issues**: https://github.com/mf2023/piscesl1/issues
-- **GitHub Discussions**: https://github.com/mf2023/piscesl1/discussions
+- **GitHub Issues**: https://github.com/Dunimd/PiscesL1/issues
+- **GitHub Discussions**: https://github.com/Dunimd/PiscesL1/discussions
 - **ModelScope**: https://www.modelscope.cn/models/mfchina2024/PiscesL1
 
 ## License

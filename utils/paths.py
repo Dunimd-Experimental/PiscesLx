@@ -110,6 +110,15 @@ from utils.dc import PiscesLxConfiguration, PiscesLxFilesystem, PiscesLxLogger
 
 _LOG = PiscesLxLogger("PiscesLx.Core.Paths")
 
+#: Environment override for the artifact root. Documented since forever, implemented
+#: only now: it was declared in this module's own docstring while
+#: resolve_pisceslx_home() returned the literal default, so every artifact -- checkpoints,
+#: caches, logs -- was pinned next to the repository no matter what was configured.
+ENV_HOME = "PISCESLX_HOME"
+#: Default artifact root, relative to the current working directory.
+DEFAULT_PISCESLX_HOME = ".pisceslx"
+
+
 class PiscesLxPaths:
     """Path and runtime-configuration accessors for PiscesL1.
 
@@ -194,8 +203,14 @@ class PiscesLxPaths:
             >>> home = PiscesLxPaths.resolve_pisceslx_home()
             >>> print(home)
             .pisceslx
+
+            >>> import os
+            >>> os.environ["PISCESLX_HOME"] = "<volume>/pisceslx-artifacts"
+            >>> PiscesLxPaths.resolve_pisceslx_home()
+            '<volume>/pisceslx-artifacts'
         """
-        return ".pisceslx"
+        override = os.environ.get(ENV_HOME, "").strip()
+        return override if override else DEFAULT_PISCESLX_HOME
 
     @staticmethod
     def get_pisceslx_home_dir() -> str:
@@ -324,6 +339,35 @@ class PiscesLxPaths:
         return PiscesLxPaths.get_cache_dir(name)
 
     @staticmethod
+    @staticmethod
+    def resolve_output_dir(value: Optional[str], fallback: str = "ckpt") -> str:
+        """Resolve a configured artifact directory against the (possibly moved) home root.
+
+        A configured path is used as written when it is absolute. A relative one that
+        already begins with the default home (``.pisceslx/ckpt``) is re-rooted under the
+        configured home instead of being duplicated into ``<home>/.pisceslx/ckpt``; any
+        other relative path stays relative to the working directory, which is what the
+        config schema promises.
+
+        Args:
+            value: The configured ``output_dir`` (may be empty or None).
+            fallback: Sub-directory of the home used when nothing is configured.
+
+        Returns:
+            str: The directory the trainer should write to.
+        """
+        text = str(value or "").strip()
+        home = PiscesLxPaths.get_pisceslx_home_dir()
+        if not text:
+            return str(Path(home) / fallback)
+        candidate = Path(text)
+        if candidate.is_absolute():
+            return text
+        default_parts = Path(DEFAULT_PISCESLX_HOME).parts
+        if candidate.parts[:len(default_parts)] == default_parts:
+            return str(Path(home) / Path(*candidate.parts[len(default_parts):] or "."))
+        return text
+
     def get_checkpoint_dir(name: str) -> str:
         """Get or create a checkpoint directory.
 

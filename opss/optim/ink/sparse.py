@@ -67,6 +67,22 @@ from typing import Tuple, Optional, Dict, Any
 from collections import defaultdict
 from configs.version import VERSION
 
+#: Guard added to every norm/threshold division so an all-zero gradient cannot divide by 0.
+NUMERICAL_EPSILON = 1e-8
+#: Bounds of the per-parameter density controller in _adaptive_factor (see its docstring):
+#: a single step may at most double or halve a parameter's selection density.
+ADAPTIVE_GAIN_MIN = 0.5
+ADAPTIVE_GAIN_MAX = 2.0
+#: Floor on the selected fraction: at least one element per call is always taken, so a
+#: mis-declared ratio of 0 degrades to the smallest possible update instead of a no-op.
+MIN_SELECTION_RATIO = 1e-6
+#: Parameters larger than block_size * STRUCTURED_MIN_BLOCKS are selected by whole blocks.
+STRUCTURED_MIN_BLOCKS = 10
+#: Weights of the combined magnitude/orthogonality score in _magnitude_mask; they sum to 1,
+#: so the score stays inside [0, 1] and its top-k threshold is comparable across parameters.
+MAGNITUDE_WEIGHT = 0.3
+ORTHOGONALITY_WEIGHT = 0.7
+
 
 class PiscesLxInkSparseSelector:
     """
@@ -84,7 +100,8 @@ class PiscesLxInkSparseSelector:
         warmup_steps: Number of steps to gradually increase sparsity
         adaptive: Whether to adaptively adjust sparsity based on training dynamics
         step: Current training step counter
-        importance_history: Historical importance scores per parameter
+        _selection_counts: Elements selected so far per parameter (density controller)
+        _total_counts: Elements offered so far per parameter (density controller)
     
     Example:
         >>> selector = PiscesLxInkSparseSelector(
@@ -112,7 +129,6 @@ class PiscesLxInkSparseSelector:
         ortho_momentum: float = 0.9,
         structured_sparsity: bool = True,
         block_size: int = 32,
-        gradient_compression_ratio: float = 0.1,
     ):
         """
         Initialize the sparse gradient selector.
@@ -124,7 +140,6 @@ class PiscesLxInkSparseSelector:
             ortho_momentum: Momentum for orthogonal direction tracking (default: 0.9)
             structured_sparsity: Enable structured sparse gradients (default: True)
             block_size: Block size for structured sparsity (default: 32)
-            gradient_compression_ratio: Compression ratio for structured sparsity (default: 0.1)
         """
         self.sparse_ratio = sparse_ratio
         self.warmup_steps = warmup_steps
@@ -132,10 +147,8 @@ class PiscesLxInkSparseSelector:
         self.ortho_momentum = ortho_momentum
         self.structured_sparsity = structured_sparsity
         self.block_size = block_size
-        self.gradient_compression_ratio = gradient_compression_ratio
         self.step = 0
         
-        self._importance_history: Dict[str, torch.Tensor] = {}
         self._selection_counts: Dict[str, int] = defaultdict(int)
         self._total_counts: Dict[str, int] = defaultdict(int)
         self._update_directions: Dict[str, torch.Tensor] = {}
@@ -161,110 +174,139 @@ class PiscesLxInkSparseSelector:
             progress = self.step / self.warmup_steps
             return 1.0 - (1.0 - self.sparse_ratio) * progress
         return self.sparse_ratio
-    
+
+    def _adaptive_factor(self, param_name: Optional[str]) -> float:
+        """Proportional correction keeping this parameter's realised density at target.
+
+        The controller compares the fraction of the parameter's elements actually selected
+        so far against the declared target. Equal densities give 1.0, so the declared
+        ``sparse_ratio`` is a fixed point of the loop; a parameter whose selection has
+        fallen below target is corrected upward and vice versa, bounded by
+        ``ADAPTIVE_GAIN_*`` so one noisy step cannot switch a parameter on or off.
+        """
+        if not self.adaptive or param_name is None:
+            return 1.0
+        total = self._total_counts.get(param_name, 0)
+        if total <= 0:
+            return 1.0
+        observed = self._selection_counts.get(param_name, 0) / total
+        if observed <= 0.0:
+            return ADAPTIVE_GAIN_MAX
+        correction = self.sparse_ratio / observed
+        return float(min(ADAPTIVE_GAIN_MAX, max(ADAPTIVE_GAIN_MIN, correction)))
+
+    def _effective_ratio_for(self, param_name: Optional[str]) -> float:
+        """Warmup schedule composed with the per-parameter adaptive correction."""
+        ratio = self.get_effective_ratio() * self._adaptive_factor(param_name)
+        return float(min(1.0, max(MIN_SELECTION_RATIO, ratio)))
+
+    def _structured_mask(self, gradient: torch.Tensor, ratio: float) -> torch.Tensor:
+        """Select whole blocks by importance mass, so the mask is hardware-aligned.
+
+        Blocks are the unit of selection: the k blocks with the largest L1 gradient mass are
+        kept whole, where k is derived from the declared ratio. The previous implementation
+        took k from an attribute nothing configured (``gradient_compression_ratio``), so every
+        parameter above ``block_size * 10`` elements was trained at 10% density no matter what
+        ``sparse_ratio``, ``sparse_warmup_steps`` or ``sparse_adaptive`` declared.
+        """
+        flat_grad = gradient.reshape(-1)
+        num_elements = flat_grad.numel()
+        num_blocks = (num_elements + self.block_size - 1) // self.block_size
+        pad = num_blocks * self.block_size - num_elements
+        if pad:
+            flat_grad = torch.cat([flat_grad, flat_grad.new_zeros(pad)])
+        block_importance = flat_grad.view(num_blocks, self.block_size).abs().sum(dim=1)
+        k = max(1, min(num_blocks, int(round(num_blocks * ratio))))
+        block_selected = torch.zeros(num_blocks, dtype=torch.bool, device=gradient.device)
+        block_selected[torch.topk(block_importance, k).indices] = True
+        mask = block_selected.repeat_interleave(self.block_size)[:num_elements]
+        return mask.view(gradient.shape)
+
+    def _magnitude_mask(self, gradient: torch.Tensor, ratio: float,
+                        param_name: Optional[str]) -> torch.Tensor:
+        """Select individual elements by magnitude, diversified by update orthogonality."""
+        flat_grad = gradient.reshape(-1)
+        num_elements = flat_grad.numel()
+        k = max(1, min(num_elements, int(round(num_elements * ratio))))
+        mag_score = flat_grad.abs()
+
+        if param_name is not None and param_name in self._update_directions:
+            hist_dir = self._update_directions[param_name].reshape(-1)
+            if hist_dir.numel() == num_elements:
+                cos_sim = (flat_grad * hist_dir).sum() / (
+                    flat_grad.norm() * hist_dir.norm() + NUMERICAL_EPSILON
+                )
+                ortho_score = (1.0 - cos_sim.abs()).clamp(min=0.0, max=1.0)
+                combined_score = (MAGNITUDE_WEIGHT * (mag_score / (mag_score.max() + NUMERICAL_EPSILON))
+                                  + ORTHOGONALITY_WEIGHT * ortho_score)
+            else:
+                combined_score = mag_score / (mag_score.max() + NUMERICAL_EPSILON)
+        else:
+            combined_score = mag_score / (mag_score.max() + NUMERICAL_EPSILON)
+
+        threshold = torch.kthvalue(combined_score, max(1, num_elements - k + 1)).values
+        return (combined_score >= threshold).view(gradient.shape)
+
     def select(
         self,
         gradient: torch.Tensor,
         param_name: Optional[str] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Select top-K% gradients by orthogonal importance.
-        
-        This method computes orthogonal scores by combining gradient magnitude
-        with orthogonality to historical update directions, ensuring diverse
-        updates even under extreme sparsity.
-        
-        Selection Process:
-            1. Compute magnitude scores: |grad|
-            2. Compute orthogonality scores: 1 - |cos(grad, hist_dir)|
-            3. Combine: alpha * mag_score + (1-alpha) * ortho_score
-            4. Select top-K% by combined score
-        
+        """Select the gradients that receive an update this step.
+
+        One selection path decides the density (warmup composed with the per-parameter
+        correction) and then either block granularity or element granularity, so every
+        declared sparsity knob applies to every parameter regardless of size.
+
         Args:
             gradient: Input gradient tensor
             param_name: Optional parameter name for importance tracking
         
         Returns:
             Tuple of:
-                - sparse_gradient: Gradient with only top-K% values
+                - sparse_gradient: Gradient with only the selected values
                 - mask: Binary mask indicating selected positions
         """
-        if self.structured_sparsity and gradient.numel() > self.block_size * 10:
-            return self._structured_sparse_projection(gradient, param_name)
-        
-        ratio = self.get_effective_ratio()
-        
-        flat_grad = gradient.flatten()
-        num_elements = flat_grad.numel()
-        k = max(1, int(num_elements * ratio))
-        
-        mag_score = flat_grad.abs()
-        
-        if param_name is not None and param_name in self._update_directions:
-            hist_dir = self._update_directions[param_name].flatten()
-            if hist_dir.shape[0] == num_elements:
-                cos_sim = (flat_grad * hist_dir).sum() / (
-                    flat_grad.norm() * hist_dir.norm() + 1e-8
-                )
-                ortho_score = (1.0 - cos_sim.abs()).clamp(min=0.0, max=1.0)
-                
-                combined_score = (
-                    0.3 * (mag_score / (mag_score.max() + 1e-8)) +
-                    0.7 * ortho_score
-                )
-            else:
-                combined_score = mag_score / (mag_score.max() + 1e-8)
+        ratio = self._effective_ratio_for(param_name)
+
+        if self.structured_sparsity and gradient.numel() > self.block_size * STRUCTURED_MIN_BLOCKS:
+            mask = self._structured_mask(gradient, ratio)
         else:
-            combined_score = mag_score / (mag_score.max() + 1e-8)
-        
-        threshold = torch.kthvalue(combined_score, max(1, num_elements - k)).values
-        
-        mask = combined_score >= threshold
-        
-        sparse_gradient = gradient * mask.float()
-        
+            mask = self._magnitude_mask(gradient, ratio, param_name)
+
+        sparse_gradient = gradient * mask.to(gradient.dtype)
+
         if param_name is not None:
-            self._update_importance(param_name, gradient, mask)
+            # A shape mismatch here previously surfaced as an access violation inside the
+            # importance bookkeeping (_update_importance) and took the whole process down.
+            # Fail with both shapes instead of corrupting memory.
+            if tuple(mask.shape) != tuple(gradient.shape):
+                raise ValueError(
+                    f"Ink sparse projection produced a mask shaped {tuple(mask.shape)} for a "
+                    f"gradient shaped {tuple(gradient.shape)} ({param_name}): the block grid "
+                    "and the parameter geometry disagree"
+                )
+            self._record_selection(param_name, gradient, mask)
             self._update_direction(param_name, sparse_gradient)
-        
+
         self._update_stats(mask)
-        
+
         self.step += 1
-        
+
         return sparse_gradient, mask
     
-    def _update_importance(
-        self,
-        param_name: str,
-        gradient: torch.Tensor,
-        mask: torch.Tensor,
-    ):
+    def _record_selection(self, param_name: str, gradient: torch.Tensor, mask: torch.Tensor):
+        """Accumulate how much of this parameter has actually been selected.
+
+        These two counters are the whole memory of the density controller: the previous
+        per-parameter EMA was model-sized and only ever read through its mean, which is why
+        it cost a full fp32 copy of every parameter on a host where that copy was the
+        difference between training and an allocation-failure crash.
         """
-        Update importance history for a parameter.
-        
-        This tracks which parameters are consistently selected for updates,
-        enabling adaptive sparsity adjustments.
-        
-        Args:
-            param_name: Name of the parameter
-            gradient: Original gradient tensor
-            mask: Selection mask
-        """
-        selected_count = mask.sum().item()
-        self._selection_counts[param_name] += selected_count
-        self._total_counts[param_name] += gradient.numel()
-        
-        if self.adaptive:
-            if param_name not in self._importance_history:
-                self._importance_history[param_name] = torch.zeros_like(
-                    gradient, 
-                    dtype=torch.float32
-                )
-            
-            self._importance_history[param_name] = (
-                0.9 * self._importance_history[param_name] +
-                0.1 * mask.float()
-            )
+        self._selection_counts[param_name] = (
+            self._selection_counts.get(param_name, 0) + int(mask.sum().item()))
+        self._total_counts[param_name] = (
+            self._total_counts.get(param_name, 0) + gradient.numel())
     
     def _update_direction(self, param_name: str, sparse_grad: torch.Tensor):
         """
@@ -301,146 +343,6 @@ class PiscesLxInkSparseSelector:
             self._stats["avg_sparsity"] = (
                 1.0 - self._stats["total_selected"] / self._stats["total_elements"]
             )
-    
-    def get_adaptive_ratio(self, param_name: str) -> float:
-        """
-        Get adaptive sparse ratio for a parameter.
-        
-        Parameters that are consistently selected get lower sparsity,
-        while rarely selected parameters get higher sparsity.
-        
-        Args:
-            param_name: Name of the parameter
-        
-        Returns:
-            Adaptive sparse ratio for the parameter
-        """
-        if not self.adaptive or param_name not in self._importance_history:
-            return self.sparse_ratio
-        
-        importance = self._importance_history[param_name].mean().item()
-        
-        if importance > 0.5:
-            return self.sparse_ratio * 0.5
-        elif importance < 0.01:
-            return min(1.0, self.sparse_ratio * 2.0)
-        else:
-            return self.sparse_ratio
-    
-    def select_adaptive(
-        self,
-        gradient: torch.Tensor,
-        param_name: str,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Select gradients with adaptive sparsity per parameter.
-        
-        This method uses historical importance scores to adjust
-        sparsity levels for each parameter individually.
-        
-        Args:
-            gradient: Input gradient tensor
-            param_name: Parameter name for adaptive adjustment
-        
-        Returns:
-            Tuple of (sparse_gradient, mask)
-        """
-        base_ratio = self.get_effective_ratio()
-        adaptive_ratio = self.get_adaptive_ratio(param_name)
-        effective_ratio = min(base_ratio, adaptive_ratio)
-        
-        flat_grad = gradient.abs().flatten()
-        num_elements = flat_grad.numel()
-        k = max(1, int(num_elements * effective_ratio))
-        
-        threshold = torch.kthvalue(
-            flat_grad,
-            max(1, num_elements - k)
-        ).values
-        
-        mask = gradient.abs() >= threshold
-        
-        sparse_gradient = gradient * mask.float()
-        
-        self._update_importance(param_name, gradient, mask)
-        self._update_stats(mask)
-        
-        self.step += 1
-        
-        return sparse_gradient, mask
-    
-    def reset_step(self):
-        """Reset the step counter."""
-        self.step = 0
-    
-    def reset_history(self):
-        """Reset importance history and statistics."""
-        self._importance_history.clear()
-        self._selection_counts.clear()
-        self._total_counts.clear()
-        self._stats = {
-            "total_selected": 0,
-            "total_elements": 0,
-            "avg_sparsity": 0.0,
-        }
-    
-    def _structured_sparse_projection(
-        self,
-        gradient: torch.Tensor,
-        param_name: Optional[str] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Apply structured sparse projection for gradient compression.
-        
-        This method projects gradients onto a structured sparse subspace by
-        dividing the gradient into blocks and selecting only the most important
-        blocks. This provides better hardware efficiency than unstructured sparsity.
-        
-        Args:
-            gradient: Input gradient tensor
-            param_name: Optional parameter name for tracking
-        
-        Returns:
-            Tuple of (sparse_gradient, mask)
-        """
-        original_shape = gradient.shape
-        flat_grad = gradient.flatten()
-        num_elements = flat_grad.numel()
-        
-        num_blocks = (num_elements + self.block_size - 1) // self.block_size
-        padded_size = num_blocks * self.block_size
-        
-        if padded_size > num_elements:
-            padding = torch.zeros(padded_size - num_elements, dtype=gradient.dtype, device=gradient.device)
-            grad_padded = torch.cat([flat_grad, padding])
-        else:
-            grad_padded = flat_grad
-        
-        grad_blocks = grad_padded.view(num_blocks, self.block_size)
-        
-        block_importance = grad_blocks.abs().sum(dim=1)
-        
-        k = max(1, int(num_blocks * self.gradient_compression_ratio))
-        _, top_k_indices = torch.topk(block_importance, k)
-        
-        sparse_blocks = torch.zeros_like(grad_blocks)
-        sparse_blocks[top_k_indices] = grad_blocks[top_k_indices]
-        
-        sparse_grad = sparse_blocks.flatten()[:num_elements].view(original_shape)
-        
-        mask = torch.zeros(num_elements, dtype=torch.bool, device=gradient.device)
-        for idx in top_k_indices:
-            start = idx * self.block_size
-            end = min(start + self.block_size, num_elements)
-            mask[start:end] = True
-        mask = mask.view(original_shape)
-        
-        if param_name is not None:
-            self._update_importance(param_name, gradient, mask)
-        
-        self._update_stats(mask)
-        self.step += 1
-        
-        return sparse_grad, mask
     
     def get_statistics(self) -> Dict[str, Any]:
         """
@@ -479,7 +381,7 @@ class PiscesLxInkSparseSelector:
             "selected_count": selected,
             "total_count": total,
             "selection_ratio": selected / total if total > 0 else 0.0,
-            "adaptive_ratio": self.get_adaptive_ratio(param_name),
+            "effective_ratio": self._effective_ratio_for(param_name),
         }
     
     def compute_memory_savings(

@@ -132,6 +132,7 @@ from typing import Dict, Any, Optional, Union, List, Tuple
 from pathlib import Path
 import time
 import json
+import glob
 import os
 from datetime import datetime
 from contextlib import nullcontext
@@ -141,7 +142,13 @@ from utils.dc import PiscesLxLogger, PiscesLxSystemMonitor
 from .config import PiscesLxTrainingConfig
 
 from utils.device import PiscesLxDeviceResolver
+from utils.host_memory import (
+    PiscesLxHostMemoryBudget,
+    PiscesLxHostMemoryBudgetError,
+)
+from utils.seed import PiscesLxDeterminism
 from utils.paths import PiscesLxPaths
+from model.host_tier import YvHostTierResolver
 _LOG = PiscesLxLogger("PiscesLx.Tools.Train", file_path=PiscesLxPaths.get_log_file("PiscesLx.Tools.Train"), enable_file=True)
 class PiscesLxTrainingOperator(object):
     """
@@ -191,6 +198,12 @@ class PiscesLxTrainingOperator(object):
             config: PiscesLxTrainingConfig with all training parameters
         """
         self.config = config
+        # Pinned before anything is drawn: component initialisation, data order and the
+        # tokenizer's sampling all consume the same generators, and a late pin would leave
+        # the weights themselves unseeded.
+        self._seed_applied = PiscesLxDeterminism.apply(getattr(config, "seed", None))
+        if self._seed_applied is not None:
+            _LOG.info(f"Random state pinned: seed={self._seed_applied}")
         self.model = None
         self.optimizer = None
         self.scheduler = None
@@ -270,10 +283,29 @@ class PiscesLxTrainingOperator(object):
             except Exception as e:
                 _LOG.warning(f"Failed to configure SDP backends: {e}. Training will continue with default SDP settings.")
         
+        # Device-capability contract, checked before anything is built: the accelerator the
+        # project targets (Tesla T4, sm_75) has no native BF16, and the repository's memory
+        # presets set bf16 regardless of device, so a "measured throughput" could silently
+        # describe neither tier. A contradiction here is fatal rather than a warning, because
+        # every P1 metric is a throughput number (model/host_tier.py, docs/audit/00 §42).
+        self.host_tier = YvHostTierResolver.enforce(self.config.model_config
+                                                    if getattr(self.config, "model_config", None)
+                                                    else self.config,
+                                                    device=self.device)
+        _LOG.info(f"Host tier resolved: {self.host_tier.describe()}")
+
         self._setup_mixed_precision()
 
         self._grad_accum_steps = max(1, int(getattr(config, "gradient_accumulation_steps", 4) or 4))
         self._log_steps = max(1, int(getattr(config, "log_steps", 100) or 100))
+        # Declared host-memory ceiling, enforced rather than advisory: a run on a workstation
+        # must fail as a reported error at the stage that breaches it, not as a native
+        # allocation failure that takes the process down without a Python exception.
+        self._memory_budget = PiscesLxHostMemoryBudget(
+            getattr(config, "memory_budget_gb", None))
+        if self._memory_budget.enabled():
+            _LOG.info(f"Host memory budget declared: {self._memory_budget.budget_gb:.2f} GB "
+                      f"(free commit {self._memory_budget.available_commit_gb():.2f} GB)")
         self._non_blocking_transfer = bool(
             getattr(getattr(config, "data", None), "pin_memory", False)
         ) and self.device.type == "cuda"
@@ -649,6 +681,45 @@ class PiscesLxTrainingOperator(object):
         )
         return False
 
+    def reserve_host_memory_for_build(self) -> None:
+        """Refuse to start a model build that cannot fit in the declared budget."""
+        if not self._memory_budget.enabled():
+            return
+        self._memory_budget.require_headroom(
+            required_gb=self._memory_budget.budget_gb, stage="model build")
+
+    def _materialize_model_components(self) -> None:
+        """Force the training-relevant optional components into existence first.
+
+        YvModel builds optional components on first use. If that happens inside a
+        gradient-checkpointed block, recomputation walks a different tensor graph and
+        PyTorch aborts with a saved-tensor count mismatch; if it happens after the
+        optimiser collected parameters, those parameters are never trained; and it makes
+        the saved state_dict depend on which code paths executed, so the weight no longer
+        strict-loads into a bare model. Building them up front removes all three.
+        """
+        self.reserve_host_memory_for_build()
+        ensure_training_modules = getattr(self.model, "ensure_training_modules", None)
+        if ensure_training_modules is None:
+            return
+        ensure_training_modules()
+        names = self.model.materialized_components()
+        total = sum(p.numel() for p in self.model.parameters())
+        peak = self.memory_checkpoint("component materialisation")
+        _LOG.info(f"Materialised components before optimiser setup: {names} "
+                  f"({total/1e6:.2f}M parameters, host footprint {peak:.2f} GB)")
+
+    def _materialized_component_names(self) -> list:
+        """Optional components currently present on the model being trained."""
+        materialized = getattr(self.model, "materialized_components", None)
+        return sorted(materialized()) if callable(materialized) else []
+
+    def _apply_component_record(self, names) -> None:
+        """Rebuild the optional components a checkpoint was trained with."""
+        materialize = getattr(self.model, "materialize_components", None)
+        if callable(materialize):
+            materialize(names or [])
+
     def initialize_model(self, model_class: type, **model_kwargs) -> nn.Module:
         """
         Initialize the training model.
@@ -770,6 +841,7 @@ class PiscesLxTrainingOperator(object):
             model_kwargs.pop('dtype', None)
 
         self.model = model_class(**model_kwargs)
+        self._materialize_model_components()
 
         # --- Step 4: Non-FSDP path: quantize on CPU, then move to GPU ---
         if not _use_meta_fsdp:
@@ -1035,7 +1107,7 @@ class PiscesLxTrainingOperator(object):
         }
         key_str = json.dumps(key_data, sort_keys=True)
         cache_hash = hashlib.md5(key_str.encode()).hexdigest()[:12]
-        output_dir = str(getattr(self.config, "output_dir", ".pisceslx/ckpt") or ".pisceslx/ckpt")
+        output_dir = self.config.resolved_output_dir()
         return Path(output_dir) / ".qlora_cache" / f"model_{cache_hash}.pt"
 
     def invalidate_model_cache(self) -> None:
@@ -1487,6 +1559,38 @@ class PiscesLxTrainingOperator(object):
         except Exception as e:
             _LOG.error(f"Distributed training setup failed: {e}")
     
+    # Names that select the Ink 8-bit optimizer; anything else declared by the stage
+    # configuration is built as a plain torch optimizer.
+    INK_OPTIMIZER_NAMES = frozenset({"ink", "adamw8bit", "adamw_int8", "8bit"})
+
+    def _build_torch_optimizer(self, trainable_params, **optimizer_kwargs) -> torch.optim.Optimizer:
+        """Construct the declared non-Ink optimizer (SGD, fused or plain AdamW).
+
+        This is the same construction the Ink fallback used to perform inline, lifted so a
+        stage configuration that declares an optimizer actually gets that optimizer instead
+        of relying on Ink failing to import.
+        """
+        default_params = {
+            'lr': self.config.optimizer.learning_rate,
+            'weight_decay': self.config.optimizer.weight_decay,
+            'betas': self.config.optimizer.betas,
+            'eps': self.config.optimizer.eps
+        }
+        default_params.update(optimizer_kwargs)
+        
+        opt_name = str(getattr(self.config.optimizer, "name", "adamw") or "adamw").lower()
+        if opt_name == "sgd":
+            optimizer_class = torch.optim.SGD
+        elif getattr(self.config.optimizer, "use_fused_adamw", False):
+            from opss.kernels.fused_adamw import PiscesLxFusedAdamW
+            optimizer_class = PiscesLxFusedAdamW
+        else:
+            optimizer_class = torch.optim.AdamW
+        
+        self.optimizer = optimizer_class(trainable_params, **default_params)
+        _LOG.info(f"Fallback optimizer {self.optimizer.__class__.__name__} initialized")
+        return self.optimizer
+
     def initialize_optimizer(self, optimizer_class: Optional[type] = None, **optimizer_kwargs) -> torch.optim.Optimizer:
         """
         Initialize the optimizer with Ink as the default unified optimizer.
@@ -1501,25 +1605,35 @@ class PiscesLxTrainingOperator(object):
         Returns:
             Initialized optimizer instance.
         """
-        _LOG.info("Initializing Ink optimizer...")
-        
         trainable_params = [p for p in self.model.parameters() if p.requires_grad]
-        
-        est_params = sum(p.numel() for p in trainable_params) if trainable_params else 0
-        is_small_model = est_params < 1_000_000_000  # <1B params
-        is_small_hidden = (getattr(self.config, 'hidden_size', 0) or 0) < 1024
+
+        declared_name = str(getattr(self.config.optimizer, "name", "") or "").strip().lower()
+        if declared_name and declared_name not in self.INK_OPTIMIZER_NAMES:
+            _LOG.info(f"Building declared optimizer '{declared_name}' (Ink not requested)")
+            self._build_torch_optimizer(trainable_params, **optimizer_kwargs)
+            self._initialize_scheduler()
+            return self.optimizer
+
+        _LOG.info("Initializing Ink optimizer...")
 
         try:
             from opss.optim.ink import PiscesLxInkOptimizer, PiscesLxInkConfig
             
             ink_section = getattr(self.config, 'ink_optimizer', None) or self.config
-            
-            # Auto-tune for model size: small models need less aggressive compression
-            sparse_ratio = 0.05 if is_small_model else float(getattr(ink_section, 'sparse_ratio', 0.01))
-            galore_rank = max(16, min(128, int(getattr(self.config, 'hidden_size', 640) * 0.125)))
-            gradient_sparse = 0.05 if is_small_model else float(getattr(ink_section, 'gradient_sparse_ratio', 0.01))
-            momentum_bits = max(4, int(getattr(ink_section, 'momentum_bits', 8 if is_small_model else 4)))
-            variance_bits = max(4, int(getattr(ink_section, 'variance_bits', 8 if is_small_model else 4)))
+
+            # Declared values are the only source of truth. The previous form re-decided
+            # these hyper-parameters from the parameter count (`0.05 if is_small_model
+            # else ...`, `8 if is_small_model else 4`), so a run could log
+            # "variance=8bit" while the buffers it allocated were 4-bit -- and 4-bit
+            # signed absmax on a heavy-tailed, non-negative state is what collapsed
+            # 61% of the variance entries to exactly zero (docs/audit/00 §29).
+            ink_defaults = PiscesLxInkConfig()
+            sparse_ratio = float(getattr(ink_section, 'sparse_ratio', ink_defaults.sparse_ratio))
+            gradient_sparse = float(getattr(ink_section, 'gradient_sparse_ratio',
+                                            ink_defaults.gradient_sparse_ratio))
+            momentum_bits = int(getattr(ink_section, 'momentum_bits', ink_defaults.momentum_bits))
+            variance_bits = int(getattr(ink_section, 'variance_bits', ink_defaults.variance_bits))
+            galore_rank = int(getattr(ink_section, 'galore_rank', ink_defaults.galore_rank))
             
             ink_config = PiscesLxInkConfig(
                 lr=self.config.optimizer.learning_rate,
@@ -1532,7 +1646,7 @@ class PiscesLxTrainingOperator(object):
                 variance_bits=variance_bits,
                 variance_block_size=getattr(ink_section, 'variance_block_size', 256),
                 sparse_ratio=sparse_ratio,
-                sparse_warmup_steps=getattr(ink_section, 'sparse_warmup_steps', 2000 if is_small_model else 1000),
+                sparse_warmup_steps=int(getattr(ink_section, 'sparse_warmup_steps', ink_defaults.sparse_warmup_steps)),
                 sparse_adaptive=True,
                 ortho_momentum=getattr(ink_section, 'ortho_momentum', 0.9),
                 galore_rank=galore_rank,
@@ -1556,11 +1670,11 @@ class PiscesLxTrainingOperator(object):
                 gradient_sparse_ratio=gradient_sparse,
                 kv_cache_bits=getattr(ink_section, 'kv_cache_bits', 8),
                 kv_cache_block_size=getattr(ink_section, 'kv_cache_block_size', 64),
-                max_experts_on_gpu=getattr(ink_section, 'max_experts_on_gpu', 2 if is_small_model else 4),
+                max_experts_on_gpu=int(getattr(ink_section, 'max_experts_on_gpu', ink_defaults.max_experts_on_gpu)),
                 moe_offload_threshold=getattr(ink_section, 'moe_offload_threshold', 0.8),
                 moe_lru_cache_size=getattr(ink_section, 'moe_lru_cache_size', 8),
                 checkpoint_transformer=getattr(ink_section, 'checkpoint_transformer', True),
-                checkpoint_ratio=0.7 if is_small_model else float(getattr(ink_section, 'checkpoint_ratio', 0.5)),
+                checkpoint_ratio=float(getattr(ink_section, 'checkpoint_ratio', ink_defaults.checkpoint_ratio)),
                 checkpoint_preserve_ratio=getattr(ink_section, 'checkpoint_preserve_ratio', 0.3),
             )
 
@@ -1592,26 +1706,7 @@ class PiscesLxTrainingOperator(object):
                 f"Error:\n{traceback.format_exc()}"
             )
             
-            default_params = {
-                'lr': self.config.optimizer.learning_rate,
-                'weight_decay': self.config.optimizer.weight_decay,
-                'betas': self.config.optimizer.betas,
-                'eps': self.config.optimizer.eps
-            }
-            default_params.update(optimizer_kwargs)
-            
-            opt_name = str(getattr(self.config.optimizer, "name", "adamw") or "adamw").lower()
-            if opt_name == "sgd":
-                optimizer_class = torch.optim.SGD
-            elif getattr(self.config.optimizer, "use_fused_adamw", False):
-                from opss.kernels.fused_adamw import PiscesLxFusedAdamW
-                optimizer_class = PiscesLxFusedAdamW
-            else:
-                optimizer_class = torch.optim.AdamW
-            
-            self.optimizer = optimizer_class(trainable_params, **default_params)
-            _LOG.info(f"Fallback optimizer {self.optimizer.__class__.__name__} initialized")
-        
+            self._build_torch_optimizer(trainable_params, **optimizer_kwargs)        
         self._initialize_scheduler()
         
         return self.optimizer
@@ -2420,16 +2515,6 @@ class PiscesLxTrainingOperator(object):
 
         aux_losses: List[torch.Tensor] = []
         
-        if hasattr(self, '_galore_adapter') and self._galore_adapter is not None:
-            try:
-                gradients = {name: param.grad for name, param in self.model.named_parameters() 
-                           if param.grad is not None}
-                if gradients:
-                    self.model, galore_stats = self._galore_adapter.step(self.model, gradients)
-                    _LOG.debug(f"GaLore adapter step completed, stats: {galore_stats}")
-            except Exception as e:
-                _LOG.warning(f"GaLore adapter step failed: {e}")
-        
         if self._moe_gradient_optimizer is not None:
             try:
                 moe_result = self._moe_gradient_optimizer.execute({
@@ -2450,6 +2535,16 @@ class PiscesLxTrainingOperator(object):
         if self.scaler is not None:
             self.scaler.scale(total_loss).backward()
         else:
+            if not total_loss.requires_grad:
+                # Without this the failure surfaces as torch's own
+                # "element 0 of tensors does not require grad and does not have a grad_fn",
+                # which names neither the step nor the objective and cannot be diagnosed
+                # from a log (a 400-step host-tier run died at step ~280 exactly that way).
+                raise RuntimeError(
+                    f"objective has no autograd graph at step {self.global_step}: "
+                    f"loss={float(total_loss):.6f}, aux_terms={len(aux_losses)}, "
+                    "the forward produced a detached scalar — some component computed it "
+                    "under no_grad or replaced a parameter tensor mid-run")
             total_loss.backward()
 
         grad_norm = 0.0
@@ -2559,8 +2654,35 @@ class PiscesLxTrainingOperator(object):
         
         return stats
     
+    def memory_checkpoint(self, stage: str) -> float:
+        """Measure this process against the declared ceiling and abort on breach.
+
+        The abort writes a checkpoint first. Refusing to over-commit the host is the point
+        of the ceiling, but throwing away every optimiser step that already ran is not a
+        consequence anyone asked for: a measured daytime run reached step 270 of 400 before
+        the guard fired, and the only thing the abort produced was a lost run
+        (docs/audit/00 §39). The checkpoint write is best-effort -- if *that* cannot be
+        afforded either, the original breach is still reported.
+        """
+        try:
+            return self._memory_budget.guard(stage)
+        except PiscesLxHostMemoryBudgetError as breach:
+            path = None
+            try:
+                path = str(Path(self.config.resolved_output_dir())
+                           / f"budget_abort_step_{self.global_step}.pt")
+                self.save_checkpoint(path, metadata={"aborted_by": "memory_budget",
+                                                     "stage": stage})
+                _LOG.warning(f"Memory ceiling breached at step {self.global_step}: wrote the "
+                             f"progress checkpoint {path} before aborting")
+            except Exception as exc:
+                _LOG.error(f"Could not save a checkpoint on the memory abort: {exc}")
+            suffix = f"; progress saved to {path}" if path else "; no checkpoint could be saved"
+            raise PiscesLxHostMemoryBudgetError(f"{breach}{suffix}") from None
+
     def optimizer_step(self):
         """Execute optimizer step with proper scheduler update."""
+        self.memory_checkpoint("optimizer step")
         if self.scaler is not None:
             self.scaler.step(self.optimizer)
             self.scaler.update()
@@ -2585,6 +2707,20 @@ class PiscesLxTrainingOperator(object):
             else:
                 # PyTorch built-in scheduler
                 self.scheduler.step()
+
+        # GaLore projects the weights into a subspace and swaps the model, so it must run
+        # after the backward pass: doing it between forward and backward detached the graph
+        # that had just been built and the next total_loss.backward() died with
+        # "element 0 of tensors does not require grad" (measured at step 141).
+        if hasattr(self, '_galore_adapter') and self._galore_adapter is not None:
+            try:
+                gradients = {name: param.grad for name, param in self.model.named_parameters() 
+                           if param.grad is not None}
+                if gradients:
+                    self.model, galore_stats = self._galore_adapter.step(self.model, gradients)
+                    _LOG.debug(f"GaLore adapter step completed, stats: {galore_stats}")
+            except Exception as e:
+                _LOG.warning(f"GaLore adapter step failed: {e}")
 
         # Modality scheduler: adjust per-modality learning rates
         self._step_modality_scheduler()
@@ -2659,6 +2795,14 @@ class PiscesLxTrainingOperator(object):
         with sync_context:
             outputs = self.forward_pass(batch)
             loss = outputs['loss']
+            if not torch.isfinite(loss):
+                # Without this, a diverged run keeps stepping and then saves weights that
+                # are loadable, "trained" and full of NaNs: a measured case ran 90 further
+                # steps past its first NaN and the checkpoint verified as CE = nan.
+                raise FloatingPointError(
+                    f"non-finite loss ({float(loss)}) at step {self.global_step}; "
+                    "aborting so no unusable weight is written"
+                )
             if grad_accum_steps > 1:
                 loss = loss / grad_accum_steps
             grad_norm = self.backward_pass(loss, did_step=did_step)
@@ -2740,6 +2884,30 @@ class PiscesLxTrainingOperator(object):
         finally:
             del merged
 
+    # Step checkpoints are ~0.7 GB each and are written every save_steps: without a
+    # retention bound a short host-tier run filled the volume and the next save died with
+    # torch's "unexpected pos ... vs ..." zip error mid-write.
+    CHECKPOINT_RETENTION = 3
+
+    def _prune_step_checkpoints(self, directory: str) -> None:
+        """Keep only the newest step checkpoints in ``directory``; final_model.pt is never pruned.
+
+        The directory is the one the checkpoint was just written to rather than
+        ``config.output_dir``: the output root can be re-rooted to another volume
+        (``PISCESLX_HOME``, docs/audit/00 §33), and the raw config value still pointed at the
+        repository-local path. The result was that the glob matched nothing and *nothing* was
+        ever pruned while the run kept writing -- the true cause of A20, which §33 had
+        wrongly recorded as fixed.
+        """
+        pattern = os.path.join(directory, "checkpoint_step_*.pt")
+        step_files = sorted(glob.glob(pattern), key=os.path.getmtime, reverse=True)
+        for stale in step_files[self.CHECKPOINT_RETENTION:]:
+            try:
+                os.remove(stale)
+                _LOG.info(f"Pruned old checkpoint {os.path.basename(stale)}")
+            except OSError as exc:
+                _LOG.warning(f"Could not prune checkpoint {stale}: {exc}")
+
     def save_checkpoint(self, filepath: str, metadata: Optional[Dict[str, Any]] = None):
         """
         Save training checkpoint.
@@ -2762,6 +2930,9 @@ class PiscesLxTrainingOperator(object):
             'best_metric': self.best_metric,
             'config': self.config.to_dict(),
             'training_stats': self.training_stats,
+            # The parameter set a weight was trained with, so that loading reconstructs
+            # exactly it rather than whatever the loading process happens to build first.
+            'materialized_components': self._materialized_component_names(),
             'timestamp': datetime.now().isoformat()
         }
         
@@ -2771,6 +2942,7 @@ class PiscesLxTrainingOperator(object):
         # Save checkpoint
         torch.save(checkpoint, filepath)
         _LOG.info(f"Checkpoint saved to {filepath}")
+        self._prune_step_checkpoints(os.path.dirname(os.path.abspath(filepath)))
     
     def load_checkpoint(self, filepath: str) -> Dict[str, Any]:
         """
@@ -2790,6 +2962,8 @@ class PiscesLxTrainingOperator(object):
         adapter = checkpoint.get('adapter_state_dict')
         if adapter is not None and hasattr(self.model, "merge_and_unload"):
             state = adapter
+        self._materialize_model_components()
+        self._apply_component_record(checkpoint.get('materialized_components'))
         self.model.load_state_dict(state, strict=True)
         
         # Load optimizer state
@@ -2915,7 +3089,7 @@ class PiscesLxTrainingOperator(object):
         save_steps = int(getattr(self.config, "save_steps", 0) or 0)
         eval_steps = int(getattr(self.config, "eval_steps", 0) or 0)
 
-        output_dir = str(getattr(self.config, "output_dir", ".pisceslx/ckpt") or ".pisceslx/ckpt")
+        output_dir = self.config.resolved_output_dir()
         try:
             import os
             os.makedirs(output_dir, exist_ok=True)

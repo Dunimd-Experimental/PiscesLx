@@ -45,6 +45,7 @@ import pathlib
 import sys
 
 import torch
+import torch.nn.functional as F
 
 from model.config import YvConfig
 from model.core.model import YvModel
@@ -67,7 +68,9 @@ class PiscesLxCheckpointVerifier:
     LOSS_DIGITS = 4
     SCORE_DIGITS = 2
     REPORT_LIST_ITEMS = 5
-    PERPLEXITY_EXPONENT_CAP = 50.0
+    # exp() overflows float near 709; the cap exists only to keep the report numeric,
+    # and it must not clamp a score that is legitimately above the uniform baseline.
+    PERPLEXITY_EXPONENT_CAP = 700.0
 
     def __init__(self, checkpoint: str, model_config: str, corpus: str) -> None:
         self.checkpoint_path = pathlib.Path(checkpoint)
@@ -92,6 +95,11 @@ class PiscesLxCheckpointVerifier:
         state = payload["model_state_dict"] if isinstance(payload, dict) else payload
         cfg = YvConfig.from_yaml(self.model_config)
         reference = YvModel(cfg, device=torch.device("cpu"), dtype=torch.float32)
+        # Optional components are built on first use, so the checkpoint records which ones
+        # it was trained with; the reference must declare exactly that set before its keys
+        # can be compared strictly.
+        reference.materialize_components(
+            payload.get("materialized_components") if isinstance(payload, dict) else [])
         reference_state = reference.state_dict()
 
         report["loadable"] = self._check_loadable(reference_state, state)
@@ -104,8 +112,16 @@ class PiscesLxCheckpointVerifier:
         except Exception as exc:
             report["perplexity"] = {"ok": False,
                                     "error": f"{type(exc).__name__}: {exc}"}
+        # A weight whose next-token prediction is worse than a uniform distribution is not
+        # usable, however many tensors the optimiser moved: 90 steps of this run drove the
+        # summed objective from 120 to 39.7 while next-token CE stayed at 81.3 nats
+        # (uniform = 11.9), because that decline was auxiliary terms. The verdict therefore
+        # requires the LM signal itself, not just loadability and changed tensors.
         report["verdict"] = (
-            report["loadable"]["ok"] and report["trained"]["ok"] and report["perplexity"]["ok"]
+            report["loadable"]["ok"]
+            and report["trained"]["ok"]
+            and report["perplexity"]["ok"]
+            and bool(report["perplexity"].get("beats_uniform", False))
         )
         return report
 
@@ -159,13 +175,13 @@ class PiscesLxCheckpointVerifier:
 
     def _check_usable(self, model: YvModel, state: dict) -> dict:
         """Score the checkpoint with teacher forcing on real held-out documents."""
-        model.load_state_dict(state, strict=False)
+        model.load_state_dict(state, strict=True)
         tokenizer = YvTokenizer()
         samples = PiscesLxToolsDataJsonSampleReader.resolve(self.corpus)[: self.SAMPLE_LIMIT]
         if not samples:
             return {"ok": False, "error": f"no samples readable from {self.corpus}"}
         pad_id = int(getattr(tokenizer, "pad_token_id", 0) or 0)
-        total_loss, tokens = 0.0, 0
+        total_loss, copy_loss, tokens = 0.0, 0.0, 0
         for sample in samples:
             text = PiscesLxToolsDataJsonSampleReader.extract_text(sample)
             ids = tokenizer.encode(text)
@@ -173,21 +189,36 @@ class PiscesLxCheckpointVerifier:
             if ids.numel() < 2:
                 continue
             input_ids = ids[:-1].unsqueeze(0)
-            labels = ids[1:].unsqueeze(0)
             with torch.no_grad():
-                output = model(input_ids=input_ids, labels=labels)
-            loss = output["loss"] if isinstance(output, dict) else output.loss
-            if loss is None:
-                return {"ok": False, "error": "model returned no loss for labelled input"}
-            total_loss += float(loss) * (ids.numel() - 1)
-            tokens += int(ids.numel() - 1)
+                output = model(input_ids=input_ids)
+            # Score from the returned logits, never from the model's `loss`: that field is
+            # the summed objective (routing + MTP + reasoning auxiliary terms included), so
+            # exponentiating it produced "perplexity 5.2e21", and its decline can while away
+            # while next-token prediction does not improve at all.
+            logits = output["logits"] if isinstance(output, dict) else output.logits
+            if logits is None:
+                return {"ok": False, "error": "model returned no logits for labelled input"}
+            next_token = F.cross_entropy(logits[0].float(), ids[1:], reduction="none")
+            copy_target = F.cross_entropy(logits[0].float(), ids[:-1], reduction="none")
+            vocab_width = logits.size(-1)
+            total_loss += float(next_token.sum())
+            copy_loss += float(copy_target.sum())
+            tokens += int(next_token.numel())
         if tokens == 0:
             return {"ok": False, "error": "no token could be scored"}
         mean_loss = total_loss / tokens
+        # A uniform model over the vocabulary scores ln(V) nats. Reporting the number
+        # without it lets "perplexity 5e21" look like a metric bug instead of what it is:
+        # a model predicting the next token worse than uniform, because its logits still
+        # peak on the input token (see copy_target_loss).
+        uniform_loss = math.log(vocab_width)
         return {
             "ok": math.isfinite(mean_loss) and mean_loss > 0,
             "mean_loss": round(mean_loss, self.LOSS_DIGITS),
             "perplexity": self._round(math.exp(min(mean_loss, self.PERPLEXITY_EXPONENT_CAP))),
+            "uniform_baseline_loss": round(uniform_loss, self.LOSS_DIGITS),
+            "copy_target_loss": round(copy_loss / tokens, self.LOSS_DIGITS),
+            "beats_uniform": mean_loss < uniform_loss,
             "tokens_scored": tokens,
             "documents": len(samples),
             "pad_id": pad_id,

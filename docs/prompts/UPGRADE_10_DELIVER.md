@@ -13,7 +13,14 @@
 ### 权重与仓库交付（强制）
 1. **模型权重（唯一最终验收物）**：真实训练产生、可推理、可执行任务的 checkpoint；**上传 HuggingFace（主）+ ModelScope（镜像备份）**
 2. **源代码仓库**：**Gitee + GitHub** 双备份；**不含权重**；**必须包含原权重以外的其他全部内容**
-3. **私用 Git 仓库**：日常开发迭代与版本管理；禁止向主仓库提交
+3. **实验性 Git 仓库（日常迭代唯一默认推送目标）**：
+   - Gitee https://gitee.com/dunimd-experimental/pisceslx.git （remote `gitee-exp`）
+   - GitHub https://github.com/Dunimd-Experimental/PiscesLx.git （remote `github-exp`）
+   - 允许强制推送（建议 `--force-with-lease`）；`.git/config` 已把 `remote.pushdefault` 与
+     `branch.master.remote` 指向 `gitee-exp`，因此裸 `git push` 只会进实验性仓库
+   - **主仓库**（`gitee` = https://gitee.com/dunimd/piscesl1.git ，
+     `github` = https://github.com/Dunimd/PiscesL1.git ）在全部任务完成并通过验收前不得推送，
+     届时需显式写出远端名 `git push gitee master` / `git push github master`
 
 ### 文档交付
 1. **架构设计文档**：新架构设计、设计理由、创新点
@@ -284,6 +291,7 @@
 - [ ] 非计算任务释放 GPU 资源——无算力浪费
 - [ ] **权重已上传 HuggingFace**；**同步上传 ModelScope**
 - [ ] 源代码已备份到 Gitee 和 GitHub 双仓库；**不含权重，但含原权重以外的其他全部内容**
-- [ ] 所有代码变更提交到私用 git 仓库（非主仓库）
+- [ ] 所有代码变更已提交并推送到**实验性仓库**（`gitee-exp` + `github-exp` 两个都推）
+- [ ] 未向主仓库推送（除全部任务完成、验收清单逐条通过并显式指名远端之外，一律不推）
 - [ ] **所有内容形成整体统一架构，各部分无缝衔接、不互相分离**
 - [ ] 自主创建的账号统一密码 `Dunimd2026#`；刷号遵守反封禁纪律（不持续高频刷、随时切换账号、自动更换 IP）

@@ -44,6 +44,8 @@ from enum import Enum
 import sys
 import time
 
+from utils.console import PiscesLxConsoleEncoding
+
 
 class PiscesLxTestStatus(Enum):
     """Test result status enumeration."""
@@ -117,6 +119,9 @@ class PiscesLxTestReport:
     
     def __init__(self, total_tests: int = 40):
         """Initialize the test report."""
+        # This reporter prints the status glyphs above; on a legacy-codepage console the
+        # print itself would raise and abort the run while writing its own summary.
+        PiscesLxConsoleEncoding.ensure_utf8()
         self.results: List[PiscesLxTestResult] = []
         self.start_time: float = 0.0
         self.total_tests: int = total_tests

@@ -364,6 +364,16 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         
         if "lr" in model_train_cfg:
             self.train_config.optimizer.learning_rate = model_train_cfg["lr"]
+        # A stage file is authoritative over the convenience block embedded in the model
+        # config: drop every key the stage already declared so the two files cannot
+        # silently decide the same switch in opposite directions.
+        declared = set(self.train_config.stage_declared_keys)
+        if declared:
+            model_train_cfg = {key: value for key, value in model_train_cfg.items()
+                               if key not in declared}
+            if not model_train_cfg:
+                return
+
         if "learning_rate" in model_train_cfg:
             self.train_config.optimizer.learning_rate = model_train_cfg["learning_rate"]
         
@@ -554,6 +564,13 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         if "modality_scheduler" in model_train_cfg:
             self.train_config.modality_scheduler = model_train_cfg["modality_scheduler"]
 
+    # Stages that fit an existing base model: memory policies (4-bit base + adapters)
+    # apply here. Pretraining has no base to adapt — its trunk weights are the product.
+    ADAPTER_STAGES = frozenset({
+        "sft", "alignment_dpo", "alignment_ppo", "alignment_orpo", "specialized",
+        "rl_grpo", "rl_rlvr", "rl_dapo",
+    })
+
     def _apply_flagship_memory_and_convergence_policy(self, model_cfg: Any, params: Dict[str, Any]) -> None:
         if model_cfg is None:
             return
@@ -563,51 +580,71 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         opt = getattr(self.train_config, "optimizer", None)
         sch = getattr(self.train_config, "scheduler", None)
 
-        if q is not None:
-            q.enable_quantization = True
-            q.quant_method = "nf4"
-            q.bits = 4
-            if getattr(q, "group_size", None) is None:
-                q.group_size = 128
+        # From-scratch stages must train every parameter in the configured dtype and
+        # must save at the cadence the stage configuration declared.
+        stage_name = str(getattr(self.stage, "value", self.stage) or "")
+        base_checkpoint = str(params.get("resume_ckpt") or params.get("model_name_or_path") or "").strip()
+        adapter_run = (stage_name in self.ADAPTER_STAGES) or bool(base_checkpoint)
 
-        if l is not None:
-            l.enabled = True
+        if adapter_run:
+            if q is not None:
+                q.enable_quantization = True
+                q.quant_method = "nf4"
+                q.bits = 4
+                if getattr(q, "group_size", None) is None:
+                    q.group_size = 128
+            if l is not None:
+                l.enabled = True
 
-            hidden = int(getattr(model_cfg, "hidden_size", 0) or 0)
-            n_layer = int(getattr(model_cfg, "n_layer", 0) or 0)
-            scale = max(hidden, n_layer * 128)
-            if scale <= 1024:
-                r, alpha = 32, 64
-            elif scale <= 2048:
-                r, alpha = 64, 128
-            else:
-                r, alpha = 128, 256
+                hidden = int(getattr(model_cfg, "hidden_size", 0) or 0)
+                n_layer = int(getattr(model_cfg, "n_layer", 0) or 0)
+                scale = max(hidden, n_layer * 128)
+                if scale <= 1024:
+                    r, alpha = 32, 64
+                elif scale <= 2048:
+                    r, alpha = 64, 128
+                else:
+                    r, alpha = 128, 256
 
-            l.r = int(getattr(l, "r", r) or r)
-            if int(l.r) < r:
-                l.r = int(r)
-            l.lora_alpha = int(getattr(l, "lora_alpha", alpha) or alpha)
-            if int(l.lora_alpha) < alpha:
-                l.lora_alpha = int(alpha)
+                l.r = int(getattr(l, "r", r) or r)
+                if int(l.r) < r:
+                    l.r = int(r)
+                l.lora_alpha = int(getattr(l, "lora_alpha", alpha) or alpha)
+                if int(l.lora_alpha) < alpha:
+                    l.lora_alpha = int(alpha)
 
-            targets = list(getattr(l, "target_modules", None) or [])
-            if not targets:
-                targets = [
-                    "q_proj",
-                    "k_proj",
-                    "v_proj",
-                    "o_proj",
-                    "gate_proj",
-                    "up_proj",
-                    "down_proj",
-                ]
-            else:
-                if "k_proj" not in targets:
-                    targets.append("k_proj")
-            l.target_modules = targets
+                targets = list(getattr(l, "target_modules", None) or [])
+                if not targets:
+                    targets = [
+                        "q_proj",
+                        "k_proj",
+                        "v_proj",
+                        "o_proj",
+                        "gate_proj",
+                        "up_proj",
+                        "down_proj",
+                    ]
+                else:
+                    if "k_proj" not in targets:
+                        targets.append("k_proj")
+                l.target_modules = targets
+        else:
+            # Training from scratch has nothing to adapt: a 4-bit quantised random trunk
+            # with LoRA adapters on top is not a usable weight. This rule is authoritative
+            # over both the stage file and any `training_config` embedded in the model
+            # config, which previously re-enabled adapters after the stage was applied.
+            if q is not None:
+                q.enable_quantization = False
+            if l is not None:
+                l.enabled = False
 
         if opt is not None:
-            opt.name = "adamw8bit"
+            # 8-bit states are a memory policy: they belong to adapter runs on a shared
+            # GPU. A stage that declares plain AdamW must get plain AdamW, otherwise the
+            # declared optimizer name was silently overwritten (and Ink's step semantics
+            # then decide the quality of the weight).
+            if adapter_run:
+                opt.name = "adamw8bit"
             if getattr(opt, "use_fp4", False):
                 opt.use_fp4 = False
             if getattr(opt, "use_galore", False):
@@ -616,8 +653,14 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         if sch is not None:
             if str(getattr(sch, "name", "cosine") or "cosine").lower() not in {"cosine", "linear"}:
                 sch.name = "cosine"
+            # Warmup longer than the run itself never reaches the configured peak LR, so
+            # the default is bounded by the declared step budget.
+            max_steps = int(getattr(self.train_config, "max_steps", 0) or 0)
+            warmup_cap = max(1, max_steps // 10) if max_steps > 0 else 100
             if int(getattr(sch, "warmup_steps", 0) or 0) <= 0:
-                sch.warmup_steps = 100
+                sch.warmup_steps = min(100, warmup_cap)
+            elif max_steps > 0 and int(sch.warmup_steps) >= max_steps:
+                sch.warmup_steps = warmup_cap
             sch.warmup_type = str(getattr(sch, "warmup_type", "exponential") or "exponential")
             if float(getattr(sch, "min_lr_ratio", 0.0) or 0.0) <= 0.0:
                 sch.min_lr_ratio = 0.1
@@ -629,36 +672,34 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             self.train_config.mixed_precision = "bf16"
         self.train_config.flash_attention = bool(getattr(self.train_config, "flash_attention", True))
 
-        save_steps = int(getattr(self.train_config, "save_steps", 1000) or 1000)
-        eval_steps = int(getattr(self.train_config, "eval_steps", 500) or 500)
-        if save_steps < 500:
-            self.train_config.save_steps = 2000
-        if eval_steps < 200:
-            self.train_config.eval_steps = 1000
+        # The checkpoint cadence is declared by the stage configuration; a short host-tier
+        # run must be able to ask for a checkpoint every few steps.
+        if int(getattr(self.train_config, "save_steps", 0) or 0) <= 0:
+            self.train_config.save_steps = 1000
+        if int(getattr(self.train_config, "eval_steps", 0) or 0) <= 0:
+            self.train_config.eval_steps = 500
 
         if int(getattr(self.train_config, "log_steps", 0) or 0) <= 0:
             self.train_config.log_steps = 10
 
-        try:
-            _LOG.info(
-                "Flagship policy applied",
-                quant_bits=int(getattr(self.train_config.quantization, "bits", 4) or 4),
-                quant_method=str(getattr(self.train_config.quantization, "quant_method", "nf4") or "nf4"),
-                lora_enabled=bool(getattr(self.train_config.lora, "enabled", False)),
-                lora_r=int(getattr(self.train_config.lora, "r", 0) or 0),
-                lora_alpha=int(getattr(self.train_config.lora, "lora_alpha", 0) or 0),
-                optimizer=str(getattr(self.train_config.optimizer, "name", "") or ""),
-                scheduler=str(getattr(self.train_config.scheduler, "name", "") or ""),
-                warmup_steps=int(getattr(self.train_config.scheduler, "warmup_steps", 0) or 0),
-                warmup_type=str(getattr(self.train_config.scheduler, "warmup_type", "") or ""),
-                min_lr_ratio=float(getattr(self.train_config.scheduler, "min_lr_ratio", 0.0) or 0.0),
-                grad_checkpointing=bool(getattr(self.train_config, "gradient_checkpointing", False)),
-                mixed_precision=str(getattr(self.train_config, "mixed_precision", "") or ""),
-                save_steps=int(getattr(self.train_config, "save_steps", 0) or 0),
-                eval_steps=int(getattr(self.train_config, "eval_steps", 0) or 0),
-            )
-        except Exception:
-            pass
+        _LOG.info(
+            "Flagship policy applied",
+            adapter_run=adapter_run,
+            quant_bits=int(getattr(self.train_config.quantization, "bits", 4) or 4),
+            quant_method=str(getattr(self.train_config.quantization, "quant_method", "nf4") or "nf4"),
+            lora_enabled=bool(getattr(self.train_config.lora, "enabled", False)),
+            lora_r=int(getattr(self.train_config.lora, "r", 0) or 0),
+            lora_alpha=int(getattr(self.train_config.lora, "lora_alpha", 0) or 0),
+            optimizer=str(getattr(self.train_config.optimizer, "name", "") or ""),
+            scheduler=str(getattr(self.train_config.scheduler, "name", "") or ""),
+            warmup_steps=int(getattr(self.train_config.scheduler, "warmup_steps", 0) or 0),
+            warmup_type=str(getattr(self.train_config.scheduler, "warmup_type", "") or ""),
+            min_lr_ratio=float(getattr(self.train_config.scheduler, "min_lr_ratio", 0.0) or 0.0),
+            grad_checkpointing=bool(getattr(self.train_config, "gradient_checkpointing", False)),
+            mixed_precision=str(getattr(self.train_config, "mixed_precision", "") or ""),
+            save_steps=int(getattr(self.train_config, "save_steps", 0) or 0),
+            eval_steps=int(getattr(self.train_config, "eval_steps", 0) or 0),
+        )
 
     def _apply_top_level_config(self, model_cfg: Any):
         """
@@ -827,7 +868,11 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             params = {}
 
         train_cfg_path = params.get("train_config")
+        self._explicit_train_config = False
         if isinstance(train_cfg_path, str) and train_cfg_path.strip():
+            # An explicitly named stage file wins over the stage-derived default: the two
+            # would otherwise both be applied and the derived one silently wins back.
+            self._explicit_train_config = True
             self.train_config = self._load_config_from_file(train_cfg_path.strip())
 
         train_mode = str(params.get("train_mode") or "standard").strip() or "standard"
@@ -971,7 +1016,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         except Exception:
             pass
         
-        if self.stage is not None:
+        if self.stage is not None and not self._explicit_train_config:
             self.train_config.load_stage_config(self.stage)
             from .config import PiscesLxTrainingStage
             if self.stage in [PiscesLxTrainingStage.ALIGNMENT_DPO, PiscesLxTrainingStage.ALIGNMENT_PPO, PiscesLxTrainingStage.ALIGNMENT_ORPO]:
@@ -986,6 +1031,10 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
 
         model_cfg = self._apply_training_moe_overrides_to_model_config(model_cfg)
         
+        if params.get("max_steps") is not None:
+            self.train_config.max_steps = int(params["max_steps"])
+            _LOG.info(f"Step budget overridden from the command line: max_steps={self.train_config.max_steps}")
+
         seq_len = int(getattr(self.train_config.data, "sequence_length", 2048))
         if params.get("seq_len") is not None:
             try:

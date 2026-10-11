@@ -400,6 +400,13 @@ class PiscesLxInkIntegrator:
         """
         if self._root_operator is None:
             return update
+        # A spectral norm is the operator norm of a matrix. For a vector the notion
+        # degenerates to its Euclidean length, so clipping there renormalises every 1-D
+        # parameter (biases, norms, scalars) to a fixed length and silently divides its
+        # Adam step by ~sqrt(numel) — a 4096-element bias loses a factor of 64. The ROOT
+        # operator itself clips only at dim >= 2; match that rule here.
+        if update.dim() < 2:
+            return update
         
         try:
             sn = self._root_operator.compute_spectral_norm(update)

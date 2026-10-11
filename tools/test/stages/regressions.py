@@ -33,11 +33,14 @@ stage runs each in its own interpreter and reports what it printed — a suite t
 only a human invoking it by hand can verify is not a check.
 """
 
+import os
 import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import List, Tuple
+
+from utils.console import PiscesLxConsoleEncoding
 
 __all__ = ["PiscesLxRegressionSuiteChecker"]
 
@@ -69,10 +72,18 @@ class PiscesLxRegressionSuiteChecker:
 
     def _run_suite(self, suite: Path) -> None:
         start = time.time()
+        # The suites import the ``model`` package by absolute name, so the repository
+        # root must be on the child interpreter's search path.
+        environment = PiscesLxConsoleEncoding.child_environment(dict(os.environ))
+        existing = environment.get("PYTHONPATH", "")
+        environment["PYTHONPATH"] = (str(self.root_path) + os.pathsep + existing
+                                     if existing else str(self.root_path))
         try:
             completed = subprocess.run(
                 [sys.executable, str(suite)],
                 cwd=str(self.root_path), capture_output=True, text=True,
+                env=environment, encoding=PiscesLxConsoleEncoding.UTF8,
+                errors=PiscesLxConsoleEncoding.ERROR_POLICY,
                 timeout=self.TIMEOUT_S,
             )
         except subprocess.TimeoutExpired:

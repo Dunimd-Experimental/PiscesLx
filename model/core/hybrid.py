@@ -23,6 +23,8 @@
 
 from __future__ import annotations
 
+from ..config import SPARSITY_REG_WEIGHT_DEFAULT, GATE_SPARSITY_THRESHOLD_DEFAULT
+
 """
 Advanced Hybrid Transformer Blocks Module for Yv Model.
 
@@ -183,7 +185,7 @@ from typing import Optional, Dict, Any, Tuple, List, Union, Callable
 from dataclasses import dataclass
 from enum import Enum
 
-from .norms import YvRMSNorm, YvDeepNorm
+from .norms import YvRMSNorm, YvDeepNorm, YvFiLMModulation
 from .attention import YvAttention
 from .mamba3 import YvMamba3Integration, YvMamba3Config
 from ..moe import YvDeepSeekMoELayer
@@ -1231,8 +1233,8 @@ class YvHybridBlock(nn.Module):
 
         # GSA-style learnable sparse gate for SSM path
         self.sparse_gate_ssm = nn.Parameter(torch.tensor(5.0, device=device, dtype=dtype))
-        self.gate_sparsity_threshold = 0.01
-        self.sparsity_reg_weight = 1e-6
+        self.gate_sparsity_threshold = float(getattr(cfg, 'gate_sparsity_threshold', GATE_SPARSITY_THRESHOLD_DEFAULT))
+        self.sparsity_reg_weight = float(getattr(cfg, 'sparsity_reg_weight', SPARSITY_REG_WEIGHT_DEFAULT))
 
         self.cache_manager = None
         self.layer_idx = -1
@@ -1307,8 +1309,15 @@ class YvHybridBlock(nn.Module):
         past_key_values=None,
         use_cache=False,
         modal_id: Optional[torch.Tensor] = None,
+        film_params: Optional[Dict[str, torch.Tensor]] = None,
         **kwargs,
     ):
+        # The trunk passes the subconscious FiLM parameters for every block type, and this
+        # class used to absorb them through **kwargs: the router, its state evolver and every
+        # FiLM generator computed values that nothing consumed, so the addressed knowledge
+        # blocks carried no gradient at all (measured: 11.56M parameters with grad None while
+        # dual_injector.inject ran on both layers).
+        hidden_states = YvFiLMModulation.apply(hidden_states, film_params)
         batch_size, seq_len, d_model = hidden_states.shape
 
         # === Attention path ===
@@ -1318,8 +1327,7 @@ class YvHybridBlock(nn.Module):
 
         # === SSM path (sparse-gated) ===
         ssm_out, ssm_sparsity_loss = self._forward_ssm(hidden_states, attention_mask)
-        attn_sparsity_loss = getattr(self.attention, '_sparsity_loss',
-                                      torch.tensor(0.0, device=hidden_states.device, dtype=hidden_states.dtype))
+        attention_sparsity_loss = getattr(self.attention, "sparsity_loss", None)
 
         # === Unified fusion ===
         if ssm_out is not None:
@@ -1336,7 +1344,8 @@ class YvHybridBlock(nn.Module):
 
         mlp_out, aux_loss = self._forward_mlp(hybrid_out, modal_id=modal_id)
         ssm_sparsity_loss = self.sparsity_reg_weight * torch.sigmoid(self.sparse_gate_ssm).mean()
-        aux_loss = aux_loss + attn_sparsity_loss + ssm_sparsity_loss
+        aux_loss = aux_loss + ssm_sparsity_loss + (
+            attention_sparsity_loss() if callable(attention_sparsity_loss) else 0.0)
 
         output = mlp_residual + self.residual_dropout(
             self.residual_scale_mlp * mlp_out

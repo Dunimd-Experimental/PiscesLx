@@ -23,6 +23,8 @@
 
 from __future__ import annotations
 
+from ..config import SPARSITY_REG_WEIGHT_DEFAULT, GATE_SPARSITY_THRESHOLD_DEFAULT
+
 """
 Advanced Attention Mechanisms Module for Yv Model.
 
@@ -5366,8 +5368,7 @@ class YvAttention(nn.Module):
             torch.tensor(float(getattr(cfg, 'aux_kv_gate_init', 0.0)), device=device, dtype=dtype)
         )
         self.gate_sparsity_threshold = 0.01
-        self.sparsity_reg_weight = 1e-6
-        self._sparsity_loss = torch.tensor(0.0, device=device, dtype=dtype)
+        self.sparsity_reg_weight = float(getattr(cfg, 'sparsity_reg_weight', SPARSITY_REG_WEIGHT_DEFAULT))
 
         self.layer_idx = 0
         self.apply(YvNorms._arctic_init_weights)
@@ -5450,12 +5451,13 @@ class YvAttention(nn.Module):
             attn_mask = None
             is_causal = True
 
+        q_fa, fa_scale = self._fold_scale_into_query(q_fa)
         fa_out = F.scaled_dot_product_attention(
             q_fa, k_fa, v_fa,
             attn_mask=attn_mask,
             dropout_p=self.attn_dropout.p if self.training else 0.0,
             is_causal=is_causal,
-            scale=float(self.scale),
+            scale=fa_scale,
         )
 
         # LA heads (linear attention with ELU+1) — sparse-gated
@@ -5552,6 +5554,7 @@ class YvAttention(nn.Module):
         k_aux = F.normalize(ek, p=2, dim=-1).reshape(b * self.n_head, aux_len, self.head_dim)
         v_aux = ev.reshape(b * self.n_head, aux_len, self.head_dim)
 
+        q_aux, aux_scale = self._fold_scale_into_query(q_aux)
         aux_out = F.scaled_dot_product_attention(
             q_aux,
             k_aux,
@@ -5559,10 +5562,42 @@ class YvAttention(nn.Module):
             attn_mask=None,
             dropout_p=self.attn_dropout.p if self.training else 0.0,
             is_causal=False,
-            scale=float(self.scale),
+            scale=aux_scale,
         ).view(b, self.n_head, t, self.head_dim)
 
         return aux_gate * aux_out.transpose(1, 2).reshape(b, t, self.n_head * self.head_dim)
+
+    def sparsity_loss(self) -> torch.Tensor:
+        """GSA-style sparsity regulariser over the four sparse gates.
+
+        Computed on demand instead of being stored during ``forward``: an attribute kept on
+        the module is a node of that forward's graph, so the next forward would either add a
+        freed node to its own loss (autograd aborts with "backward through the graph a second
+        time") or pin the previous step's whole graph in memory.
+        """
+        return self.sparsity_reg_weight * (
+            torch.sigmoid(self.sparse_gate_lca).mean()
+            + torch.sigmoid(self.sparse_gate_dsa).mean()
+            + torch.sigmoid(self.sparse_gate_la).mean()
+            + torch.sigmoid(self.sparse_gate_duo_streaming).mean()
+        )
+    def _fold_scale_into_query(self, query: torch.Tensor) -> tuple:
+        """Return (query_for_sdpa, sdpa_scale) so a learnable scale keeps its gradient.
+
+        ``F.scaled_dot_product_attention`` takes ``scale`` as a Python float, so writing
+        ``scale=float(self.scale)`` reads the parameter out of the autograd graph: the value
+        used is the one captured at call time and the parameter never receives a gradient
+        (measured on the 0.01B host tier: 64 of 75 parameters with <= 4 elements had no
+        gradient path at all, this being one of the sources). Multiplying q by the scale and
+        letting SDPA use unit scale is algebraically the same attention:
+        softmax((s·q)kᵀ · 1) = softmax(qkᵀ · s).
+        """
+        if self.learnable_attention_scale:
+            return query * self.scale, 1.0
+        # The non-learnable branch stores a Python float in self.scale (see __init__), so
+        # it is passed through as written: wrapping it in float() would be the very read
+        # this file's rule (NO-DETACHED-SCALAR-PARAM) exists to forbid.
+        return query, self.scale
 
     def forward(
         self,
@@ -5745,12 +5780,8 @@ class YvAttention(nn.Module):
             out = out + contrast * (out - attenuated)
 
         # --- Sparsity regularization loss (GSA-style) ---
-        self._sparsity_loss = self.sparsity_reg_weight * (
-            torch.sigmoid(self.sparse_gate_lca).mean()
-            + torch.sigmoid(self.sparse_gate_dsa).mean()
-            + torch.sigmoid(self.sparse_gate_la).mean()
-            + torch.sigmoid(self.sparse_gate_duo_streaming).mean()
-        )
+        # Not stored on the module: see sparsity_loss(), which recomputes it from the
+        # current graph so a later forward can never consume a freed node.
 
         # --- 19. Cache return ---
         if use_cache:

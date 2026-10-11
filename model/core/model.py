@@ -716,20 +716,27 @@ class YvModel(nn.Module):
         self.quantization_config = quantization_config
         self.lora_config = lora_config
 
-        cache_config = getattr(cfg, 'cache_config', {
-            "enabled": True,
-            "kv_cache_max_size": 2048,
-            "h2o_cache_max_size": 1024,
-            "generation_cache_max_size": 512,
-            "speculative_cache_max_size": 256,
-            "quantization_enabled": True,
-            "dynamic_quantization": True,
-            "cache_eviction_policy": "lru",
-            "cache_type": getattr(cfg, 'cache_type', 'hybrid'),
-            "use_h2o_attention": getattr(cfg, 'use_h2o_attention', True),
-            "enable_cache_compression": getattr(cfg, 'enable_cache_compression', True),
-            "cache_compression_ratio": getattr(cfg, 'cache_compression_ratio', 0.5),
-        })
+        from .cache import YvCacheConfig
+
+        # The cache geometry must come from this model, not from YvCacheConfig's defaults.
+        # A plain dict used to be passed here, and the manager keeps only the keys that are
+        # dataclass fields -- so n_layers/n_heads/head_dim/dtype/device were all dropped and
+        # every tier (0.01B included) built the paged pool for a 32-layer, 32-head, 128-dim
+        # model: ~8 MB per block and gigabytes committed before the first token.
+        cache_config = getattr(cfg, 'cache_config', None) or YvCacheConfig(
+            max_cache_size=int(getattr(cfg, 'kv_cache_max_size', 2048)),
+            block_size=int(getattr(cfg, 'kv_cache_block_size', 512)),
+            cache_window_size=int(getattr(cfg, 'streaming_window', 2048)),
+            cache_quantization=bool(getattr(cfg, 'quantization_enabled', True)),
+            use_h2o_attention=bool(getattr(cfg, 'use_h2o_attention', True)),
+            enable_cache_compression=bool(getattr(cfg, 'enable_cache_compression', True)),
+            cache_compression_ratio=float(getattr(cfg, 'cache_compression_ratio', 0.5)),
+            n_layers=cfg.n_layer,
+            n_heads=cfg.n_head,
+            head_dim=cfg.hidden_size // cfg.n_head,
+            dtype=dtype,
+            device=YvDeviceResolver.as_string(device),
+        )
         self.cache_manager = YvUnifiedCacheManager(cache_config)
 
         self.layer_router = YvLayerRouter(cfg)
@@ -1433,28 +1440,73 @@ class YvModel(nn.Module):
                     mtp_head.weight = self.lm_head.weight
             self._lazy_initialized['mtp_heads'] = True
 
-    def ensure_all_modules(self) -> None:
-        """Force-initialise all lazy modules so ``parameters()`` is complete.
+    # Optional components that the language-modelling forward pass touches. They must
+    # exist before the optimiser collects parameters, otherwise their parameters are
+    # never trained, and before any gradient-checkpointed block runs, otherwise
+    # recomputation walks a different tensor graph.
+    TRAINING_COMPONENTS = ("block_field", "long_context", "mtp_heads")
 
-        Call **once** after creating the optimiser so that every module's
-        parameters are visible and the optimiser's param groups are fully
-        populated.  After this call the model is fully materialised.
+    # Lazily declared component -> the attribute it builds. Presence of the attribute,
+    # not a bookkeeping flag, is what "materialised" means.
+    COMPONENT_ATTRIBUTES = {
+        "vision_encoder": "vision",
+        "audio_encoder": "audio",
+        "video_encoder": "video",
+        "block_field": "block_field",
+        "reasoner": "reasoner",
+        "agentic": "agentic",
+        "speculative": "speculative_decoder",
+        "rca": "deep_cross_layer_injector",
+        "seer": "seer_executor",
+        "vericot": "vericot_verifier",
+        "crv": "crv_integration",
+        "comet": "comet",
+        "long_context": "token_sparse_attn",
+        "task_head": "task_head",
+        "eval_head": "eval_head",
+        "mtp_heads": "mtp_heads",
+    }
+
+    # Every lazily declared component, by name.
+    LAZY_COMPONENTS = tuple(COMPONENT_ATTRIBUTES)
+
+    def _component_getter(self, name: str):
+        getter = getattr(self, f"_lazy_get_{name}", None)
+        if getter is None:
+            raise ValueError(f"YvModel declares no lazy component '{name}'")
+        return getter
+
+    def ensure_training_modules(self) -> None:
+        """Materialise the components a training forward pass builds on first use."""
+        for name in self.TRAINING_COMPONENTS:
+            self._component_getter(name)()
+
+    def materialized_components(self) -> List[str]:
+        """Names of the optional components that exist on this instance."""
+        return [name for name, attribute in self.COMPONENT_ATTRIBUTES.items()
+                if getattr(self, attribute, None) is not None]
+
+    def materialize_components(self, names) -> None:
+        """Build exactly the recorded set of optional components.
+
+        Args:
+            names: Iterable of component names as stored by ``save_checkpoint``. A saved
+                weight carries this record so loading it reconstructs the parameter set it
+                was trained with, instead of whatever the loading process happened to run.
         """
-        self._lazy_get_vision_encoder()
-        self._lazy_get_audio_encoder()
-        self._lazy_get_video_encoder()
-        self._lazy_get_doc_encoder()
-        self._lazy_get_reasoner()
-        self._lazy_get_agentic()
-        self._lazy_get_speculative()
-        self._lazy_get_rca()
-        self._lazy_get_seer()
-        self._lazy_get_vericot()
-        self._lazy_get_crv()
-        self._lazy_get_long_context()
-        self._lazy_get_task_head()
-        self._lazy_get_eval_head()
-        self._lazy_get_mtp_heads()
+        for name in sorted(set(names)):
+            self._component_getter(name)()
+
+    def ensure_all_modules(self) -> None:
+        """Force-initialise every lazy module so ``parameters()`` is complete.
+
+        Call **once before** creating the optimiser so every module's parameters are
+        visible and the optimiser's parameter groups are fully populated. Components that
+        the current configuration disables stay unbuilt; building one that is broken is a
+        defect to fix, not to route around.
+        """
+        for name in self.LAZY_COMPONENTS:
+            self._component_getter(name)()
 
     def to(self, device=None, dtype=None, non_blocking=False):
         if device is None and dtype is None:
@@ -2394,11 +2446,20 @@ class YvModel(nn.Module):
             
             if labels is not None:
                 text_seq_len = labels.shape[1]
-                lm_loss = F.cross_entropy(
-                    logits[:, -text_seq_len:, :].reshape(-1, logits.size(-1)),
-                    labels.reshape(-1),
-                    ignore_index=-100
-                )
+                aligned_logits = logits[:, -text_seq_len:, :]
+                # Causal next-token objective: position t must predict labels[t + 1].
+                # The data layer supplies labels aligned to input_ids (labels = ids.clone()),
+                # so the shift belongs here. Comparing logits[t] with labels[t] instead trains
+                # the model to copy its own input: measured copy CE 0.087 nats against
+                # 81.3 nats for the real next token, with the summed objective looking healthy.
+                if text_seq_len >= 2:
+                    lm_loss = F.cross_entropy(
+                        aligned_logits[:, :-1, :].reshape(-1, aligned_logits.size(-1)),
+                        labels[:, 1:].reshape(-1),
+                        ignore_index=-100
+                    )
+                else:
+                    lm_loss = logits.new_zeros(())
                 reasoner_loss = (
                     reasoner_out.get("loss")
                     if reasoner_out is not None and reasoner_out.get("loss") is not None
@@ -2456,6 +2517,9 @@ class YvModel(nn.Module):
             "logits": logits,
             "mtp_logits": mtp_logits_list if (self.num_mtp_heads > 0 and return_mtp_logits) else [],
             "mtp_loss": mtp_loss if self.num_mtp_heads > 0 else logits.new_zeros(()),
+            # Exposed so a decline in the summed objective can never again be read as
+            # language-modelling progress while the next-token term is flat.
+            "lm_loss": lm_loss if labels is not None else logits.new_zeros(()),
             "loss": loss,
             "task_logits": task_logits,
             "eval_score": eval_score,

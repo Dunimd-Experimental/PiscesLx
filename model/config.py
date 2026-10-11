@@ -203,6 +203,12 @@ class YvActivationType(Enum):
 
 
 
+#: Single source for the sparse-gate defaults: consumers read them from the config and fall
+#: back to these, so the strength of the mechanism appears as a literal exactly once.
+SPARSITY_REG_WEIGHT_DEFAULT = 1e-6
+GATE_SPARSITY_THRESHOLD_DEFAULT = 0.01
+
+
 @dataclass
 class YvConfig:
     """Dataclass encapsulating PiscesLx model configuration parameters.
@@ -423,6 +429,22 @@ class YvConfig:
     modal_token_count: int = 8
     use_enhanced_fusion: bool = False
 
+    # Multi-path reasoning core (YvMultiPathReasoningEngine)
+    reasoning_heads: int = 8
+    reasoning_path_keep_fraction: float = 0.5
+    reasoning_abstraction_layers: int = 3
+    reasoning_linear_attention_tokens: int = 512
+    reasoning_complexity_length_tokens: int = 512
+    reasoning_abstraction_gain_min: float = 0.1
+    reasoning_convergence_threshold: float = 0.001
+    react_reflection_classes: int = 3
+    reasoning_loss_weight: float = 0.1
+    reasoning_loss_weight_light: float = 0.02
+    reasoning_stream_loss_weight: float = 0.2
+    reasoning_uncertainty_weight: float = 0.1
+    reasoning_consistency_weight: float = 0.05
+    reasoning_consistency_prior: float = 0.8
+
     # Native unified multimodal token space fusion
     use_native_multimodal_fusion: bool = False
     image_tokens: int = 256
@@ -591,6 +613,12 @@ class YvConfig:
     
     # GRASS Structured Sparsity (supports large models, +100% throughput)
     structured_sparsity: bool = True
+    #: Strength of the GSA-style penalty that pushes learnable sparse gates toward zero.
+    #: Declared here rather than repeated as a literal at each gate site (four copies existed).
+    sparsity_reg_weight: float = SPARSITY_REG_WEIGHT_DEFAULT
+    #: Gate value below which the gated path is skipped entirely; 0.01 keeps a gate that is
+    #: nominally 'off' from ever being mistaken for a live path.
+    gate_sparsity_threshold: float = GATE_SPARSITY_THRESHOLD_DEFAULT
     grass_block_size: int = 32
     gradient_compression_ratio: float = 0.1
     
@@ -988,6 +1016,8 @@ class YvConfig:
     subconscious_knowledge_dim: int = 1024
     subconscious_state_dim: int = 1024
     subconscious_expert_top_k: int = 4
+    # Width of the router's RL value head (declared part of the routing architecture).
+    subconscious_value_head_width: int = 256
 
     # Knowledge expert pool (frozen 314B for 7B core, 0 = auto-compute via formula)
     knowledge_num_experts: int = 0

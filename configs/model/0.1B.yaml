@@ -23,12 +23,24 @@ version: "{{VERSION}}"
 # piscesl1_0.5b, only the dimension/depth ladder is halved so that a CPU-only
 # 16 GB box can run a real optimisation step. Training at 0.5B needs ~14.6 GB of
 # FP32 weight+gradient+Adam state and therefore requires the accelerator host.
+#
+# Measured on this host (12 GB free commit charge, GlobalMemoryStatusEx): building the
+# previous geometry (hidden 512 / 4 layers / 628 declared blocks) took 6.8 GB of commit
+# for 224.7 M parameters and left 0.85 GB free after the first forward, which is why the
+# run died with a native allocation failure before reaching a checkpoint. Depth, block
+# size and the declared block count are therefore set to the largest values that leave
+# headroom for gradients, optimiser state and the checkpoint write on this machine.
 model_type: piscesl1_0.1b
 vocab_size: 151646
-hidden_size: 512
-n_layer: 4
-n_head: 8
-n_kv_head: 4
+# Host tier measured on this machine: with hidden 512 / 2 layers / Ink 8-bit states the
+# pipeline's first step left 1.30 GB of commit charge and the second step died with a
+# native allocation failure. Halving the width (same architecture, same mechanism switches,
+# smaller size class) is what makes the whole pipeline — tokenizer, datasets, subconscious
+# warm-start and optimiser state included — fit on a 16 GB CPU host.
+hidden_size: 256
+n_layer: 2
+n_head: 4
+n_kv_head: 2
 
 # ========================================
 # Lookup Split Configuration (0.5B Dynamic Head)
@@ -46,12 +58,21 @@ compute_params_total: 0
 lookup_params_total: 135000000
 use_dual_inject: true
 use_subconscious: true
-# Host tier only the block's declared size is lowered: a flagship 0.5B-class block costs
-# ~1.9 GB per resident block, which a 16 GB CPU host cannot hold. Subconscious blocks,
+# Host tier: the block's declared size and the pool cardinality are lowered together,
+# because the pool's host backing field costs block_size_params x 4 B x knowledge_num_experts
+# bytes once blocks are registered. A flagship 0.5B-class block over 628 slots is 314 GB —
+# that is the disk-mapped backing field of design §4, not main memory. Subconscious blocks,
 # resonant trace addressing and the resident pool stay enabled — same mechanism.
-block_size_params: 8000000
+block_size_params: 2000000
+knowledge_num_experts: 8
 use_memory_separation: true
 attention_type: "standard"
+# Activation recomputation stays on: it is the flagship behaviour and it keeps the
+# activation peak inside the host budget. It used to abort with "a different number of
+# tensors was saved during the original forward and recomputation" — the cause was modules
+# keeping graph-connected tensors across forwards (mamba3 kernel cache, attention sparsity
+# side channel); both now recompute inside the current graph.
+use_gradient_checkpointing: true
 
 moe_num_experts: 4
 moe_top_k: 2
@@ -79,7 +100,7 @@ expert_warmup_steps: 50
 min_clusters: 2
 max_clusters: 8
 
-intermediate_size: 1024
+intermediate_size: 512
 max_position_embeddings: 262144
 rope_theta: 10000.0
 rope_scaling: null
@@ -183,6 +204,7 @@ training_config:
   min_lr_ratio: 0.1
   scheduler:
     warmup_type: exponential
+  # Recomputation matches the flagship tiers; see use_gradient_checkpointing above.
   gradient_checkpointing: true
   mixed_precision: none
   flash_attention: false

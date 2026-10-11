@@ -735,18 +735,26 @@ from __future__ import annotations
   - 源代码仓库**必须包含原权重以外的其他全部内容**——即所有代码、配置、文档、脚本、实验记录、评测结果、推导留痕等
 - 每次重要变更后必须 commit + push 到两个仓库
 
-#### 私用 Git 仓库（隔离保护）
-- 你将获得一个**私用 Git 仓库**（非主仓库），用于日常开发迭代和版本管理
+#### 实验性 Git 仓库（日常迭代 = 唯一默认推送目标）
+- Gitee：https://gitee.com/dunimd-experimental/pisceslx.git —— remote `gitee-exp`
+- GitHub：https://github.com/Dunimd-Experimental/PiscesLx.git —— remote `github-exp`
 - **约束**：
-  - **禁止向 PiscesL1 主仓库提交任何代码**——所有变更只能提交到私用仓库
-  - 私用仓库地址将在执行时提供
-  - 每次重要变更后必须 commit + push
-  - 使用有意义的 commit message
+  - 日常迭代**只推实验性仓库**；`.git/config` 已设 `remote.pushdefault=gitee-exp`、
+    `branch.master.remote=gitee-exp`、`push.default=simple`，故裸 `git push` 必然落到实验性仓库
+  - **允许强制推送**（建议 `git push --force-with-lease gitee-exp master`）
+  - 每次重要变更后必须 commit + push 到两个实验性仓库；使用有意义的 commit message
+
+#### 主仓库（允许推送，但受时机约束）
+- Gitee：https://gitee.com/dunimd/piscesl1.git —— remote `gitee`
+- GitHub：https://github.com/Dunimd/PiscesL1.git —— remote `github`
+- **约束**：必须等全部任务完成、验收清单逐条通过之后才可推送，且必须显式写出远端名；
+  在此之前，任何日常迭代变更一律不得进入主仓库。主仓库同样不含权重。
 
 #### 保存原则（强制）
 1. 权重 → HuggingFace + ModelScope（双备份）
 2. 源代码 → Gitee + GitHub（双备份，不含权重，含其余全部内容）
-3. 日常迭代 → 私用 Git 仓库
+3. 日常迭代 → **实验性仓库**（`gitee-exp` / `github-exp`，默认推送目标，允许强推）；
+   主仓库（`gitee` / `github`）仅在全部任务完成并通过验收后、显式指名远端时才推
 4. 不要依赖单一平台的持久存储——任何平台都可能回收资源
 5. 训练脚本必须支持 checkpoint 恢复，以应对平台中断
 
@@ -1042,9 +1050,12 @@ from __future__ import annotations
    - **不包含权重**（权重只上 HF / ModelScope）
    - **必须包含原权重以外的其他全部内容**：代码、配置、文档、脚本、实验记录、评测结果、推导留痕等
 
-3. **私用 Git 仓库**：
-   - 日常开发迭代与版本管理
-   - 禁止向主仓库提交
+3. **实验性 Git 仓库（日常迭代 = 默认推送目标）**：
+   - Gitee https://gitee.com/dunimd-experimental/pisceslx.git （remote `gitee-exp`）
+   - GitHub https://github.com/Dunimd-Experimental/PiscesLx.git （remote `github-exp`）
+   - 日常开发迭代与版本管理一律推这两个；允许强制推送（建议 `--force-with-lease`）
+   - **主仓库**（`gitee` = https://gitee.com/dunimd/piscesl1.git ，`github` = https://github.com/Dunimd/PiscesL1.git ）
+     允许推送，但**必须等全部任务完成并通过验收清单之后**，且需显式写出远端名；在此之前不得推主仓库
 
 ### 11.3 文档交付
 
@@ -1327,7 +1338,8 @@ from __future__ import annotations
 - [ ] **自主创建的账号统一使用密码 `Dunimd2026#`**
 - [ ] **刷号遵守反封禁纪律**——不持续高频刷、随时切换账号、自动更换 IP
 - [ ] 所有 checkpoint 和实验结果已上传保存（HuggingFace / git）
-- [ ] 所有代码变更提交到私用 git 仓库（非主仓库）
+- [ ] 所有代码变更已提交并推送到**实验性仓库**（`gitee-exp` + `github-exp` 两个都推）
+- [ ] 未向主仓库推送：除全部任务完成、验收清单逐条通过并显式指名远端外，一律不推主仓库
 - [ ] **`model/` 内所有类命名为 `YvXxxXxx`**
 - [ ] **`model/` 外所有类命名为 `PiscesLxXxxXxx`**
 - [ ] **禁止顶层裸函数**——所有功能以类的形式暴露
@@ -1354,4 +1366,4 @@ from __future__ import annotations
 
 1. **先查资料，别空想**——查阅顶尖旗舰模型和最新研究的资料，基于事实设计，禁止拍脑袋优化。
 2. **一切必须真实、可证明，且是一个整体**——禁止模拟、禁止伪造、禁止敷衍、禁止硬编码。强制编码规范（命名、日志、版权头、抽离）不可协商。**每一项创新都必须附带严格、正确、真实的数学证明**（正确性/有效性/必要性），证明与实现一一对应、可追溯，错误的证明等同于没有证明。**模型修改必须带动全项目同步升级**（配置/CLI/工具链/数据管线/服务/评测/文档/注释/测试），杜绝"只改模型、其他不管"，全体内容必须形成**无缝衔接的统一架构**。引擎绝不能接入其他模型（蒸馏只能在离线数据生成阶段）。模态体系修正为 4 种（document 与 agent 不再作为独立模态）。逻辑与数学推导必须留痕归档；纯思考时释放算力。
-3. **交付真实权重并妥善保存**——最终必须交付一个真正能推理、真正能执行任务、在 T4 上真实达标的模型权重。**权重上传 HuggingFace + ModelScope；源代码备份 Gitee + GitHub（不含权重，含其余全部内容）；私用仓库用于日常迭代。没有这个权重，任务就没完成，你不允许停止。** 目标必须接近 DeepSeek-V4-Flash-0731 的真实水平（85%~95%，核心项 ≥90%），达不到就**自主迭代**（设计→实现→训练→评测→分析→创新→重训），循环到达标为止，**绝不降标**。创新不是可选的，是进化的唯一路径：必须是**全新的架构、全新的算法、更优的实现**——优化冒充创新不算数。**自主探索不止 MoE 一条路**：未来的架构不会只有 MoE，你要自主开辟新路径、自主增加新组件，但**绝不冗余**——在精简的结构里爆发出更强的能力，这才是进化。倒退是被禁止的。
+3. **交付真实权重并妥善保存**——最终必须交付一个真正能推理、真正能执行任务、在 T4 上真实达标的模型权重。**权重上传 HuggingFace + ModelScope；源代码备份 Gitee + GitHub（不含权重，含其余全部内容）；日常迭代只推实验性仓库（`gitee-exp`/`github-exp`），主仓库（`gitee`/`github`）须待全部任务完成并通过验收后、显式指名远端才可推送。没有这个权重，任务就没完成，你不允许停止。** 目标必须接近 DeepSeek-V4-Flash-0731 的真实水平（85%~95%，核心项 ≥90%），达不到就**自主迭代**（设计→实现→训练→评测→分析→创新→重训），循环到达标为止，**绝不降标**。创新不是可选的，是进化的唯一路径：必须是**全新的架构、全新的算法、更优的实现**——优化冒充创新不算数。**自主探索不止 MoE 一条路**：未来的架构不会只有 MoE，你要自主开辟新路径、自主增加新组件，但**绝不冗余**——在精简的结构里爆发出更强的能力，这才是进化。倒退是被禁止的。

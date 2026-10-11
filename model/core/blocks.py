@@ -193,7 +193,7 @@ from typing import Optional, Tuple, List, Dict, Any, Union, Callable
 from dataclasses import dataclass
 from enum import Enum
 
-from .norms import YvRMSNorm, YvDeepNorm, YvParallelResidualNorm
+from .norms import YvRMSNorm, YvDeepNorm, YvParallelResidualNorm, YvFiLMModulation
 from .attention import YvAttention
 from utils.dc import PiscesLxLogger
 from ..moe import YvDeepSeekMoELayer
@@ -1161,10 +1161,7 @@ class YvParallelBlock(nn.Module):
         Returns:
             Output tensor(s).
         """
-        if film_params is not None:
-            scale = film_params["scale"]
-            shift = film_params["shift"]
-            x = x * (1.0 + scale) + shift
+        x = YvFiLMModulation.apply(x, film_params)
 
         residual = x
         x_norm = self.norm(x)
@@ -1287,10 +1284,7 @@ class YvDeepNormBlock(nn.Module):
         Returns:
             Output tensor(s).
         """
-        if film_params is not None:
-            scale = film_params["scale"]
-            shift = film_params["shift"]
-            x = x * (1.0 + scale) + shift
+        x = YvFiLMModulation.apply(x, film_params)
 
         residual = x
 
@@ -1767,11 +1761,7 @@ class YvTransformerBlock(nn.Module):
         Returns:
             Modulated hidden states.
         """
-        if film_params is None:
-            return hidden_states
-        scale = film_params["scale"]
-        shift = film_params["shift"]
-        return hidden_states * (1.0 + scale) + shift
+        return YvFiLMModulation.apply(hidden_states, film_params)
 
     def _init_parallel_block(self, cfg, device, dtype):
         """Initialize parallel attention-MLP block.
@@ -2317,8 +2307,9 @@ class YvTransformerBlock(nn.Module):
         x_norm = self.pre_norm2(x_out)
 
         mlp_out, aux_loss = self.mlp(x_norm, modal_id=modal_id)
-        aux_loss = aux_loss + getattr(self.attn, '_sparsity_loss',
-                                       torch.tensor(0.0, device=x.device, dtype=x.dtype))
+        sparsity_loss = getattr(self.attn, "sparsity_loss", None)
+        if callable(sparsity_loss):
+            aux_loss = aux_loss + sparsity_loss()
 
         # Apply phi-balancing to aux_loss
         if getattr(self, 'phi_balancing', None) is not None and self.training:

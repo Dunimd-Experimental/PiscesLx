@@ -91,7 +91,7 @@ class PiscesLxPublishCli:
             formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog="""
                 For more information, see:
-                    https://github.com/piscesl1/piscesl1#publishing
+                    https://github.com/Dunimd/PiscesL1#publishing
 
                 Examples:
                     # Full pipeline
