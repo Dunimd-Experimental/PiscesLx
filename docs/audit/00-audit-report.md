@@ -2055,3 +2055,18 @@ mamba3 `dt_proj.bias`/`conv_mode.D`、router `w_hicl`/`w_got` 的 warmup 休眠�
   并大声警告原因**。修后实测日志：
   `Sparse-gate parameter group: 18 tensors at lr x50 (0.05)` +
   `Resume skipped the optimiser state: the checkpoint carries 1 parameter group(s) but this run has 2…`
+
+**A78 重构的无回归验证（关键路径）**：`optimizer:` / `scheduler:` 是每次训练都走的路径，
+换掉白名单后必须确认声明值仍落到对象上。用真实 YAML 跑一遍
+`PiscesLxTrainingConfig()._apply_stage_file_config(yaml.safe_load(...))` 实测：
+
+| 键 | yaml 声明 | 解析到对象 |
+|---|---|---|
+| `name` | `adamw8bit` | `adamw8bit` ✓（注意：本配置声明的就是 adamw8bit，不是 adamw） |
+| `learning_rate` / `weight_decay` / `eps` / `max_grad_norm` | 1.0e-3 / 0.01 / 1.0e-8 / 1.0 | 完全一致 ✓ |
+| `betas` | `[0.9, 0.999]`（list） | `(0.9, 0.999)`（tuple）✓ 类型按字段强制 |
+| `sparse_gate_lr_multiplier` | 未声明 | `1.0`（默认，单参数组、行为不变）✓ |
+| `scheduler.name` / `min_lr_ratio` / `warmup_ratio` | cosine / 0.1 / 0.01 | 完全一致 ✓ |
+
+（第一次打印 `FAIL` 是我自己的断言写错了期望值 —— 把 `name` 猜成 `adamw`。
+**又一次"检查器的期望值也要被核对"**：断言写错会把正确实现判成失败。）
