@@ -354,8 +354,6 @@ mla_rope_scaling_factor: 1.0
 # Flagship Algorithm Integration (2025-2026)
 # ========================================
 
-# EG-MLA: Embedding-Gated Multi-Head Latent Attention (NeurIPS 2025)
-eg_mla_compression_ratio: 0.916
 
 # DuoAttention: Retrieval vs Streaming Heads (ICLR 2026 MIT)
 duo_attention_retrieval_ratio: 0.2
@@ -372,8 +370,6 @@ ttt_complexity_threshold: 0.7
 expert_evolution_base_lr: 0.00001
 expert_evolution_decay: 0.99
 
-# EWC: Elastic Weight Consolidation
-ewc_lambda: 1000.0
 
 # SEAL: Self-Adapting LLMs (MIT 2025)
 seal_confidence_threshold: 0.85

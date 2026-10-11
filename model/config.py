@@ -718,7 +718,6 @@ class YvConfig:
 
     # EG-MLA: Embedding-Gated Multi-Head Latent Attention
     use_eg_mla: bool = True
-    eg_mla_compression_ratio: float = 0.916
 
     # DuoAttention: Retrieval vs Streaming Heads
     duo_attention_retrieval_ratio: float = 0.2
@@ -738,7 +737,6 @@ class YvConfig:
     expert_evolution_decay: float = 0.99
 
     # EWC: Elastic Weight Consolidation
-    ewc_lambda: float = 1000.0
 
     # SEAL: Self-Adapting LLMs
     use_seal: bool = True
