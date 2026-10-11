@@ -2322,3 +2322,21 @@ _ANY = re.compile(r"[Pp][Ii][Ss][Cc][Ee][Ss][Ss]")   # 七个字符类 = "Pisces
 （`ENGINE-NO-EXTERNAL-MODEL`、`NAME-PISCESL1-PISCESLX`，以及 `NO-HARDCODED-PATH` 的误报修正），
 余 `NO-DANGLING-EXPORT` 一条待构造专门的临时包做对照。
 **"没报错"不等于"在查"** —— 这是本会话第三次由实测推翻表面结论。
+
+**那 303 处的分类（供决策，不擅自改动）**
+
+| 类别 | 条数 | 例 | 说明 |
+|---|---|---|---|
+| 打包/文档身份 | **275** | `requirements = [f"piscesl1=={VERSION}"]`、`"model_type": "piscesl1_7b"`、`# Update piscesl1 package to latest version` | **确是 §4.5 明文禁止的变体**；但小写是 Python 发行包名与 HF `model_type` 的外部约定，改成 `PiscesL1` 会影响打包标识与已发布模型的 config 兼容性 |
+| 环境变量/常量名 | 21 | `STATE_DIR = ".pisceslx"`、`"NAMING-OUTSIDE-PISCESLX"`（规则 id 自身） | 规则 id 与目录名是小写标识；部分属合法 |
+| URL/仓库地址 | 4 | `PISCESLX_GIT`、`localhost` 示例 | 含 URL 的说明行 |
+| 路径/示例 | 3 | `<volume>/pisceslx-artifacts` | 示例路径 |
+
+**判定**：这是**用户口径的决定**，不是我能单方面做的改动 ——
+要么按 §4.5 原文把 275 处（含发行包名、`model_type`、文档）统一改为 `PiscesL1`，
+要么在规则里为"发行包名/外部标识符"开一条**明文豁免**并记录理由。两者都会影响
+打包标识或已发布模型的可加载性，且 §4.5 是用户写的法律，**本会话不动它**，
+只把清单与分类留在这里。
+
+**注意读数含义**：`errors` 由 3880 升到 **4182** 不是"改坏了"，而是**一条从未生效的规则
+开始生效**后如实报出的存量（3880 里不含这 302 条）。这正是"沉默的绿"的代价。
