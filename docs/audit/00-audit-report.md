@@ -1715,3 +1715,32 @@ u_i = W_out · mean_j LN(mem_j)          R̃_i = (W Wᵀ)⁺ W u_i          R_i 
 `tools/check` **4107 → 4064 errors**，文件数 **346 → 341**。
 
 闸门：`tools/check` **4064 errors / 1 warning**（静态检查）。
+
+## 60 · 继续清死：删 agentic_protocol + 3 个"零读取开关"，并列出待手术清单
+
+**本轮删除（提交 `dad7364` 与本轮末次提交）**：
+1. **`use_duo_attention` / `use_ewc` / `use_sync_fusion` 三个开关 + 对应三个模块**
+   （`model/core/duo_attention.py`、`model/core/ewc.py`、`model/multimodal/sync_fusion.py`）：
+   开关在 `YvConfig` 里声明但**全仓零读取**（含 model/ tools/ opss/），模块导出名零引用，
+   任何 YAML 都未设置过 —— A36 那类"配置在说谎"。同步摘除两个 `__init__.py` 的
+   导入/`__all__`（`YvEWC`、`YvSyncFusion`、`YvCoupledMambaFusion`）与两处预设的 `use_*` kwargs。
+2. **`model/multimodal/agentic_protocol.py`**：纯孤儿（无再导出、无字符串引用、4 个类零引用）。
+
+**过程留痕（同类错误的复发与当场修复）**：删第 1 组时**漏了 `ewc` 的再导出**，
+`import model` 当场断裂（`ModuleNotFoundError: model.core.ewc`）；同轮定位、摘除并复验通过。
+教训再次确认：**删模块必须同时枚举"再导出"这一注入路径**（与 [[feedback-verify-each-symptom]]
+记的"删除类修复要枚举全部注入路径防复活"同一条）。
+
+**已核实为死、但需谨慎摘再导出后再删的 4 个模块**（`__init__` 里是**多行 import 块**或跨两级再导出，
+盲改有断裂风险，且用户已交代本地不做重型测试，因此留到能跑完整闸门时一次性处理）：
+| 文件 | 类数 | 现存注入点 |
+|------|------|-----------|
+| `model/multimodal/enhanced_agentic.py` | 19 | `model/agentic/__init__.py:86` 多行 import 块 + `__all__` |
+| `model/moe/diversity.py` | 6 | `model/moe/__init__.py` 的 import + `__all__` |
+| `model/moe/online_router.py` | 2 | `model/moe/__init__.py:150` |
+| `model/tokenizer/builder.py` | 2 | `model/tokenizer/__init__.py` + `model/__init__.py` |
+
+**保留（有活引用）**：`model/multimodal/fusion.py` 的 `YvDynamicModalFusion` 被
+`model/core/model.py` 与 `model/multimodal/memory.py` 使用。
+
+闸门：`import model` 通过；`tools/check` **4060 errors / 1 warning**；文件数 338 → 337。
