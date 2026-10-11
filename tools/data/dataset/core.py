@@ -72,6 +72,15 @@ _LOG = PiscesLxLogger("PiscesLx.Data", file_path=PiscesLxPaths.get_log_file("Pis
 @dataclass
 class PiscesLxDatasetConfig:
     cache_enabled: bool = True
+    #: Declared counterparts of the keys this dataset reads with a silent fallback, so a data
+    #: configuration can set them instead of them being hidden constants (docs/audit/00 §70).
+    #: Defaults are the fallbacks at the read sites below.
+    custom_image_keys: Optional[Any] = None
+    custom_audio_keys: Optional[Any] = None
+    custom_video_keys: Optional[Any] = None
+    force_enable_vision: bool = False
+    force_enable_audio: bool = False
+    force_enable_video: bool = False
     cache_size: int = 10000
     prefetch_enabled: bool = True
     prefetch_workers: int = 2

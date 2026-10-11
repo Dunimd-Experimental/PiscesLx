@@ -52,6 +52,9 @@ class PiscesLxQuantizationConfig(PiscesLxOperatorConfig):
     desc_act: bool = False
     symmetric: bool = True
     num_calibration_samples: int = 128
+    #: AWQ scaling smoothing exponent; declared so the read in the AWQ path stops being a hidden
+    #: constant (docs/audit/00 §70). Default is the fallback at that read site.
+    smoothing_factor: float = 0.85
 
 
 class PiscesLxGPTQHessianComputer:
