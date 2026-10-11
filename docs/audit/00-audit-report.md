@@ -1944,3 +1944,26 @@ A62 的块稀疏精确性未回归（对稠密因果 max|diff| 仍为 1.043e-07�
 **同批量化事实**：同一检查点的 64 个未变参数已逐一定性（`aux_kv_gate` 调用方门控休眠、
 mamba3 `dt_proj.bias`/`conv_mode.D`、router `w_hicl`/`w_got` 的 warmup 休眠）——
 即不再是"A 类缺陷"而是"待判定接线/摘除"的清单。
+
+---
+
+## 67 · A76：`ink_optimizer.enabled` 是个说谎的开关（已修），并记最终门状态
+
+**缺陷**：12 个 `configs/model/*.yaml` 都声明 `ink_optimizer: {enabled: true/false}`，
+而 `tools/train/core.py` 选择 Ink 的唯一依据是 `optimizer.name ∈ INK_OPTIMIZER_NAMES`；
+声明的 `enabled` **只被 `model/config.py:2049/2056/2063` 的 VRAM 估算读到**，
+**没有任何一处依据它选择优化器**。于是把 `enabled` 写成 `false` 依然会建出
+8-bit 状态 + GaLore 的 Ink 路径 —— 与 A36/A60 同类（"声明存在、实际不接线"）。
+
+**修法（`tools/train/core.py:1651` 之后）**：`enabled: false` 作为**否决位**——
+`true` 时仍由声明的名字决定，因此**对现有 12 个配置行为完全不变**（它们全是 `true`）。
+这同时给出了一个声明式关掉重量级 Ink 路径的闸（本机 Ink 稳态 4.22GB vs AdamW 2.65GB）。
+验证：`import tools.train.core` 通过；`tools/test/test_ink_optimizer_contract` **4/4** 仍绿。
+
+**本会话最终门状态（2026-10-11 收尾）**：
+- `manage.py test --stage 10` **exit=0**（全绿；含本轮新增的两套：
+  `test_attention_mask_shapes` 15/15 与 `test_block_sparse_attn_contract` 6/6）。
+- `tools/check` **errors 4058 / warnings 1**（先前基线 4064：净减 6，来自本轮切除的死模块与死字段；
+  剩余为 `NO-MAGIC-NUMBER` 等历史存量）。
+- 工作树干净；HEAD `e7521bf`（本会话 12 个提交）与 `gitee-exp` / `github-exp` 完全一致；
+  主仓库按铁律仍**未推**。

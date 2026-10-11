@@ -1654,6 +1654,20 @@ class PiscesLxTrainingOperator(object):
             self._initialize_scheduler()
             return self.optimizer
 
+        # `ink_optimizer.enabled: false` in the model configuration vetoes the Ink path. That
+        # declared switch was read only by the VRAM arithmetic in model/config.py and by nothing
+        # that selects an optimiser, so a configuration saying "off" still got 8-bit states and
+        # GaLore (docs/audit/00 A76). It acts as a veto rather than a selector: `true` leaves the
+        # declared name in charge, which keeps every existing configuration's behaviour intact.
+        ink_section = getattr(self.config, 'ink_optimizer', None)
+        if isinstance(ink_section, dict) and ink_section.get('enabled') is False:
+            _LOG.info(
+                "ink_optimizer.enabled is false in the model configuration - building "
+                f"'{declared_name or 'adamw'}' instead of the Ink path")
+            self._build_torch_optimizer(trainable_params, **optimizer_kwargs)
+            self._initialize_scheduler()
+            return self.optimizer
+
         _LOG.info("Initializing Ink optimizer...")
 
         try:
