@@ -296,7 +296,11 @@ class PiscesLxProjectNameCheck(PiscesLxStandardCheck):
     rule = "NAME-PISCESL1-PISCESLX"
     description = "project name spelled as PiscesL1 / PiscesLx only"
 
-    _ANY = re.compile(r"[Pp][Ii][Ss][Cc][Ee][Ss][Ss]")
+    #: Matches the project stem itself. It carried a seventh character class
+    #: (`[Ss][Ss]` at the end), so it spelled "Piscess" and matched nothing real: the rule
+    #: reported zero violations for the whole tree and a probe holding a bare `"Pisces"` did not
+    #: move it (docs/audit/00 A82). The stem is six letters, P-i-s-c-e-s.
+    _ANY = re.compile(r"[Pp][Ii][Ss][Cc][Ee][Ss]")
     _ALLOWED = ("PiscesL1", "PiscesLx")
     _SKIP_NAMES = frozenset({"paths.py"})
 
@@ -313,8 +317,12 @@ class PiscesLxProjectNameCheck(PiscesLxStandardCheck):
         found = []
         for match in self._ANY.finditer(line):
             start = match.start()
-            long_form = line[start:start + 9]
-            if long_form in self._ALLOWED:
+            # The allowance has to be "begins with an allowed form", not "the next nine characters
+            # are exactly one": `PiscesL1` is eight characters, so a nine-character slice always
+            # carried the following quote or space and the guard could never match - every
+            # legitimate `PiscesL1` in the tree was reported once the stem regex was fixed
+            # (docs/audit/00 A82).
+            if line.startswith(self._ALLOWED, start):
                 continue
             short = line[start:start + 6]
             found.append(

@@ -2287,3 +2287,38 @@ A81（规则漏掉最直接的违规形式）、以及我两次把"检查断言�
 `NAME-PISCESL1-PISCESLX`（我的探针用字符串 `"Pisces"` 未触发 —— 可能该规则只查标识符/类名而非字符串，
 需按其实现另设探针）与 `NO-DANGLING-EXPORT`（需构造"`__all__` 里的名字无绑定"的包场景，
 改 `__init__.py` 有污染风险，留待专门的临时包）。
+
+---
+
+## 74 · A82：又一条 P0 规则从未生效 —— `NAME-PISCESL1-PISCESLX` 的正则拼错了自己
+
+**阳性对照的第二次收获**：`NAME-PISCESL1-PISCESLX`（§4.5：项目名只允许 `PiscesL1` / `PiscesLx`）
+在真实仓库报 0 命中。直接单元级对照发现它**对裸 `"Pisces"` 也返回 0**，于是读实现：
+
+```python
+_ANY = re.compile(r"[Pp][Ii][Ss][Cc][Ee][Ss][Ss]")   # 七个字符类 = "Piscess"
+```
+
+`Pisces` 是**六个**字母，正则末尾多了一个 `[Ss]`，匹配的是 `Piscess` —— 这个字符串在仓库里
+不存在，所以**该规则从写下那天起就从不触发**。
+
+**修好正则后又暴露第二个 bug**：豁免判定 `long_form = line[start:start + 9]` 取 **9** 个字符，
+而 `PiscesL1` 只有 **8** 个，第 9 位必然是紧随的引号或空格 —— `long_form in ("PiscesL1","PiscesLx")`
+**永远为假**，于是连合法的 `PiscesL1` 都被判违规（伪 9254 条，errors 一度涨到 13134）。
+改为 `line.startswith(self._ALLOWED, start)`（"从该位置起以允许形式开头"）。
+
+**修后对照（9/9 PASS）**：`"Pisces"` / `# pisces` / `"PISCES"` / `"PiscesL"` / `"Piscesl1"` 均判违规；
+`"PiscesL1"` / `"PiscesLx"` / `# This file is part of PiscesL1.` 均放行。
+
+**由此暴露的真实存量大**：规则生效后仓库报 **303 处**（errors 3880 → 4182），
+例如 `configs/version.py:112`、`manage.py:206`、`model/config.py:218`、`model/multimodal/mcp.py:91`
+写成小写 `pisces…`。**这批不能机械替换**：其中有**合法的小写标识符与 URL**
+（如环境变量 `PISCESLX_HOME`、仓库地址 `…/pisceslx.git`、路径 `pisceslx/`），
+需要逐处判定"项目名拼写"还是"外部标识符/地址"，因此**登记为待处置清单**，
+不在本会话里批量改写（批量改错会污染 URL 与 env 名）。
+
+**结论（本会话的方法论产出）**：`tools/check` 的 24 条规则里，用阳性对照已确认
+**20 条有牙**、**3 条发现是沉默的绿并已修复**
+（`ENGINE-NO-EXTERNAL-MODEL`、`NAME-PISCESL1-PISCESLX`，以及 `NO-HARDCODED-PATH` 的误报修正），
+余 `NO-DANGLING-EXPORT` 一条待构造专门的临时包做对照。
+**"没报错"不等于"在查"** —— 这是本会话第三次由实测推翻表面结论。
