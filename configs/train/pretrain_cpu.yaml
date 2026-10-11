@@ -85,7 +85,14 @@ training:
   # was the binding constraint. 3.2 clears that floor with room for the checkpoint writes; the
   # build gate still refuses the run outright if the host cannot back the number, so raising it
   # cannot turn a shortage into a native crash.
-  memory_budget_gb: 3.2
+  # 2026-10-11, third measurement: with Ink (optimizer.name=adamw8bit) the first optimiser
+  # step commits 3.63 GB against AdamW's 2.65 GB, because 8-bit momentum/variance state and
+  # the GaLore projections are allocated lazily at that step. Against a 2.60 declaration the
+  # guard fired mid-step and the abort-time checkpoint write then ran out of native memory
+  # (exit 139, no Python traceback) - so the earlier 'Ink segfaults' reading was wrong: the
+  # declaration was small, not the optimiser broken. 4.2 covers the Ink step with room for the
+  # checkpoint write that the abort path performs.
+  memory_budget_gb: 4.2
   # Sized for one foreground invocation on this host: ~10 s/step at batch 1 / seq 32,
   # so 30 steps plus model construction and two checkpoint writes fit in one command.
   max_steps: 30
