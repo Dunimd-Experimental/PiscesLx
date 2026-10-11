@@ -107,6 +107,7 @@ Dependencies:
 """
 
 import json
+import math
 import yaml
 import copy
 from dataclasses import dataclass, field, fields, asdict
@@ -1039,7 +1040,8 @@ class YvConfig:
     block_size_params: int = 499_793_920
     KNOWLEDGE_POOL_BILLIONS = 314.0   # 628 x 0.5B store
     block_rank: int = 512                       # scoring bottleneck width
-    block_trace_dim: int = 256                  # k, addressing trace width
+    block_trace_dim: int = 0                    # k, addressing trace width; 0 = derive from d
+    block_trace_dim_ratio: float = 0.65         # k/d floor for RPI alignment tau >= 0.6
     block_pool_slots: int = 2                   # device-resident blocks (see Fermi 3.1)
     block_gamma_max: float = 0.5                # A1(i) bound on the multiplicative gate
     block_beta_bound: float = 0.25              # A1(ii) bound constant c on the beta branch
@@ -1122,6 +1124,16 @@ class YvConfig:
             overhead = 2 * self.hidden_size * self.block_rank + self.hidden_size ** 2
             rows = (self.block_size_params - overhead) // self.hidden_size
             self.block_memory_rows = max(8, int(rows))
+
+        if self.block_trace_dim <= 0 and self.hidden_size > 0:
+            # RPI writes each trace as the block's contribution direction seen through the
+            # addressing projector W (k x d), i.e. an order-preserving image of the content
+            # ordering in row(W) subset of R^d. The image degrades as k/d falls
+            # (tau ~ (2/pi) arcsin(sqrt(k/d))); measured Kendall tau = 1.000 at k = d versus
+            # 0.227 at k = d/8. A fixed k = 256 against d = 4096 gives k/d = 0.0625 and an
+            # expected tau ~ 0.11, so RPI would do nothing at flagship scale. Derived from d,
+            # not tuned: tau >= 0.6 requires k/d >= 0.65 (docs/design/10 §4).
+            self.block_trace_dim = max(8, int(math.ceil(self.block_trace_dim_ratio * self.hidden_size)))
 
     @classmethod
     def from_json(cls, path: str) -> 'YvConfig':

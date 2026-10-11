@@ -29,7 +29,7 @@ This module provides comprehensive tokenization utilities for the Yv model,
 using the tokenizer.json format from tokenizer/ directory.
 
 Architecture:
-    The tokenizer module is organized into three main components:
+    The tokenizer module is organized into two main components:
 
     1. **YvTokenizer** (tokenizer.py):
        - Unified tokenizer interface using GLM5.1 tokenizer.json
@@ -37,12 +37,7 @@ Architecture:
        - Full support for GLM special tokens and chat template
        - Multimodal token support (vision, audio, video)
 
-    2. **YvTokenizerBuilder** (builder.py):
-       - Factory class for creating tokenizers
-       - Loading from pre-trained tokenizer directories
-       - BPE training from corpus (legacy support)
-
-    3. **YvSpecialTokens** (special_tokens.py):
+    2. **YvSpecialTokens** (special_tokens.py):
        - Special token definitions for Yv architecture
        - Token-to-ID and ID-to-token mappings
        - Serialization support
@@ -79,7 +74,6 @@ from .tokenizer import (
     YvExtendedTokenizerConfig,
     YvTokenizer160K,
 )
-from .builder import YvTokenizerBuilder, YvTokenizerConfig
 from .special_tokens import YvSpecialTokens, YvSpecialTokenType
 
 __all__ = [
@@ -87,8 +81,6 @@ __all__ = [
     "EXTENDED_VOCAB_SIZE",
     "YvExtendedTokenizerConfig",
     "YvTokenizer160K",
-    "YvTokenizerBuilder",
-    "YvTokenizerConfig",
     "YvSpecialTokens",
     "YvSpecialTokenType",
 ]

@@ -214,8 +214,6 @@ from .core import (
 
 from .tokenizer import (
     YvTokenizer,
-    YvTokenizerBuilder,
-    YvTokenizerConfig,
     YvSpecialTokens,
     YvSpecialTokenType,
 )
@@ -382,8 +380,6 @@ __all__ = [
     "YvFlashSSM",
 
     "YvTokenizer",
-    "YvTokenizerBuilder",
-    "YvTokenizerConfig",
     "YvSpecialTokens",
     "YvSpecialTokenType",
 

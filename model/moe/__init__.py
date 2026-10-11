@@ -66,10 +66,6 @@ Module Components:
        - YvContrastiveDiversification: Contrastive learning for expert diversity
        - YvDiversityRegularizer: Combined diversity regularization
        - YvDiversityConfig: Configuration for diversity components
-    
-    5. Online Clustering Router (online_router.py):
-       - YvOnlineClusterRouter: Online clustering-based routing
-       - YvClusterConfig: Configuration for cluster routing
 
 Key Features:
     - Expert-choice routing with capacity constraints
@@ -147,7 +143,6 @@ from .diversity import (
     YvContrastiveDiversification,
     YvDiversityRegularizer,
 )
-from .online_router import YvOnlineClusterRouter, YvClusterConfig
 from .expert_init import YvGradientClusterInitializer, YvGradientStatistics, YvClusterInfo
 from .regularization import YvRegularizationConfig, YvExpertDiversityRegularizer
 
@@ -176,8 +171,6 @@ __all__ = [
     "YvExpertEmbedding",
     "YvContrastiveDiversification",
     "YvDiversityRegularizer",
-    "YvOnlineClusterRouter",
-    "YvClusterConfig",
     "YvGradientClusterInitializer",
     "YvGradientStatistics",
     "YvClusterInfo",
