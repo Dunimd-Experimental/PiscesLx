@@ -248,12 +248,9 @@ from .reasoning import (
     YvMultiPathReasoningEngine,
     YvMultiPathMetaLearner,
     YvMultiPathInferenceEngine,
-    YvUnifiedMultiPathReasoningSystem,
     YvRecursiveDepthReasoner,
     YvRecursiveReasoningConfig,
     YvThoughtTreeReasoner,
-    YvEnhancedReasoningSystem,
-    YvEnhancedReasoningConfig,
     YvMultiModalReasoningEnhancer,
 )
 
@@ -282,8 +279,6 @@ from .core import (
     YvEWC,
     YvOOMBContext,
     YvREFORM,
-    YvSparseSSM,
-    YvGatedDeltaNetwork,
     YvDualInjector,
 )
 
@@ -417,12 +412,9 @@ __all__ = [
     "YvMultiPathReasoningEngine",
     "YvMultiPathMetaLearner",
     "YvMultiPathInferenceEngine",
-    "YvUnifiedMultiPathReasoningSystem",
     "YvRecursiveDepthReasoner",
     "YvRecursiveReasoningConfig",
     "YvThoughtTreeReasoner",
-    "YvEnhancedReasoningSystem",
-    "YvEnhancedReasoningConfig",
     "YvMultiModalReasoningEnhancer",
 
     "YvAdaptiveSpeculativeDecoder",
@@ -445,8 +437,6 @@ __all__ = [
     "YvEWC",
     "YvOOMBContext",
     "YvREFORM",
-    "YvSparseSSM",
-    "YvGatedDeltaNetwork",
 
     "YvDualInjector",
 

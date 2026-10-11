@@ -1686,3 +1686,32 @@ u_i = W_out · mean_j LN(mem_j)          R̃_i = (W Wᵀ)⁺ W u_i          R_i 
 `tools/check` **4108 → 4107 errors**，文件数 **347 → 346**。包导出真实性规则未报错。
 
 闸门：`tools/check` **4107 errors / 1 warning**（静态检查，未跑重型测试）。
+
+## 59 · 又清掉 5 个零引用模型模块（含 2 个纯孤儿文件）
+
+**方法（修正过的口径，前面两次都错）**：不能按"类在本文件外是否有引用"判定——类只在本模块内使用不等于模块是死的
+（`YvBlockConfig` 就只被 blocks.py 自己用）。正确口径是**看模块是否被 `__init__.py` 以外的任何文件导入**，
+再叠加**导出名字级**核验（剔除 `_LOG`、`__all__` 这类泛名撞车）与**全仓字符串引用**检查（防配置/懒加载按名引用）。
+
+**结果**：`model/` 下 82 个叶子模块里有 **28 个**没有任何非 `__init__` 导入者；在其中挑出**导出名字全仓零引用**
+且无字符串引用的 **5 个**删除：
+
+| 文件 | 情况 |
+|------|------|
+| `model/core/csa_hca.py` | **纯孤儿**：4 个类（`YvLightningIndexer`/`YvCompressedSparseAttention`/`YvHeavilyCompressedAttention`/`YvHybridAttention`）连再导出都没有 |
+| `model/moe/mega_kernel.py` | **纯孤儿**：`YvMegaMoE`/`YvMegaKernel` 无任何外部引用 |
+| `model/core/mamba_upgrades.py` | `YvSparseSSM`/`YvGatedDeltaNetwork` 仅被两级 `__init__` 再导出 |
+| `model/reasoning/reasoner/multipath_system.py` | `YvUnifiedMultiPathReasoningSystem` 仅被再导出（与在用的 `multi_path_core`/`unified` 属功能重叠） |
+| `model/reasoning/reasoner/enhanced_system.py` | `YvEnhancedReasoningSystem`/`YvEnhancedReasoningConfig` 仅被再导出 |
+
+同步摘除 4 个 `__init__.py` 里的导入与 `__all__` 条目（`model/core`、`model`、`model/reasoning`、
+`model/reasoning/reasoner`），并修正两处 docstring 中"这些类存在"的旧说法。
+
+**明确留下的（有名字冲突，不草率删）**：`duo_attention`/`ewc`/`mr_rope`/`sync_fusion` 四个模块本身无引用者，
+但模块名与配置开关同名（`use_duo_attention`、`use_ewc`、`mr_rope_mode`、…），需要按"特性是否该保留"逐个决定，
+不是纯清理问题。`eg_mla`/`memory_attention`/`quantization` 另有字符串引用，同样留待单独判定。
+
+**证据**：`import model, model.moe, model.core, model.reasoning, model.reasoning.reasoner` 全部正常；
+`tools/check` **4107 → 4064 errors**，文件数 **346 → 341**。
+
+闸门：`tools/check` **4064 errors / 1 warning**（静态检查）。

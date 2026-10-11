@@ -38,10 +38,8 @@ Exported Components:
         - YvMultiPathReasoningEngine: Core multi-path exploration
         - YvMultiPathInferenceEngine: Optimized inference engine
         - YvMultiPathMetaLearner: Meta-learning for path selection
-        - YvUnifiedMultiPathReasoningSystem: Complete multi-path system
-    
+
     Enhanced Reasoning:
-        - YvEnhancedReasoningSystem: Enhanced reasoning with verification
         - YvMultiModalReasoningEnhancer: Cross-modal reasoning enhancement
         - YvRecursiveDepthReasoner: Depth-limited recursive reasoning
         - YvThoughtTreeReasoner: Tree-based thought exploration
@@ -58,8 +56,6 @@ from .enhancer import YvMultiModalReasoningEnhancer
 from .recursive_depth import YvRecursiveDepthReasoner, YvRecursiveReasoningConfig, YvThoughtTreeReasoner
 from .multipath_core import YvMultiPathReasoningEngine
 from .multipath_infer import YvMultiPathInferenceEngine
-from .multipath_system import YvUnifiedMultiPathReasoningSystem
-from .enhanced_system import YvEnhancedReasoningSystem, YvEnhancedReasoningConfig
 
 __all__ = [
     "YvUnifiedReasoner",
@@ -68,10 +64,7 @@ __all__ = [
     "YvMultiPathReasoningEngine",
     "YvMultiPathInferenceEngine",
     "YvMultiPathMetaLearner",
-    "YvUnifiedMultiPathReasoningSystem",
     "YvRecursiveDepthReasoner",
     "YvRecursiveReasoningConfig",
     "YvThoughtTreeReasoner",
-    "YvEnhancedReasoningSystem",
-    "YvEnhancedReasoningConfig",
 ]

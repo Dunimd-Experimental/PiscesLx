@@ -39,10 +39,8 @@ Module Components:
        - YvMultiPathReasoningEngine: Core multi-path engine
        - YvMultiPathInferenceEngine: Inference optimization
        - YvMultiPathMetaLearner: Meta-learning for path selection
-       - YvUnifiedMultiPathReasoningSystem: Unified multi-path system
 
     3. Enhanced Reasoning:
-       - YvEnhancedReasoningSystem: Enhanced reasoning with verification
        - YvMultiModalReasoningEnhancer: Multimodal reasoning enhancement
        - YvThoughtTreeReasoner: Tree-based thought exploration
 
@@ -94,12 +92,9 @@ from .reasoner import (
     YvMultiPathReasoningEngine,
     YvMultiPathMetaLearner,
     YvMultiPathInferenceEngine,
-    YvUnifiedMultiPathReasoningSystem,
     YvRecursiveDepthReasoner,
     YvRecursiveReasoningConfig,
     YvThoughtTreeReasoner,
-    YvEnhancedReasoningSystem,
-    YvEnhancedReasoningConfig,
     YvMultiModalReasoningEnhancer,
 )
 
@@ -109,11 +104,8 @@ __all__ = [
     "YvMultiPathReasoningEngine",
     "YvMultiPathMetaLearner",
     "YvMultiPathInferenceEngine",
-    "YvUnifiedMultiPathReasoningSystem",
     "YvRecursiveDepthReasoner",
     "YvRecursiveReasoningConfig",
     "YvThoughtTreeReasoner",
-    "YvEnhancedReasoningSystem",
-    "YvEnhancedReasoningConfig",
     "YvMultiModalReasoningEnhancer",
 ]

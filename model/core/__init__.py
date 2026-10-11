@@ -250,7 +250,6 @@ from .subconscious import (
 
 from .ewc import YvEWC
 from .long_context import YvOOMBContext, YvREFORM
-from .mamba_upgrades import YvSparseSSM, YvGatedDeltaNetwork
 
 __all__ = [
     "YvModel",
@@ -347,8 +346,6 @@ __all__ = [
     "YvEWC",
     "YvOOMBContext",
     "YvREFORM",
-    "YvSparseSSM",
-    "YvGatedDeltaNetwork",
 
     "YvDualInjector",
 
