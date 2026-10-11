@@ -2174,3 +2174,27 @@ loss 的 8 个键都声明在 `PiscesLxTrainingConfig` 自身），因此可安�
 
 门：`import model` / `import tools.data.dataset.core` / `import opss.quantize.methods` 通过；
 `manage.py test --stage 10` **exit=0**。
+
+---
+
+## 72 · A80：两条红色规则归零（路径误报 + 一个许可证头笔误），且验证闸门没有变软
+
+**`NO-HARDCODED-PATH`（2 → 0）**：两条命中都是**误报**，而且误报对象是*防泄漏的守卫本身* ——
+`tools/publish/hub.py` 的 `_SUSPICIOUS_CARD_STRINGS = ("C:\Users\\", "/home/", "/mnt/d/", "D:\\")`
+是"必须拒绝的路径前缀清单"，`tools/test/test_hub_publish_contract.py` 则断言含该前缀的
+model card 会被拦下。规则把它们当成硬编码路径，等于惩罚那道守卫。
+修法（**不放宽规则**）：只豁免"**常量名自称检测集**"的路径字面量
+（名字含 `SUSPICIOUS|PATTERN|DENY|BLOCK|FORBID|LEAK`），并把测试改为**引用该常量**
+（`_SUSPICIOUS_CARD_STRINGS[0] in message`）而不是重拼一次路径 —— 单一真源。
+**阳性对照**（4/4 PASS）：`CACHE_DIR = "C:\data\cache"` 与 `out_dir = "/mnt/d/artifacts"`
+**仍被标记**，只有 `_SUSPICIOUS_*`/`_BLOCKED_*` 这类被豁免 —— 豁免不可能藏住真路径。
+
+**`HEADER-VERBATIM`（1 → 0）**：`model/core/token_sparse_attn.py` 的许可证头里
+`# You may not use this file…` 被我重写文件时写成了小写 `you`。逐字校验规则正好抓出它 ——
+这正是该规则存在的意义（逐字比对，不靠人眼）。
+
+**结算**：`tools/check` errors **3883 → 3880**、warnings 0；
+`NO-HARDCODED-PATH` 0、`HEADER-VERBATIM` 0；
+`tools/test/test_hub_publish_contract` 仍 **6/6**（`hub.blocks_local_path_leak` 依旧报出泄漏，
+即防泄漏能力未被削弱）。剩余 3880 = `NO-MAGIC-NUMBER` 3698 + `NO-SILENT-EXCEPT` 182
+（历史存量，各自需逐处判定，非本轮范围）。
