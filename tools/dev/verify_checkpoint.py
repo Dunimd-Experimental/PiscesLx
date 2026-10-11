@@ -44,6 +44,14 @@ import math
 import pathlib
 import sys
 
+# Invoked as `python tools/dev/verify_checkpoint.py`, Python puts *this file's* directory on
+# sys.path, not the repository root, so `import model` raised ModuleNotFoundError and the
+# acceptance command in docs/audit/00 could not run at all. Running it as `-m` worked, which
+# is exactly why the breakage went unnoticed.
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 import torch
 import torch.nn.functional as F
 
