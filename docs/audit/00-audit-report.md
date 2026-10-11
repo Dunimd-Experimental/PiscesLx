@@ -2501,3 +2501,18 @@ copy_target = F.cross_entropy(logits[0].float(), ids[:-1], reduction="none")
 
 **这一条也把"我报正面读数时该有的克制"补上了**：三点时我写的是"单调下降"，
 第四点就打破了它 —— 报曲线必须报**到哪儿结束**，不能只报好看的那一段。
+
+**一次由我自己造成的资源事故（当场发现并修复）**
+
+seq-128 窗口失败，报 `RuntimeError: [enforce fail at inline_container.cc:664] …
+PytorchStreamWriter failed writing file data/0: file write failed` —— 写盘失败、归档位置不一致。
+排查：**D 盘 100% 占满，只剩 734 MB**，而 `.pisceslx/ckpt` 里有 **16 个检查点共 11 GB**，
+**全部是本会话我自己跑出来的**（每窗口 710 MB）。E 盘另有 50 GB 空闲，且用户早先就指定
+**产物写 E 盘**（`PISCESLX_HOME=E:/pisceslx-artifacts`，见项目记忆与 `utils/paths.py`）。
+
+处置：把审计里**引用的 8 个证据检查点**（`keep_adamw_step10/20`、`keep_long_step75`、
+`keep_lr50_step50`、`keep_w1e6_step50`、`keep_step100/125/150`）**移到
+`E:/pisceslx-artifacts/ckpt/`**，删除未引用的中间产物（`checkpoint_step_*`、`budget_abort_*`、
+`a72_step8`、`final_model`）。**D 盘 734 MB → 11 GB**。
+**教训**：长跑必须一开始就把工作根目录指到 E 盘，不能等写满才发现 ——
+写满的表现是**检查点写入失败**（不是内存或代码错误），很容易误读成模型问题。
