@@ -2234,3 +2234,25 @@ _LOADER_NAMES = {"AutoModel", "AutoModelForCausalLM", "AutoModelForSeq2SeqLM",
 
 **教训（与 A71、以及本轮两次"检查断言写错"同族）**：**规则的 0 命中必须先用阳性对照验证，
 才能当成干净** —— "命令能跑"不等于"命令在查"，"没报错"不等于"没问题"。
+
+**检查器自身的覆盖与自检（本轮新增的证据层）**
+
+`tools/check` 的 JSON 工件自报 `checks_run: 16`、`coverage.declared` 24 条规则、
+`coverage.covered` 24 条、**`coverage.uncovered: []`**，`files_scanned: 334` —— 即
+24 条规则**全部被执行过**，`by_rule` 里只列"有命中"的规则，所以"某规则不在 by_rule 里"
+**不能**读成"该规则有问题"，但也**不能**读成"该规则在查"。
+
+**阳性对照表（临时探针文件 → 跑检查器 → 当场删除并确认工作树干净）**：
+
+| 规则 | 探针 | 结果 |
+|---|---|---|
+| `ENGINE-NO-EXTERNAL-MODEL` | `from transformers import LlamaForCausalLM`（放 `model/`） | **修前不响应**（A81）→ 修后命中 ✓ |
+| `NO-DANGLING-IMPORT` | `from model.core.this_module_does_not_exist import YvNothing` | 命中 ✓（本条闸本来就有牙） |
+| `EXPOSE-CLASSES-ONLY` | 模块顶层 `def bare_helper(...)` | 命中 ✓ |
+| `NO-HARDCODED-PATH` | `CACHE_DIR = "C:\data\cache"` 等 4 例 | 4/4 判对（真路径标记、检测集豁免） |
+
+**推广的判据（写进本节，供后续复用）**：**任何规则报 0 命中，都必须先用阳性对照证明
+它能对"确定违规"作出反应，才能把 0 读成干净。** 同类教训本会话已出现三次：
+A71（验收命令本身 ModuleNotFoundError、用 `-m` 才跑得起来，所以长期没人发现）、
+A81（规则漏掉最直接的违规形式）、以及我两次把"检查断言的期望值"写错从而把正确实现判成 FAIL。
+**"命令能跑"≠"命令在查"；"没报错"≠"没问题"。**
