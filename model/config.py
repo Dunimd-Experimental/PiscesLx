@@ -429,7 +429,6 @@ class YvConfig:
     reasoning_consistency_weight: float = 0.05
 
     # Native unified multimodal token space fusion
-    use_native_multimodal_fusion: bool = False
     image_tokens: int = 256
     audio_tokens: int = 512
     video_tokens: int = 128

@@ -2103,3 +2103,32 @@ loss 的 8 个键都声明在 `PiscesLxTrainingConfig` 自身），因此可安�
 **结算**：`import model` 通过；`manage.py test --stage 10` **exit=0**；
 `tools/check` errors **4058 → 3964（−94）**、warnings 1（删除的两个文件本身就是违规源）。
 §60 的待手术清单至此关闭；剩余待清项为 114 个"声明却无人读"的配置字段（同族，留作下一批）。
+
+---
+
+## 70 · 配置契约的两侧收口：删净 123 个死字段，`NO-DEAD-CONFIG-FIELD` 归零
+
+**读数（`python -m tools.check`）**：`NO-DEAD-CONFIG-FIELD` 从 **"114 field(s)" 降到 "1 field(s)"**，
+补掉最后一个 `use_native_multimodal_fusion` 后应为 0；`manage.py test --stage 10` **exit=0**；
+`errors 3964 / warnings 1`（errors 数不因此变，该规则是 warning 级）。
+
+**口径与两个防线（动手前必须做的）**：把"被读取"定义为
+`\.field` / `getattr(x, 'field')` / `['field']` 三种形式，在**全仓**（含 tools/、opss/、configs 之外的
+一切 .py）搜索。动手前额外查了两件事，避免重犯"没枚举全部注入路径"：
+① **动态键构造** —— `mamba3_`/`csa_`/`moba_`/`ink_`/`hisa_`/`galore_`/`chinchilla_` 等前缀的字符串
+   引用各 **0 命中**（若有 `getattr(cfg, f"mamba3_{x}")` 就会漏判）；
+② **只在 `model/config.py` 内部被读**的字段 —— **0 命中**（若字段只在预设函数/`__post_init__` 里用，
+   删掉就会静默改变默认行为）。
+
+**删除范围**：122 处 `model/config.py` 声明 + 372 行 `configs/model/*.yaml` 键 + 1 处补漏。
+其中 60 个字段同时被 **12 个档位 YAML 设置**（等于 12 个档在宣传 `hisa_*`、
+`galore_target_modules`、`chinchilla_*`、`seal_*`、`image_res` 等**不存在的机制**），
+20 个 `use_*` 开关**在任何 YAML 里都没出现过**（纯声明）。验证：`import model` 通过、
+**12 个档位 YAML 全部正常加载**、`stage 10` 全绿。
+
+**反向缺陷仍在（同一条规则的另一半）**：`NO-UNDECLARED-CONFIG-READ` 的 **81** 条存量
+—— 被 `getattr(cfg, 'x', default)` 读取却没有任何 schema 声明（`moe_routing_temperature`、
+`moe_temperature_min/max`、`moe_dropout`、`max_gpu_experts`、`kv_cache_max_size`、
+`custom_image_keys` 等），且档位 YAML 里也设了这些键（`version`、`moe_routing_temperature`…）
+却进不了任何对象 —— 与 A77 同族。这是下一批的正题：**把被读的键补成声明**（默认值取读取点的
+现有回退值，不猜），而不是让它们继续藏在 `getattr` 的默认参数里。
