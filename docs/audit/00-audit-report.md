@@ -2340,3 +2340,16 @@ _ANY = re.compile(r"[Pp][Ii][Ss][Cc][Ee][Ss][Ss]")   # 七个字符类 = "Pisces
 
 **注意读数含义**：`errors` 由 3880 升到 **4182** 不是"改坏了"，而是**一条从未生效的规则
 开始生效**后如实报出的存量（3880 里不含这 302 条）。这正是"沉默的绿"的代价。
+
+**收口：24 条规则全部完成阳性对照**
+
+| 结果 | 条数 | 规则 |
+|---|---|---|
+| 对照命中、行为正确 | **22** | `NO-DANGLING-IMPORT`、`NO-DANGLING-EXPORT`（"`__all__` 里有无绑定的名字"）、`EXPOSE-CLASSES-ONLY`、`LOGGING-DMSC-ONLY`、`HEADER-VERBATIM`、`NO-HARDCODED-DEVICE`、`NO-HARDCODED-MODEL-ID`、`NO-HARDCODED-PATH`(4/4)、`NO-STUB-NOR-TODO`、`NO-DETACHED-SCALAR-PARAM`、`MODALITY-4-NO-DOCUMENT`、`MODALITY-4-NO-AGENT`、`CLEAN-ENTA-ENCRE`、`CLEAN-WATERMARK`、`CLEAN-MCP-SERVICE-LAYER`、`NAMING-MODEL-YV`、`NAMING-FORBIDDEN-PREFIX`、`NAMING-OUTSIDE-PISCESLX`、`NO-MAGIC-NUMBER`/`NO-SILENT-EXCEPT`（存量命中自证）、`NO-DEAD-CONFIG-FIELD`/`NO-UNDECLARED-CONFIG-READ`（本人从 116/81 驱到 0 的过程自证） |
+| **发现是沉默的绿、已修** | **2** | `ENGINE-NO-EXTERNAL-MODEL`（A81）、`NAME-PISCESL1-PISCESLX`（A82） |
+| 误报已修正 | 1 | `NO-HARDCODED-PATH`（A80，命中"防泄漏守卫"本身） |
+
+**这是本轮最可复用的产出**：项目把"验收以脚本结果为准"写进守则，那么**脚本本身必须先被验证**。
+两次实测都证明"0 命中"可能是"没在查"：一条漏掉最直接的违规形式（具体第三方模型类），
+一条连自己的名字都拼错（`Piscess`）。**方法**：临时探针文件放进 `model/`/`tools/`
+（必要时 `git add`）→ 跑检查器 → 当场删除并 `git status` 确认干净。
