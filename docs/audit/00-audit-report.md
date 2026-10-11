@@ -2353,3 +2353,24 @@ _ANY = re.compile(r"[Pp][Ii][Ss][Cc][Ee][Ss][Ss]")   # 七个字符类 = "Pisces
 两次实测都证明"0 命中"可能是"没在查"：一条漏掉最直接的违规形式（具体第三方模型类），
 一条连自己的名字都拼错（`Piscess`）。**方法**：临时探针文件放进 `model/`/`tools/`
 （必要时 `git add`）→ 跑检查器 → 当场删除并 `git status` 确认干净。
+
+---
+
+## 75 · A72 的修复此前**没有回归保护**（负面对照发现），现已补上契约
+
+**负面对照**：把 `YvModel.forward` 里 A72 的折入改回"受 `moe_aux_loss_free` 门控"，
+`manage.py test --stage 10` **仍然 exit=0（全绿）** —— 说明那 16 个门参数的梯度
+**没有任何套件守护**，谁改回去都不会被发现。
+
+**补上的契约**：`tools/test/test_sparsity_objective_contract.py`（**6/6**），两条互补：
+- **运行时**（覆盖遍历）：`YvModel.sparsity_objective` 对"外层 + 嵌套"两个贡献者求和正确
+  （1.25 = 0.25×1.0 + 0.5×2.0），且反向传播后**两个门都拿到非零梯度**（只测浅层不够）；
+- **源码级**（覆盖折入）：折入是 `forward` 里的单个表达式，行为测试不建整模型就够不到，
+  故读 `inspect.getsource(YvModel.forward)`，断言 `sparsity_objective()` 的调用之后
+  紧邻 `loss = loss + sparsity_loss`，且这两行之间**不得出现** `moe_aux_loss_free`。
+
+**双向验证**：修好的代码 **6/6 PASS**；把折入改回门控后该契约**精确失败**
+（`fold::not gated on the balancing mode — gated again - the gates lose their gradient`）。
+
+**方法学**：这与本轮"规则必须阳性对照"是同一条 —— **修复也必须有负面对照**，
+否则"改好了"只是一种没有被检验的主张。
