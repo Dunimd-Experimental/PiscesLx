@@ -308,6 +308,8 @@ class PiscesLxProjectNameCheck(PiscesLxStandardCheck):
         """Scan comments, docstrings and string literals for name variants."""
         violations = []
         for source in scanner.files:
+            if source.path.name in self._SKIP_NAMES:
+                continue
             for index, line in enumerate(source.lines, start=1):
                 for violation in self._scan_line(source, index, line):
                     violations.append(violation)
@@ -323,6 +325,15 @@ class PiscesLxProjectNameCheck(PiscesLxStandardCheck):
             # legitimate `PiscesL1` in the tree was reported once the stem regex was fixed
             # (docs/audit/00 A82).
             if line.startswith(self._ALLOWED, start):
+                continue
+            # §4.5 governs how the *project name* is spelled; it does not govern the operational
+            # spellings of the codename that this repository itself declares - the workspace
+            # directory `.pisceslx` and the `PISCESLX_` environment prefix, both documented in
+            # utils/paths.py. They are the codename in directory/machine case (the same section
+            # blesses `PiscesLx` as the codename), whereas a bare `Pisces`, a lowercase full name
+            # or a mixed-case variant stays a violation.
+            token = line[start:start + len("PiscesLx")]
+            if token.lower() == "pisceslx" and (token.islower() or token.isupper()):
                 continue
             short = line[start:start + 6]
             found.append(

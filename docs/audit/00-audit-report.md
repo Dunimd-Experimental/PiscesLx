@@ -2386,3 +2386,25 @@ _ANY = re.compile(r"[Pp][Ii][Ss][Cc][Ee][Ss][Ss]")   # 七个字符类 = "Pisces
 | `load_checkpoint` 必须在参数组数不一致时比较并"保留权重+丢弃状态+警告"（A79） | PASS | 抹掉 `param_groups`/警告文案 → 被判失败 ✓ |
 
 闸门：`manage.py test --stage 10` **exit=0**，套件数 **14 → 16**。
+
+**A82 收口：让规则实现它自己声明的意图（303 → 131），其余交用户口径**
+
+分类后发现 303 里绝大多数是**操作形态**而非"项目名拼写"，且规则**定义了自己的豁免却从不使用**：
+
+| 形态 | 条数 | 判定 |
+|---|---|---|
+| `.pisceslx`（工作目录）与 `PISCESLX_`（环境变量前缀） | ~180 | **合法**：项目自己在 `utils/paths.py` 声明；`_SKIP_NAMES = {"paths.py"}` 是作者写好的豁免，**却从未被 `run()` 使用**（死代码） |
+| `PiscesLxPaths`/`PiscesLxLogger` 等 | ~16 | 合法（本就以 `PiscesLx` 开头，本应放行） |
+| `piscesl1==VERSION`、`"model_type": "piscesl1_7b"`、规则 id `PISCESL1`、模型 id `"piscesl1-7b"`、散文小写 | **131** | **打包/注册表身份**，属用户口径决定 |
+
+**修法（两处，均为"实现它自己声明的意图"而非放宽法律）**：
+1. `run()` **真正使用** `_SKIP_NAMES`（死代码修复）；
+2. 窄豁免**代号的操作形态**：`.pisceslx` / `PISCESLX_` —— 即 §4.5 中已获承认的代号 `PiscesLx` 的
+   目录/机器大小写形式；裸 `Pisces`、`PISCES`、`PiscesL` 与小写全名**仍然违规**。
+
+**对照（9/9 PASS）**：`.pisceslx`/`PISCESLX_HOME`/`PiscesLxPaths`/`"PiscesL1"` 放行；
+`pisces`/`PISCES`/`PiscesL`/`"Piscesl1"`/`"piscesl1-7b"` 判违规。
+
+**结算**：`errors` 4185 → **4013**；该规则 **303 → 131**。
+**剩下的 131 不再自行扩大豁免** —— 那等于替用户改写 §4.5（发行包名与 HF `model_type` 的小写
+是外部约定，改成 `PiscesL1` 会影响打包标识与已发布模型的可加载性）。作为**口径决定**登记在案。
