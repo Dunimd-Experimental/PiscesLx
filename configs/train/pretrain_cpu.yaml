@@ -92,7 +92,11 @@ training:
   # (exit 139, no Python traceback) - so the earlier 'Ink segfaults' reading was wrong: the
   # declaration was small, not the optimiser broken. 4.2 covers the Ink step with room for the
   # checkpoint write that the abort path performs.
-  memory_budget_gb: 4.2
+  # Ink's steady state measured at 4.22 GB (step 11) against AdamW's 2.65 GB, so the Ink
+  # path needs the higher ceiling to finish a window; that overhead is the registered
+  # construction-amplification defect, not something a declaration should paper over - the
+  # number only has to be one the host can honour, and today it has >6 GB free.
+  memory_budget_gb: 4.6
   # Sized for one foreground invocation on this host: ~10 s/step at batch 1 / seq 32,
   # so 30 steps plus model construction and two checkpoint writes fit in one command.
   max_steps: 30
