@@ -2156,3 +2156,21 @@ loss 的 8 个键都声明在 `PiscesLxTrainingConfig` 自身），因此可安�
 **剩余 10 条**（属 data 配置 6 条 `custom_*_keys` / `force_enable_*`、推理 2 条
 `use_tri_route` / `use_brownout_moe`、opss 2 条 `smoothing_factor` / `galore_scale`），
 各自属于不同的配置类，留作下一批。
+
+**配置契约两侧归零（阶段 29–31）**：继续补声明，直到
+`NO-UNDECLARED-CONFIG-READ` **81 → 0**、`NO-DEAD-CONFIG-FIELD` **116 → 0**，
+`tools/check` errors **4058 → 3883**、warnings **1 → 0**。
+
+| 提交 | 补声明的键 | 所属类 | 默认值来源 |
+|---|---|---|---|
+| `356481a` | 56 个 `model/**` 内读取的键 | `YvConfig` | 各自 `getattr` 回退 |
+| `b520c76` | 训练器的 `enable_expert_evolution`/`active_modalities`/`ddp_static_graph`/`early_stopping_patience`/`task_weights` | `PiscesLxTrainingConfig` | 同上 |
+| `4e75120` | `use_tri_route`/`use_brownout_moe`/`galore_scale` | `YvConfig` | 同上 |
+| `336425c` | `custom_{image,audio,video}_keys`/`force_enable_{vision,audio,video}`；`smoothing_factor` | `PiscesLxDatasetConfig` / `PiscesLxQuantizationConfig` | 同上 |
+
+**原则**：默认值一律取自读取点**已有的回退字面量**（不新造选择），每处声明在注释里标注
+`文件:行`，使"代码假定的值"与"配置能设置的值"从此是同一个，不再有藏在 `getattr` 默认参数里的
+隐式常量。**这一族的两个方向（读而未声明 / 声明而无人读）现都归零。**
+
+门：`import model` / `import tools.data.dataset.core` / `import opss.quantize.methods` 通过；
+`manage.py test --stage 10` **exit=0**。
