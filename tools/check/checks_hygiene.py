@@ -63,6 +63,14 @@ class PiscesLxHardcodingCheck(PiscesLxStandardCheck):
     )
     _STRUCTURAL = frozenset({"0", "1", "-1", "2", "0.0", "1.0", "1e-8", "1e-6", "2.0", "0.5"})
     _ALLOWED_ARG_NAMES = re.compile(r"^(?:[-+]?\d+(?:\.\d+)?[eE][-+]?\d+|nan|inf)$")
+    #: A path-shaped literal bound to a constant whose *name* marks it as a detection set is a
+    #: pattern, not a location: the publisher rejects model cards carrying host paths, and its
+    #: `_SUSPICIOUS_CARD_STRINGS` list is exactly the thing that guard matches against. Flagging
+    #: it would pressure a maintainer to weaken the guard (docs/audit/00 A80). The name must say
+    #: so, which keeps `CACHE_DIR = "C:\\cache"` - a real defect - in scope.
+    _DETECTION_CONSTANT = re.compile(
+        r"^\s*[A-Z_]*?(?:SUSPICIOUS|PATTERN|DENY|DENIED|BLOCK|BLOCKED|FORBID|FORBIDDEN|LEAK)"
+        r"[A-Z_]*\s*[:=]")
 
     def run(self, scanner: PiscesLxRepositoryScanner) -> list:
         """Run literal scanning and magic-number AST analysis."""
@@ -85,6 +93,8 @@ class PiscesLxHardcodingCheck(PiscesLxStandardCheck):
         for index, line in enumerate(source.lines, start=1):
             stripped = line.strip()
             if not stripped or stripped.startswith("#"):
+                continue
+            if self._DETECTION_CONSTANT.match(line):
                 continue
             for pattern in PiscesLxRegexLibrary.absolute_path_patterns():
                 match = pattern.search(line)

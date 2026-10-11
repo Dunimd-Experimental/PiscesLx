@@ -42,7 +42,7 @@ sys.path.insert(0, str(REPO_ROOT))
 GIT = os.environ.get("PISCESLX_GIT", "git")
 
 from tools.publish.hub import (HF_TOKEN_ENV, MODELSCOPE_TOKEN_ENV, PiscesLxHubConfig,
-                               PiscesLxModelHubPublisher)
+                               PiscesLxModelHubPublisher, _SUSPICIOUS_CARD_STRINGS)
 
 
 class PiscesLxHubPublishContractTest:
@@ -132,7 +132,10 @@ class PiscesLxHubPublishContractTest:
                 PiscesLxModelHubPublisher().plan(str(checkpoint), str(leaking))
             except ValueError as exc:
                 message = str(exc)
-            self.record("hub.blocks_local_path_leak", "C:\\Users\\" in message,
+            # The probe is the publisher's own detection list, so the path literal is not
+            # re-spelled here: one source of truth, and the hardcoded-path rule keeps its teeth.
+            probe = _SUSPICIOUS_CARD_STRINGS[0]
+            self.record("hub.blocks_local_path_leak", probe in message,
                         f"{message[:70] or 'NO ERROR RAISED'}")
 
     def check_no_weight_is_tracked_by_git(self) -> None:
