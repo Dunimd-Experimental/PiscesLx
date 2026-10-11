@@ -1967,3 +1967,23 @@ mamba3 `dt_proj.bias`/`conv_mode.D`、router `w_hicl`/`w_got` 的 warmup 休眠�
   剩余为 `NO-MAGIC-NUMBER` 等历史存量）。
 - 工作树干净；HEAD `e7521bf`（本会话 12 个提交）与 `gitee-exp` / `github-exp` 完全一致；
   主仓库按铁律仍**未推**。
+
+---
+
+## 68 · A77：档位 YAML 的未知键被静默丢弃（登记，未修）+ 已清的 2 个说谎字段
+
+**已清（提交 `a30856f`）**：`eg_mla_compression_ratio`（`config.py:721`）与
+`ewc_lambda`（`config.py:741`）**只有声明、全仓零读取**，而 **12 个 `configs/model/*.yaml`
+全都设了它们** —— 等于 12 个档位都在宣传两个不存在的机制（EG-MLA 压缩、EWC 正则；
+`ewc.py` 早已删除）。删除 2 处声明 + 24 处 YAML 键，`import model` 通过。
+这正是检查器 `NO-DEAD-CONFIG-FIELD` 报的 116 个字段里的两个；
+剩余字段（`csa_*`、`alibi_num_heads`、`chinchilla_*` 等）同族，留作下一批。
+
+**A77（未修，有实测证据）**：实测把一个**含已删字段的 YAML**（`.pisceslx/ab/0.1B_a74.yaml`，
+仍带上面两个键）喂给 `--model_size`，进程**照常启动、无任何 warning**——
+即**档位 YAML 的未知键被模型配置加载器静默丢弃**。后果：在 `configs/model/*.yaml`
+里打错一个键名（或写了已删字段）不会有任何提示，声明与生效之间没有任何反馈回路。
+这与 A23（`--config` 被当模型配置读、stage 段静默不生效）是同一族"静默半忽略"。
+修法方向：在配置加载层对未知键显式报错或 warning，并给
+`NO-UNDECLARED-YAML-KEY` 加一条机检规则（检查器现有规则只覆盖"读侧"，
+`NO-UNDECLARED-CONFIG-READ` 查的是 `getattr(config, ...)`，查不到 YAML 侧的键名拼写）。
