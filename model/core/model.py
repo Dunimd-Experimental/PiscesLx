@@ -1948,6 +1948,34 @@ class YvModel(nn.Module):
 
         return generated_ids, stats
 
+    def sparsity_objective(self) -> Optional[torch.Tensor]:
+        """Sum the parameter-only sparsity regularisers declared by this trunk's blocks.
+
+        These terms are the *objective* of their own gates: each gate is a learned scalar that
+        multiplies a sparse branch, and the regulariser is what pushes it toward zero. They
+        depend on parameters only, never on activations, so the trunk can evaluate them here at
+        loss time instead of threading a second value out of every layer's forward.
+
+        They used to ride inside the block's auxiliary lump, which the declared balancing mode
+        keeps out of the objective: with ``moe_aux_loss_free=True`` (the default) every one of
+        them was silently dropped, and the gates were never trained at all - measured on the
+        host tier as 80 parameters unchanged after 8 optimisation steps, led by
+        ``layers.0.attention.sparse_gate_lca`` and ``sparse_gate_dsa`` (docs/audit/00 A72).
+
+        Each contributor is counted once: ``modules()`` yields every submodule exactly once, and
+        the attention and hybrid implementations report disjoint gates.
+        """
+        total = None
+        for module in self.modules():
+            accessor = getattr(module, "sparsity_loss", None)
+            if not callable(accessor):
+                continue
+            term = accessor()
+            if not isinstance(term, torch.Tensor) or not term.requires_grad:
+                continue
+            total = term if total is None else total + term
+        return total
+
     def forward(
         self,
         input_ids,
@@ -2543,11 +2571,18 @@ class YvModel(nn.Module):
         # be reported. Measured at 0.01B: the lump is 749.27 nats against an lm_loss of 6.59,
         # i.e. 113x, so folding it in at unit weight would optimise balance at the cost of
         # language modelling. The lump also still mixes objective terms (routing) with
-        # observability terms (sparsity/phi/lr/mod); separating those is the next step.
+        # observability terms (phi/lr/mod); the sparsity half is separated out just below.
         if (loss is not None and not self.config.moe_aux_loss_free
                 and isinstance(total_aux_loss, torch.Tensor)
                 and total_aux_loss.requires_grad):
             loss = loss + self.config.moe_aux_loss_weight * total_aux_loss
+
+        # The sparsity regularisers are not load balancing, so the declared balancing mode has
+        # no say over them: they are folded unconditionally here. Their own declared weight is
+        # already inside each term, so no outer weight is applied on top.
+        sparsity_loss = self.sparsity_objective()
+        if loss is not None and sparsity_loss is not None:
+            loss = loss + sparsity_loss
 
         result = YvModelOutput({
             "logits": logits,

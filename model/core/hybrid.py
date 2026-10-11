@@ -1276,10 +1276,9 @@ class YvHybridBlock(nn.Module):
     def _forward_ssm(self, x, mask):
         """SSM path with sparse gate — skipped entirely when gate is near zero."""
         ssm_gate = torch.sigmoid(self.sparse_gate_ssm)
-        sparsity_loss = self.sparsity_reg_weight * ssm_gate.mean()
         # Skip SSM entirely when gate is below threshold (training or inference)
         if ssm_gate.item() < self.gate_sparsity_threshold:
-            return None, sparsity_loss
+            return None
         x_norm = self.norm_ssm(x)
         if self.gradient_checkpointing and self.training:
             ssm_out = torch.utils.checkpoint.checkpoint(
@@ -1294,7 +1293,18 @@ class YvHybridBlock(nn.Module):
         # Value-neutral straight-through so the gate is trainable: it was consulted only by the
         # `.item()` skip test above, which detached it (docs/audit A55).
         factor = YvNumericalGuard.straight_through_gate(self.sparse_gate_ssm)
-        return (ssm_out + ssm_selective) * factor, sparsity_loss
+        return (ssm_out + ssm_selective) * factor
+
+    def sparsity_loss(self) -> torch.Tensor:
+        """Sparsity regulariser for this block's SSM gate.
+
+        The SSM gate is a learned scalar in front of the SSM branch, and this term is its
+        objective. It reads parameters only, so the trunk evaluates it at loss time via
+        ``YvModel.sparsity_objective`` rather than carrying it out of the layer's return value;
+        riding inside the auxiliary lump meant the declared balancing mode dropped it and the
+        gate was never trained (docs/audit/00 A72).
+        """
+        return self.sparsity_reg_weight * torch.sigmoid(self.sparse_gate_ssm).mean()
 
     def _forward_mlp(self, x, modal_id=None):
         x_norm = self.norm_mlp(x)
@@ -1330,8 +1340,7 @@ class YvHybridBlock(nn.Module):
         )
 
         # === SSM path (sparse-gated) ===
-        ssm_out, ssm_sparsity_loss = self._forward_ssm(hidden_states, attention_mask)
-        attention_sparsity_loss = getattr(self.attention, "sparsity_loss", None)
+        ssm_out = self._forward_ssm(hidden_states, attention_mask)
 
         # === Unified fusion ===
         if ssm_out is not None:
@@ -1351,9 +1360,6 @@ class YvHybridBlock(nn.Module):
         hybrid_out = self.norm_fusion(hybrid_out)
 
         mlp_out, aux_loss = self._forward_mlp(hybrid_out, modal_id=modal_id)
-        ssm_sparsity_loss = self.sparsity_reg_weight * torch.sigmoid(self.sparse_gate_ssm).mean()
-        aux_loss = aux_loss + ssm_sparsity_loss + (
-            attention_sparsity_loss() if callable(attention_sparsity_loss) else 0.0)
 
         output = mlp_residual + self.residual_dropout(
             self.residual_scale_mlp * mlp_out

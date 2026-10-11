@@ -2307,9 +2307,6 @@ class YvTransformerBlock(nn.Module):
         x_norm = self.pre_norm2(x_out)
 
         mlp_out, aux_loss = self.mlp(x_norm, modal_id=modal_id)
-        sparsity_loss = getattr(self.attn, "sparsity_loss", None)
-        if callable(sparsity_loss):
-            aux_loss = aux_loss + sparsity_loss()
 
         # Apply phi-balancing to aux_loss
         if getattr(self, 'phi_balancing', None) is not None and self.training:
