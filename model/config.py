@@ -1002,6 +1002,9 @@ class YvConfig:
     enable_multi_path_core: bool = True  # model/reasoning/reasoner/unified.py:182
     mpr_threshold: float = 0.6  # model/reasoning/reasoner/unified.py:183
     mpr_seq_len_threshold: int = 512  # model/reasoning/reasoner/unified.py:184
+    use_tri_route: bool = True  # tools/infer/core.py:257
+    use_brownout_moe: bool = True  # tools/infer/core.py:271
+    galore_scale: float = 1.0  # opss/train/sft.py:569
 
     def __post_init__(self):
         """Initialize computed fields after dataclass construction.
