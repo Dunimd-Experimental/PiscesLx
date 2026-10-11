@@ -1916,3 +1916,31 @@ A72 只保证门**收到**梯度，不保证机制**起作用**。直接量门�
 **证据**（`python -m tools.test.test_attention_mask_shapes`）：**15/15 通过**；
 因果掩码 |delta| = 0.0（幂等）；禁掉 key 0 的掩码 |delta| = 8.51（被尊重）；
 A62 的块稀疏精确性未回归（对稠密因果 max|diff| 仍为 1.043e-07）。
+
+---
+
+## 66 · 本会话的可用工件：0.1B 在真实留出文本上首次通过验证器
+
+`keep_long_step75.pt`（0.1B 主机档、真实训练到第 75 步、wikitext-2 训练、AdamW、
+`trained 514/578`），用**真实留出集** `data/corpus/wikitext__wikitext-2-raw-v1_validation-…jsonl`
+评（`tools/dev/verify_checkpoint.py`）：
+
+| 项 | 值 |
+|---|---|
+| 三项检查 | `loadable.ok=True`（578 张量零缺失/零形状不符）、`trained.ok=True`（**514/578**）、`perplexity` |
+| 留出集平均 CE | **9.1362**（65 07 tokens / 64 篇） |
+| 均匀基线 CE | 11.9293 |
+| 复制上一 token 基线 | 9.0992 |
+| `beats_uniform` / `verdict` | **True / True** |
+
+**这是本会话第一个通过验证器自己判据的工件**：真实训练（非初始化）、能严格载入、
+在真实留出文本上优于均匀基线，且已逼近"复制上一 token"这一强基线（差 0.037 nats）。
+
+**边界说清，不冒充旗舰**：它是 **63.53 M 参数的主机档**，不是 7B/314B 旗舰；75 步远未收敛；
+吞吐 10.3 tok/s（见 `docs/research/00` §8）。它证明的是**管线端到端可信 + 训练真的在学**，
+不是"达标"。三项最高优先级验收（真实权重 / 真实训练 / T4 上跑通全部指标）中，
+前两项在本档位上成立到"真实训练过且可用"的程度，第三项本机不可能达成。
+
+**同批量化事实**：同一检查点的 64 个未变参数已逐一定性（`aux_kv_gate` 调用方门控休眠、
+mamba3 `dt_proj.bias`/`conv_mode.D`、router `w_hicl`/`w_got` 的 warmup 休眠）——
+即不再是"A 类缺陷"而是"待判定接线/摘除"的清单。
