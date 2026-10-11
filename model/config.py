@@ -310,7 +310,6 @@ class YvConfig:
     moe_load_balance_alpha: float = 0.01
     moe_aux_loss_weight: float = 1.0        # outer weight folding aux losses into the objective
     moe_noise_std: float = 0.1
-    moe_use_stable_gate: bool = True
     moe_min_capacity: int = 4
     moe_prediction_horizon: int = 8
     moe_expert_grad_clip: float = 0.1
@@ -318,7 +317,6 @@ class YvConfig:
     moe_random_to_gradient_steps: int = 500
     moe_gate_warmup_alpha: float = 0.05
     moe_attention_mamba_temp: float = 0.3
-    moe_l2_smooth_8k: float = 0.01
     moe_layers: List[int] = field(default_factory=list)
     moe_shared_experts: int = 1
     moe_fine_grained: bool = True
@@ -326,9 +324,6 @@ class YvConfig:
     moe_aux_loss_free: bool = True
     moe_compute_mode: str = "default"
     moe_compute_split_ratio: float = 0.5
-    moe_anticipatory_routing: bool = True
-    moe_expert_parallel: bool = False
-    moe_token_dispatcher: str = "allgather"
     backbone_allow_legacy_blocks: bool = False
 
     # ========================================
@@ -337,7 +332,6 @@ class YvConfig:
     # ========================================
     use_path_moe: bool = True
     path_moe_stage_size: int = 4
-    path_moe_use_shared_gate: bool = True
 
     # ========================================
     # ϕ-Balancing Configuration (arXiv 2605.15403, 2026)
@@ -380,23 +374,15 @@ class YvConfig:
     max_position_embeddings: int = 8192
     rope_theta: float = 1e6
     dropout: float = 0.0
-    image_res: int = 224
-    max_image_res: int = 1024
     image_patch: int = 14
-    use_native_resolution: bool = True
-    enable_patch_pack: bool = True
     mm_tokens: int = 256
     audio_tokens: int = 512
     task_classes: int = 256
     eval_dims: int = 7
-    rope_scaling: dict = field(default_factory=lambda: {"type": "yarn", "factor": 32, "original_max_position_embeddings": 32768})
 
-    residual_dropout_p: float = 0.1
     use_gradient_checkpointing: bool = True
-    use_pre_norm: bool = True
     attention_dropout: float = 0.0
     fused_qkv: bool = False
-    use_parallel_attention_mlp: bool = False
     use_deepnorm: bool = False
     use_layerscale: bool = False
     layerscale_init: float = 1e-5
@@ -426,10 +412,8 @@ class YvConfig:
     mod_routing_weight: float = 0.1
 
     enable_dynamic_fusion: bool = True
-    fusion_quality_threshold: float = 0.3
     fusion_dropout: float = 0.1
     modal_token_count: int = 8
-    use_enhanced_fusion: bool = False
 
     # Multi-path reasoning core (YvMultiPathReasoningEngine)
     reasoning_heads: int = 8
@@ -440,12 +424,9 @@ class YvConfig:
     reasoning_abstraction_gain_min: float = 0.1
     reasoning_convergence_threshold: float = 0.001
     react_reflection_classes: int = 3
-    reasoning_loss_weight: float = 0.1
-    reasoning_loss_weight_light: float = 0.02
     reasoning_stream_loss_weight: float = 0.2
     reasoning_uncertainty_weight: float = 0.1
     reasoning_consistency_weight: float = 0.05
-    reasoning_consistency_prior: float = 0.8
 
     # Native unified multimodal token space fusion
     use_native_multimodal_fusion: bool = False
@@ -457,7 +438,6 @@ class YvConfig:
     text_tokens: int = -1
     native_fusion_output_tokens: int = 8
     native_fusion_num_layers: int = 2
-    native_fusion_use_self_attention: bool = True
 
     enable_cognitive_density: bool = True
     enable_dynamic_capacity: bool = True
@@ -467,12 +447,6 @@ class YvConfig:
 
     expert_init_method: str = "hybrid"
     diversity_weight: float = 0.01
-    mi_weight: float = 0.1
-    online_clustering: bool = False
-    orthogonality_weight: float = 0.01
-    routing_entropy_weight: float = 0.001
-    activation_variance_weight: float = 0.01
-    expert_warmup_steps: int = 100
     auto_detect_clusters: bool = True
     min_clusters: int = 4
     max_clusters: int = 16
@@ -485,14 +459,12 @@ class YvConfig:
     streaming_window: int = 16384
     compression_ratio: int = 8
     use_sliding_window: bool = False
-    sliding_window_size: int = 4096
     long_factor: int = 32
     max_cache_size: int = 8192
     cache_quantization: bool = True
     kv_cache_block_size: int = 512
     sdpa_prefer_flash: bool = True
     use_flash_attention: bool = True
-    flash_attention_version: int = 2
 
     speculative_candidates: int = 4
     speculative_draft_length: int = 5
@@ -506,15 +478,8 @@ class YvConfig:
     speculative_tree_depth: int = 5
 
     # Gated Delta Networks (ICLR 2025) - Selective state-space gating for improved long-context
-    gated_delta_use: bool = True
-    gated_delta_dim: int = 64
-    gated_delta_tau: float = 0.1
 
-    tool_uncertainty_threshold: float = 0.7
-    tool_fact_consistency_threshold: float = 0.6
 
-    enable_debug_outputs: bool = False
-    debug_verbose: bool = False
 
     use_mamba3: bool = True
     mamba3_layers: List[int] = field(default_factory=list)
@@ -522,37 +487,12 @@ class YvConfig:
     mamba3_d_conv: int = 4
     mamba3_expand: int = 2
     mamba3_dt_rank: str = "auto"
-    mamba3_conv_bias: bool = True
-    mamba3_proj_bias: bool = False
-    mamba3_use_fast_path: bool = True
-    mamba3_layer_norm_eps: float = 1e-4
     mamba3_sequence_threshold: int = 8192
-    mamba3_gate_mode: str = "adaptive"
-    mamba3_gate_init: float = 0.5
-    mamba3_gate_temperature: float = 1.0
-    mamba3_complex_state: bool = True
-    mamba3_trapezoidal: bool = True
-    mamba3_mimo: bool = True
-    mamba3_dropout: float = 0.0
-    mamba3_chunk_size: int = 256
-    mamba3_use_v_kernel: bool = True
-    mamba3_use_ss_duality: bool = True
-    mamba3_use_adaptive_dt: bool = True
-    mamba3_use_bidirectional: bool = False
-    mamba3_use_gated: bool = True
-    mamba3_n_heads: int = 8
-    mamba3_use_flash_ssm: bool = True
-    mamba3_use_rms_norm: bool = True
 
     dsa_sparse_ratio: float = 0.3
     dsa_importance_threshold: float = 0.1
     dsa_use_dynamic: bool = True
 
-    use_hisa_attention: bool = False
-    hisa_block_size: int = 64
-    hisa_superblock_size: int = 512
-    hisa_local_ratio: float = 0.4
-    hisa_block_ratio: float = 0.3
 
     thinking_intensity: float = 0.5
     complexity_threshold_low: float = 0.3
@@ -580,7 +520,6 @@ class YvConfig:
     galore_enabled: bool = False
     galore_rank: int = 128
     galore_update_interval: int = 200
-    galore_target_modules: List[str] = field(default_factory=lambda: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"])
     galore_lr_ratio: float = 1.0
     galore_min_rank: int = 32
     galore_max_rank: int = 512
@@ -589,9 +528,6 @@ class YvConfig:
     galore_quantization_bits: int = 0
     galore_memory_efficient: bool = True
     galore_moe_expert_only: bool = False
-    galore_multimodal_modules: List[str] = field(default_factory=lambda: ["vision_encoder", "audio_encoder", "multimodal_fusion"])
-    galore_sequence_threshold: int = 4096
-    galore_gradient_accumulation_sync: bool = True
 
     # FP4 Training Configuration (75% memory savings vs BF16)
     use_fp4: bool = False
@@ -635,9 +571,6 @@ class YvConfig:
     cpu_memory_budget: int = 137438953472
     enable_gds: bool = True
 
-    chinchilla_optimal: bool = False
-    chinchilla_c_budget: float = 0.0
-    chinchilla_d_ratio: float = 1.0
 
     # ========================================
     # DeepSeek V4 Pro-inspired Optimizations
@@ -659,15 +592,8 @@ class YvConfig:
     use_mixed_precision_cache: bool = True
 
     # Muon Optimizer enabled flag (for checkpoint compatibility)
-    muon_enabled: bool = False
 
     # CSA/HCA Hybrid Attention (DeepSeek-V4 inspired)
-    use_csa_attention: bool = True
-    csa_compression_ratio: int = 4
-    csa_top_k: int = 1024
-    csa_sliding_window: int = 128
-    csa_indexer_rank: int = 64
-    hca_compression_ratio: int = 128
 
     use_mla: bool = True
     kv_lora_rank: int = 512
@@ -687,11 +613,6 @@ class YvConfig:
     # ========================================
     # Mixture of Block Attention (MoBA) for 1M+ context
     # ========================================
-    use_moba_attention: bool = False
-    moba_block_size: int = 4096
-    moba_top_k: int = 4
-    moba_min_seq_len: int = 8192
-    moba_max_cached_blocks: int = 256
 
     # ========================================
     # Ring Attention for Ultra-Long Context (256K+)
@@ -708,16 +629,12 @@ class YvConfig:
     lazy_init_vision_encoder: bool = True
     lazy_init_audio_encoder: bool = True
     lazy_init_video_encoder: bool = True
-    lazy_init_modal_fusion: bool = False
-    lazy_init_reasoner: bool = False
-    lazy_init_speculative_decoder: bool = True
 
     # ========================================
     # Flagship Algorithm Integration (2025-2026)
     # ========================================
 
     # EG-MLA: Embedding-Gated Multi-Head Latent Attention
-    use_eg_mla: bool = True
 
     # DuoAttention: Retrieval vs Streaming Heads
     duo_attention_retrieval_ratio: float = 0.2
@@ -739,9 +656,6 @@ class YvConfig:
     # EWC: Elastic Weight Consolidation
 
     # SEAL: Self-Adapting LLMs
-    use_seal: bool = True
-    seal_confidence_threshold: float = 0.85
-    seal_max_synthetic_samples: int = 100
 
     # DAPO: Decoupled Clipping Policy Optimization
     use_dapo: bool = True
@@ -756,13 +670,10 @@ class YvConfig:
     sync_fusion_temporal_bins: int = 16
 
     # SparseSSM: Training-Free Mamba Pruning
-    use_sparse_ssm: bool = True
-    sparse_ssm_ratio: float = 0.5
 
     # OOMB: Million-Token Context
     use_oomb_context: bool = True
     oomb_chunk_size: int = 32768
-    oomb_max_context: int = 4194304
 
     # REFORM: Compress-Gather-Recompute
     use_reform: bool = True
@@ -774,15 +685,8 @@ class YvConfig:
     # ========================================
 
     # Dynamic H2O: adaptive compression + hierarchical caching for 1M+ context
-    use_dynamic_h2o: bool = False
-    dynamic_h2o_streaming_window: int = 16384
-    dynamic_h2o_compression_ratio: int = 8
-    dynamic_h2o_num_cache_levels: int = 3
 
     # Local-Global Attention: head-level split for hybrid context
-    use_local_global: bool = False
-    local_global_window: int = 512
-    local_global_head_ratio: float = 0.5
 
     # Adaptive Computation Time: token-level dynamic computation budget
     use_adaptive_computation: bool = False
@@ -804,20 +708,15 @@ class YvConfig:
     self_play_dpo_beta: float = 0.1
 
     # Graph of Tokens MoE routing: sequence-level dependency-aware routing
-    use_graph_of_tokens: bool = False
-    graph_of_tokens_top_k: int = 2
     graph_of_tokens_n_heads: int = 4
     graph_of_tokens_max_clusters: int = 8
-    graph_of_tokens_load_balance_alpha: float = 0.01
 
     # SoftMoE: soft differentiable MoE routing via LapSum relaxation
-    use_soft_moe: bool = False
     soft_moe_mean_k: int = 2
     soft_moe_temperature: float = 1.0
 
     # RoMA: Routing Manifold Alignment for MoE routers (ICLR 2026)
     use_roma: bool = False
-    roma_n_neighbors: int = 8
 
     # SPELL: Self-Play for evolving long-context models (ICLR 2026)
     use_spell: bool = False
@@ -825,7 +724,6 @@ class YvConfig:
     spell_ramp_steps: int = 1000
 
     # Seirênes: Adversarial Self-Play with evolving distractions (arXiv:2605.11636, May 2026)
-    use_seirenes: bool = False
 
     # Tactic: Adaptive Sparse Attention with clustering (Kan Zhu et al., ICLR 2026, arXiv:2502.12216)
     use_tactic: bool = False
@@ -847,7 +745,6 @@ class YvConfig:
 
     use_rotary_pos_emb: bool = True
     use_alibi: bool = False
-    alibi_num_heads: int = 16
 
     activation_type: str = "silu"
     use_swiglu: bool = True
@@ -874,10 +771,7 @@ class YvConfig:
     image_gen_resolution: int = 256
     image_gen_num_steps: int = 50
     image_gen_guidance_scale: float = 7.5
-    image_gen_initial_size: int = 8
     image_gen_use_attention: bool = True
-    image_gen_use_residual: bool = True
-    image_gen_use_diffusion: bool = False
 
     audio_gen_sample_rate: int = 16000
     audio_gen_n_mels: int = 128
@@ -885,7 +779,6 @@ class YvConfig:
     audio_gen_num_steps: int = 100
     audio_gen_streaming: bool = True
     audio_gen_num_codebooks: int = 2
-    audio_gen_codebook_size: int = 4096
 
     video_gen_fps: int = 24
     video_gen_num_frames: int = 16
@@ -904,17 +797,12 @@ class YvConfig:
     ink_kv_cache_bits: int = 8
     ink_max_experts_on_gpu: int = 4
     ink_checkpoint_ratio: float = 0.5
-    ink_momentum_block_size: int = 128
-    ink_variance_block_size: int = 256
-    ink_sparse_warmup_steps: int = 1000
-    ink_sparse_adaptive: bool = True
 
     cpu_offload_optimizer: bool = False
     cpu_offload_weights: bool = False
     cpu_offload_gradients: bool = False
     activation_quantization: bool = False
     activation_quant_bits: int = 8
-    activation_quant_block_size: int = 128
 
     extreme_memory_mode: bool = False
     ultra_low_memory: bool = False
@@ -941,23 +829,19 @@ class YvConfig:
     vram_mixed_precision: str = "bf16"
     vram_fp4_training: bool = False
     vram_fp8_attention: bool = False
-    vram_sequence_parallel: bool = False
     vram_tensor_parallel: int = 1
     vram_pipeline_parallel: int = 1
     vram_zero_stage: int = 3
     vram_cpu_pin_memory: bool = True
     vram_cpu_prefetch: bool = True
     vram_async_transfer: bool = True
-    vram_peak_memory_limit: int = 0
     extreme_vram_mode: bool = False
     ultra_low_vram: bool = False
 
     modal_aware_routing: bool = True
     n_cross_modal_experts: int = 0
-    modal_affinity_alpha: float = 1.0
     n_modalities: int = 5  # 4 modalities (text/image/audio/video) + 1 cross-modal sentinel
 
-    use_recurrent_modal_refiner: bool = True
     rdt_max_loops: int = 3
     rdt_spectral_radius: float = 0.95
     rdt_convergence_threshold: float = 0.99
@@ -970,29 +854,23 @@ class YvConfig:
     use_rca_fusion: bool = True
     use_seer_executor: bool = True
     use_vericot: bool = True
-    use_comet_memory: bool = False
     comet_write_interval: int = 1
     use_token_sparse_attn: bool = True
     use_mhc_lite: bool = False
 
     # --- 2026 Q2 flagship algorithm additions ---
-    use_hicl_router: bool = True       # HiCL DG-gated MoE routing (arXiv:2508.16651v3)
     use_layer_route: bool = True       # LayerRoute adaptive layer skip (arXiv:2606.01838)
     use_mr_rope: bool = True           # MrRoPE mixed-radix position encoding (arXiv:2601.22181)
 
-    use_ultra_sparse_gate: bool = False
     ultra_sparse_tier1_threshold: float = 0.3
     ultra_sparse_tier2_threshold: float = 0.8
     ultra_sparse_tier1_topk: int = 1
     ultra_sparse_tier2_topk: int = 2
     ultra_sparse_tier3_topk: int = 4
 
-    use_circulant_attention: bool = True
-    circulant_threshold: int = 4096
 
     use_rdt_layers: bool = True
     rdt_layer_indices: List[int] = field(default_factory=list)
-    rdt_loops_per_layer: int = 2
 
     use_memory_separation: bool = False
     memory_knowledge_slots: int = 0

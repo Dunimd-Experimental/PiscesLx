@@ -52,34 +52,24 @@ moe_temperature_min: 0.8
 moe_temperature_max: 3.0
 moe_random_to_gradient_steps: 2000
 
-fusion_quality_threshold: 0.26
 fusion_dropout: 0.07
 
 # Knowledge Density Optimization Configuration
 expert_init_method: 'hybrid'
 diversity_weight: 0.008
-mi_weight: 0.08
-orthogonality_weight: 0.008
-routing_entropy_weight: 0.0008
-activation_variance_weight: 0.008
-expert_warmup_steps: 80
 min_clusters: 3
 max_clusters: 10
 
 intermediate_size: 1792
 max_position_embeddings: 262144
 rope_theta: 10000.0
-rope_scaling: null
 dropout: 0.0
 
-image_res: -1
 image_patch: 14
-max_image_res: 768
 mm_tokens: 24
 audio_tokens: 48
 task_classes: 256
 eval_dims: 7
-residual_dropout_p: 0.1
 attention_dropout: 0.0
 
 # ========================================
@@ -269,7 +259,6 @@ use_speculative_decoder: true
 
 galore_rank: 128
 galore_update_interval: 200
-galore_target_modules:
   - q_proj
   - k_proj
   - v_proj
@@ -283,11 +272,9 @@ galore_max_rank: 256
 galore_rank_adapt_interval: 1000
 galore_rank_adapt_threshold: 0.1
 galore_quantization_bits: 8
-galore_multimodal_modules:
   - vision_encoder
   - audio_encoder
   - multimodal_fusion
-galore_sequence_threshold: 4096
 
 # FP4 Training Configuration (75% memory savings vs BF16)
 # Enable for extreme memory efficiency
@@ -305,8 +292,6 @@ ink_optimizer:
   max_experts_on_gpu: 2
   checkpoint_ratio: 0.5
 
-chinchilla_c_budget: 3000000000000
-chinchilla_d_ratio: 1.0
 
 kv_lora_rank: 384
 mla_q_lora_rank: 64
@@ -334,8 +319,6 @@ expert_evolution_decay: 0.99
 
 
 # SEAL: Self-Adapting LLMs (MIT 2025)
-seal_confidence_threshold: 0.85
-seal_max_synthetic_samples: 100
 
 # DAPO: Decoupled Clipping Policy Optimization (2025)
 dapo_epsilon_low: 0.2
@@ -352,16 +335,11 @@ sync_fusion_temporal_bins: 16
 coupled_mamba_coupling_strength: 0.3
 
 # SparseSSM: Training-Free Mamba Pruning (ICLR 2026)
-sparse_ssm_ratio: 0.5
 
 # Gated Delta Networks (ICLR 2025)
-gated_delta_use: true
-gated_delta_dim: 64
-gated_delta_tau: 0.1
 
 # OOMB: Million-Token Context Training (ICLR 2026)
 oomb_chunk_size: 32768
-oomb_max_context: 4194304
 
 # REFORM: Compress-Gather-Recompute (2025)
 reform_compression_ratio: 4
@@ -378,14 +356,12 @@ mtp_loss_weight: 0.5
 image_gen_resolution: 128
 image_gen_num_steps: 30
 image_gen_guidance_scale: 5.0
-image_gen_initial_size: 8
 
 audio_gen_sample_rate: 16000
 audio_gen_n_mels: 80
 audio_gen_duration: 3.0
 audio_gen_num_steps: 50
 audio_gen_num_codebooks: 2
-audio_gen_codebook_size: 2048
 
 video_gen_fps: 16
 video_gen_num_frames: 8
@@ -401,10 +377,6 @@ flagship_level: 0.6
 dsa_sparse_ratio: 0.32
 dsa_importance_threshold: 0.1
 
-hisa_block_size: 64
-hisa_superblock_size: 512
-hisa_local_ratio: 0.4
-hisa_block_ratio: 0.3
 
 thinking_intensity: 0.55
 complexity_threshold_low: 0.3
@@ -430,7 +402,6 @@ gpu_memory_budget: 42949672960
 cpu_memory_budget: 137438953472
 
 n_cross_modal_experts: 4
-modal_affinity_alpha: 1.0
 n_modalities: 5
 rdt_max_loops: 3
 rdt_spectral_radius: 0.95
@@ -445,10 +416,8 @@ ultra_sparse_tier1_topk: 1
 ultra_sparse_tier2_topk: 2
 ultra_sparse_tier3_topk: 4
 
-circulant_threshold: 4096
 
 rdt_layer_indices: []
-rdt_loops_per_layer: 2
 
 # ========================================
 # Memory Separation (Engram-style Lookup-Computation Separation)
