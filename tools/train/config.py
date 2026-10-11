@@ -305,6 +305,14 @@ class PiscesLxOptimizerConfig:
     betas: tuple = (0.9, 0.999)
     eps: float = 1e-8
     max_grad_norm: float = 1.0
+    #: Learning-rate multiplier for the sparse-gate parameters (`sparse_gate_*`), which own a
+    #: separate parameter group when this differs from 1.0. Measured: those gates' own
+    #: regulariser sits ~9 orders below the language-model gradient and Adam normalises the
+    #: summed gradient, so raising the regulariser's weight by 1e5 bought only 3.6x of gate
+    #: drift (docs/audit/00 A74). The group learning rate is the lever that actually scales with
+    #: how fast a gate can reach its pruning threshold; 1.0 keeps a single group and is
+    #: byte-identical to the previous behaviour.
+    sparse_gate_lr_multiplier: float = 1.0
     use_galore: bool = False
     galore_rank: int = 128
     galore_update_proj_gap: int = 200
@@ -816,36 +824,37 @@ class PiscesLxTrainingConfig:
                 _LOG.warning(f"Stage config declares unknown key '{section}.{key}' — "
                              "it is ignored; add the field or fix the spelling")
 
+    @staticmethod
+    def _apply_fields_to(target: Any, body: Dict[str, Any], section: str) -> None:
+        """Assign every key of ``body`` that is a real field of ``target``; warn about the rest.
+
+        The ``optimizer`` and ``scheduler`` sections were applied through hand-written
+        ``if "key" in body`` chains, so any field added after they were written was silently
+        dropped: a configuration that declared a knob got a run without it, with no warning
+        (docs/audit/00 A78) - the same failure the ``training`` section had, which is why both
+        now go through one implementation. A list value is converted to a tuple when the field
+        already holds one, so ``betas: [0.9, 0.999]`` keeps its declared type.
+        """
+        fields = getattr(type(target), "__dataclass_fields__", None)
+        if not fields:
+            return
+        for key, value in body.items():
+            if key not in fields:
+                _LOG.warning(f"Stage config declares unknown key '{section}.{key}' — "
+                             "it is ignored; add the field or fix the spelling")
+                continue
+            if isinstance(getattr(target, key, None), tuple) and isinstance(value, list):
+                value = tuple(value)
+            setattr(target, key, value)
+
     def _apply_stage_file_config(self, config: Dict[str, Any]):
         """Apply configuration from loaded stage file."""
         self._record_stage_declared_keys(config)
-        if "optimizer" in config:
-            opt = config["optimizer"]
-            if "learning_rate" in opt:
-                self.optimizer.learning_rate = opt["learning_rate"]
-            if "weight_decay" in opt:
-                self.optimizer.weight_decay = opt["weight_decay"]
-            if "betas" in opt:
-                self.optimizer.betas = tuple(opt["betas"])
-            if "eps" in opt:
-                self.optimizer.eps = opt["eps"]
-            if "max_grad_norm" in opt:
-                self.optimizer.max_grad_norm = float(opt["max_grad_norm"])
-            if "use_galore" in opt:
-                self.optimizer.use_galore = opt["use_galore"]
-            if "galore_rank" in opt:
-                self.optimizer.galore_rank = opt["galore_rank"]
-            if "galore_update_proj_gap" in opt:
-                self.optimizer.galore_update_proj_gap = opt["galore_update_proj_gap"]
-        
-        if "scheduler" in config:
-            sched = config["scheduler"]
-            if "warmup_ratio" in sched:
-                self.scheduler.warmup_ratio = sched["warmup_ratio"]
-            if "min_lr_ratio" in sched:
-                self.scheduler.min_lr_ratio = sched["min_lr_ratio"]
-            if "name" in sched:
-                self.scheduler.name = sched["name"]
+        if isinstance(config.get("optimizer"), dict):
+            self._apply_fields_to(self.optimizer, config["optimizer"], "optimizer")
+
+        if isinstance(config.get("scheduler"), dict):
+            self._apply_fields_to(self.scheduler, config["scheduler"], "scheduler")
         
         if "data" in config:
             data = config["data"]

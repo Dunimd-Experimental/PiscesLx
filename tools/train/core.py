@@ -1627,6 +1627,28 @@ class PiscesLxTrainingOperator(object):
         else:
             optimizer_class = torch.optim.AdamW
         
+        # Sparse gates may take their own parameter group so their learning rate can differ from
+        # the trunk's. Measured (docs/audit/00 A74): the sparsity regulariser's gradient is ~9
+        # orders below the language model's and Adam normalises the *sum*, so raising
+        # ``sparsity_reg_weight`` by 1e5 bought only 3.6x of gate drift - the weight is not the
+        # lever, the group learning rate is. The default 1.0 keeps one group, byte-identical.
+        multiplier = float(getattr(self.config.optimizer, "sparse_gate_lr_multiplier", 1.0) or 1.0)
+        if multiplier != 1.0:
+            gate_ids = {id(p) for name, p in self.model.named_parameters() if "sparse_gate" in name}
+            gates = [p for p in trainable_params if id(p) in gate_ids]
+            trunk = [p for p in trainable_params if id(p) not in gate_ids]
+            if gates and trunk:
+                gate_params = dict(default_params)
+                gate_params["lr"] = default_params["lr"] * multiplier
+                self.optimizer = optimizer_class([
+                    {"params": trunk, **default_params},
+                    {"params": gates, **gate_params},
+                ])
+                _LOG.info(
+                    f"Sparse-gate parameter group: {len(gates)} tensors at lr x{multiplier:g} "
+                    f"({default_params['lr'] * multiplier:g})")
+                return self.optimizer
+
         self.optimizer = optimizer_class(trainable_params, **default_params)
         _LOG.info(f"Fallback optimizer {self.optimizer.__class__.__name__} initialized")
         return self.optimizer
@@ -3045,11 +3067,32 @@ class PiscesLxTrainingOperator(object):
         
         # Load optimizer state
         if self.optimizer and checkpoint['optimizer_state_dict']:
-            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            recorded_groups = len(checkpoint['optimizer_state_dict'].get('param_groups', []))
+            current_groups = len(self.optimizer.param_groups)
+            if recorded_groups != current_groups:
+                # An optimiser topology change (e.g. declaring `sparse_gate_lr_multiplier`) makes
+                # the recorded moments meaningless for the new grouping - torch raises
+                # "different number of parameter groups" and the whole resume dies. The weights are
+                # already loaded at this point, so the honest behaviour is to keep them, drop the
+                # optimiser state and say so loudly: silently continuing would pretend the moments
+                # still apply.
+                _LOG.warning(
+                    f"Resume skipped the optimiser state: the checkpoint carries {recorded_groups} "
+                    f"parameter group(s) but this run has {current_groups}. Weights were loaded; "
+                    "the optimiser restarts from zero moments because the grouping changed.")
+            else:
+                self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         
         # Load scheduler state
         if self.scheduler and checkpoint['scheduler_state_dict']:
-            self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+            recorded_lrs = checkpoint['scheduler_state_dict'].get('base_lrs')
+            if isinstance(recorded_lrs, list) and len(recorded_lrs) != len(self.optimizer.param_groups):
+                _LOG.warning(
+                    f"Resume skipped the scheduler state: it carries {len(recorded_lrs)} base "
+                    f"learning rate(s) but this run has {len(self.optimizer.param_groups)} "
+                    "parameter group(s); the schedule restarts.")
+            else:
+                self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         
         # Restore training state
         self.global_step = checkpoint.get('global_step', 0)
