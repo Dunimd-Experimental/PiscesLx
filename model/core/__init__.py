@@ -248,7 +248,6 @@ from .subconscious import (
     YvFiLMGenerator,
 )
 
-from .ewc import YvEWC
 from .long_context import YvOOMBContext, YvREFORM
 
 __all__ = [
@@ -343,7 +342,6 @@ __all__ = [
     "YvStateCache",
     "YvFlashSSM",
 
-    "YvEWC",
     "YvOOMBContext",
     "YvREFORM",
 

@@ -720,7 +720,6 @@ class YvConfig:
     eg_mla_compression_ratio: float = 0.916
 
     # DuoAttention: Retrieval vs Streaming Heads
-    use_duo_attention: bool = False
     duo_attention_retrieval_ratio: float = 0.2
     duo_attention_buffer_size: int = 1024
 
@@ -738,7 +737,6 @@ class YvConfig:
     expert_evolution_decay: float = 0.99
 
     # EWC: Elastic Weight Consolidation
-    use_ewc: bool = True
     ewc_lambda: float = 1000.0
 
     # SEAL: Self-Adapting LLMs
@@ -756,7 +754,6 @@ class YvConfig:
     use_crv_verification: bool = True
 
     # SyncFusion: Audio-Video Synchronous Understanding
-    use_sync_fusion: bool = True
     sync_fusion_temporal_bins: int = 16
 
     # SparseSSM: Training-Free Mamba Pruning
@@ -1544,9 +1541,7 @@ class YvConfig:
             use_dual_inject=True,
             use_subconscious=True,
             use_eg_mla=True,
-            use_duo_attention=False,
             use_ttt_e2e=True,
-            use_ewc=True,
             use_dapo=True,
             use_expert_evolution=True,
             use_mamba3=True,
@@ -1574,9 +1569,7 @@ class YvConfig:
             use_dual_inject=True,
             use_subconscious=True,
             use_eg_mla=False,
-            use_duo_attention=False,
             use_ttt_e2e=False,
-            use_ewc=False,
             use_dapo=False,
             use_expert_evolution=False,
             use_mamba3=False,

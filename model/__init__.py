@@ -276,7 +276,6 @@ from .utils import (
 )
 
 from .core import (
-    YvEWC,
     YvOOMBContext,
     YvREFORM,
     YvDualInjector,
@@ -285,7 +284,6 @@ from .core import (
 from .reasoning.ttt_e2e import YvTestTimeTrainer
 from .reasoning.self_evolution import YvSEAL, YvAgenticEvolution, YvSOLAR
 from .reasoning.verification import YvCRV, YvOTV, YvARES
-from .multimodal.sync_fusion import YvSyncFusion, YvCoupledMambaFusion
 
 __all__ = [
     "YvConfig",
@@ -434,7 +432,6 @@ __all__ = [
     "YvQuantizationConfig",
     "YvQuantizationType",
 
-    "YvEWC",
     "YvOOMBContext",
     "YvREFORM",
 
@@ -447,6 +444,4 @@ __all__ = [
     "YvCRV",
     "YvOTV",
     "YvARES",
-    "YvSyncFusion",
-    "YvCoupledMambaFusion",
 ]
