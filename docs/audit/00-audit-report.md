@@ -2198,3 +2198,39 @@ model card 会被拦下。规则把它们当成硬编码路径，等于惩罚那
 `tools/test/test_hub_publish_contract` 仍 **6/6**（`hub.blocks_local_path_leak` 依旧报出泄漏，
 即防泄漏能力未被削弱）。剩余 3880 = `NO-MAGIC-NUMBER` 3698 + `NO-SILENT-EXCEPT` 182
 （历史存量，各自需逐处判定，非本轮范围）。
+
+---
+
+## 73 · A81：P0 规则 `ENGINE-NO-EXTERNAL-MODEL` 是"沉默的绿"——它漏掉了最直接的违规形式
+
+**发现过程（阳性对照）**：该规则在真实仓库上报 0 命中，而 AGENTS.md §7 明确要求
+"引擎不得接入其他模型这一条要有可机检证据"。为了区分"干净"与"从不触发"，
+在 `model/` 下放了一个探针文件（`from transformers import LlamaForCausalLM`）并
+`git add` 后再跑 —— **规则一声不响**。
+
+**根因**：规则用了两套互不同步的清单。
+`_EXTERNAL_LOADERS` 正则里写着 `GPT2LMHeadModel|LlamaForCausalLM|Qwen2ForCausalLM|MistralForCausalLM`，
+但 `ImportFrom` 分支只查集合 `_LOADER_NAMES`，而该集合**只有 `Auto*` 系列**：
+
+```python
+_LOADER_NAMES = {"AutoModel", "AutoModelForCausalLM", "AutoModelForSeq2SeqLM",
+                 "AutoModelForCausalLMWithLMHead", "AutoImageProcessor"}
+```
+
+于是 `from transformers import LlamaForCausalLM` —— **把引擎接到别人模型上最直接的那条路**
+—— 静默通过。任何 `AutoModel*` 与 `from_pretrained(...)` 仍被拦住，所以该规则看起来"在工作"。
+
+**修法**：把具体第三方模型类补进 `_LOADER_NAMES`（并注明两处清单必须同步）：
+`GPT2LMHeadModel`、`LlamaForCausalLM`/`LlamaForSequenceClassification`、
+`Qwen2/Qwen2Moe/Qwen3ForCausalLM`、`MistralForCausalLM`、`MixtralForCausalLM`、
+`Deepseek[V2|V3]ForCausalLM`、`ChatGLMForConditionalGeneration`、`BaichuanForCausalLM`、
+`Gemma/Gemma2/Phi/Phi3/InternLM2/Yi/Bloom/OPTForCausalLM`。
+
+**验证（两边都做）**：
+- **阳性对照现在命中**：`model/_probe_engine_isolation.py:28: engine imports external
+  loader(s) ['LlamaForCausalLM'] from 'transformers' — forbidden inside model/train/infer engines`；
+- **干净树上仍 0 命中、errors 不变（3880）** ⇒ 本仓库**确实没有**引擎内的具体外部模型导入，
+  这条 P0 主张至此**有生效的机检证据**（此前只是规则沉默）。
+
+**教训（与 A71、以及本轮两次"检查断言写错"同族）**：**规则的 0 命中必须先用阳性对照验证，
+才能当成干净** —— "命令能跑"不等于"命令在查"，"没报错"不等于"没问题"。

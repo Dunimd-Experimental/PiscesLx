@@ -741,6 +741,18 @@ class PiscesLxEngineIsolationCheck(PiscesLxStandardCheck):
     _LOADER_NAMES = frozenset({
         "AutoModel", "AutoModelForCausalLM", "AutoModelForSeq2SeqLM",
         "AutoModelForCausalLMWithLMHead", "AutoImageProcessor",
+        # The concrete third-party classes were missing here while the regex above already named
+        # them, so `from transformers import LlamaForCausalLM` - the most direct way to couple the
+        # engine to someone else's model - passed silently. Verified by positive control: a probe
+        # file under model/ importing LlamaForCausalLM produced no violation before this set was
+        # widened (docs/audit/00 A81). Keep this list and _EXTERNAL_LOADERS in step.
+        "GPT2LMHeadModel", "LlamaForCausalLM", "LlamaForSequenceClassification",
+        "Qwen2ForCausalLM", "Qwen2MoeForCausalLM", "Qwen3ForCausalLM",
+        "MistralForCausalLM", "MixtralForCausalLM",
+        "DeepseekForCausalLM", "DeepseekV2ForCausalLM", "DeepseekV3ForCausalLM",
+        "ChatGLMForConditionalGeneration", "BaichuanForCausalLM",
+        "GemmaForCausalLM", "Gemma2ForCausalLM", "PhiForCausalLM", "Phi3ForCausalLM",
+        "InternLM2ForCausalLM", "YiForCausalLM", "BloomForCausalLM", "OPTForCausalLM",
     })
 
     @classmethod
