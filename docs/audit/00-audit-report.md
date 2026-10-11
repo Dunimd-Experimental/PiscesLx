@@ -2256,3 +2256,34 @@ _LOADER_NAMES = {"AutoModel", "AutoModelForCausalLM", "AutoModelForSeq2SeqLM",
 A71（验收命令本身 ModuleNotFoundError、用 `-m` 才跑得起来，所以长期没人发现）、
 A81（规则漏掉最直接的违规形式）、以及我两次把"检查断言的期望值"写错从而把正确实现判成 FAIL。
 **"命令能跑"≠"命令在查"；"没报错"≠"没问题"。**
+
+**阳性对照全表（本轮，探针入 `model/` 或 `tools/` → 跑检查器 → 当场删除 → `git status` 确认干净）**
+
+三批探针共覆盖 **18 条规则确认有牙**，1 条发现漏检并修复（A81）：
+
+| 批 | 规则 | 探针触发物 | 结果 |
+|---|---|---|---|
+| A | `ENGINE-NO-EXTERNAL-MODEL` | `from transformers import AutoModel` / `"Qwen/Qwen-7B"` | 命中 ×2（修前对 `LlamaForCausalLM` 不响应） |
+| A | `LOGGING-DMSC-ONLY` | `import logging` | 命中 |
+| A | `MODALITY-4-NO-DOCUMENT` | `"YvDocEncoder"` | 命中 |
+| A | `NAMING-FORBIDDEN-PREFIX` | `class PiscesLxMultiRuleProbe`（在 model/ 内） | 命中 |
+| A | `NO-HARDCODED-DEVICE` | `DEVICE = "cuda:0"` | 命中 |
+| A | `NO-HARDCODED-MODEL-ID` | `MODEL_ID = "Qwen/Qwen-7B"` | 命中 |
+| A | `NO-STUB-NOR-TODO` | `raise NotImplementedError(...)` | 命中 |
+| B | `CLEAN-ENTA-ENCRE` | 字符串 `Encre` | 命中 |
+| B | `CLEAN-WATERMARK` | 字符串 `watermark` | 命中 ×2 |
+| B | `NAMING-MODEL-YV` | `class BadNameProbe`（在 model/ 内） | 命中 |
+| B | `NO-DETACHED-SCALAR-PARAM` | `x * float(self.scale)`（Parameter） | 命中 |
+| C | `CLEAN-MCP-SERVICE-LAYER` | 字符串 `mcp_server` | 命中 |
+| C | `MODALITY-4-NO-AGENT` | `"YvAgenticEncoder"` | 命中 |
+| C | `NAMING-OUTSIDE-PISCESLX` | `class WrongPrefixOutside`（tools/ 内） | 命中 |
+| 早前 | `NO-DANGLING-IMPORT` | `from model.core.this_module_does_not_exist import …` | 命中 |
+| 早前 | `EXPOSE-CLASSES-ONLY` | 模块顶层 `def bare_helper(...)` | 命中 |
+| 早前 | `NO-HARDCODED-PATH` | 4 例真/假路径 | 4/4 判对 |
+| 早前 | `HEADER-VERBATIM` | 许可证头小写 `you` | 命中（修掉该笔误） |
+| 有命中即自证 | `NO-MAGIC-NUMBER` / `NO-SILENT-EXCEPT` / `NO-DEAD-CONFIG-FIELD` / `NO-UNDECLARED-CONFIG-READ` | 历史命中/归零过程 | 均曾报出过命中 |
+
+**尚未做定向对照的 2 条**（诚实列出，**不**断言其失效）：
+`NAME-PISCESL1-PISCESLX`（我的探针用字符串 `"Pisces"` 未触发 —— 可能该规则只查标识符/类名而非字符串，
+需按其实现另设探针）与 `NO-DANGLING-EXPORT`（需构造"`__all__` 里的名字无绑定"的包场景，
+改 `__init__.py` 有污染风险，留待专门的临时包）。
