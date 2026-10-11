@@ -288,10 +288,10 @@ class PiscesLxTrainingOperator(object):
         # presets set bf16 regardless of device, so a "measured throughput" could silently
         # describe neither tier. A contradiction here is fatal rather than a warning, because
         # every P1 metric is a throughput number (model/host_tier.py, docs/audit/00 §42).
-        self.host_tier = YvHostTierResolver.enforce(self.config.model_config
-                                                    if getattr(self.config, "model_config", None)
-                                                    else self.config,
-                                                    device=self.device)
+        # Fed the *stage* config: `training:` declares mixed_precision/flash_attention as this
+        # run will execute them, whereas a model-config preset is device-agnostic and describes
+        # nothing (run30b: `--config` ignored that section, `--train_config` resolved the tier).
+        self.host_tier = YvHostTierResolver.enforce(self.config, device=self.device)
         _LOG.info(f"Host tier resolved: {self.host_tier.describe()}")
 
         self._setup_mixed_precision()
@@ -681,6 +681,19 @@ class PiscesLxTrainingOperator(object):
         )
         return False
 
+    @staticmethod
+    def _declared(section, key: str, fallback):
+        """Read a declared optimiser setting from a section that may be a mapping.
+
+        The model configuration's ``ink_optimizer`` block arrives as a dict parsed from YAML,
+        while other sections are objects; a plain ``getattr`` on a dict silently returns the
+        fallback, which is exactly how twelve tiers' declared bit-widths went unread
+        (docs/audit/00 §47).
+        """
+        if isinstance(section, dict):
+            return section.get(key, fallback)
+        return getattr(section, key, fallback)
+
     def reserve_host_memory_for_build(self) -> None:
         """Refuse to start a model build that cannot fit in the declared budget."""
         if not self._memory_budget.enabled():
@@ -786,6 +799,12 @@ class PiscesLxTrainingOperator(object):
                 _LOG.info("Model fits in CPU RAM, using CPU→quantize→GPU→FSDP path")
             else:
                 _LOG.info("Model too large for CPU, using meta device→FSDP materialization path")
+
+        # The host-memory gate runs *before* any `model_class(**kwargs)` call: constructing a
+        # model is the native allocation, so a guard placed after it can only report the
+        # crash it was meant to prevent (a 3.00 GB declared budget against 0.36 GB of free
+        # commit once died with `DefaultCPUAllocator: not enough memory` — docs/audit A25).
+        self.reserve_host_memory_for_build()
 
         # Step 2a: handle CPU init path cache load (non-meta, quant+lora)
         cache_path = None
@@ -1628,12 +1647,14 @@ class PiscesLxTrainingOperator(object):
             # signed absmax on a heavy-tailed, non-negative state is what collapsed
             # 61% of the variance entries to exactly zero (docs/audit/00 §29).
             ink_defaults = PiscesLxInkConfig()
-            sparse_ratio = float(getattr(ink_section, 'sparse_ratio', ink_defaults.sparse_ratio))
-            gradient_sparse = float(getattr(ink_section, 'gradient_sparse_ratio',
+            sparse_ratio = float(self._declared(ink_section, 'sparse_ratio', ink_defaults.sparse_ratio))
+            gradient_sparse = float(self._declared(ink_section, 'gradient_sparse_ratio',
                                             ink_defaults.gradient_sparse_ratio))
-            momentum_bits = int(getattr(ink_section, 'momentum_bits', ink_defaults.momentum_bits))
-            variance_bits = int(getattr(ink_section, 'variance_bits', ink_defaults.variance_bits))
-            galore_rank = int(getattr(ink_section, 'galore_rank', ink_defaults.galore_rank))
+            momentum_bits = int(self._declared(ink_section, 'momentum_bits', ink_defaults.momentum_bits))
+            variance_bits = int(self._declared(ink_section, 'variance_bits', ink_defaults.variance_bits))
+            galore_rank = int(self._declared(ink_section, 'galore_rank', ink_defaults.galore_rank))
+            num_update_blocks = int(self._declared(ink_section, 'num_update_blocks',
+                                         ink_defaults.num_update_blocks))
             
             ink_config = PiscesLxInkConfig(
                 lr=self.config.optimizer.learning_rate,
@@ -1642,40 +1663,41 @@ class PiscesLxTrainingOperator(object):
                 eps=self.config.optimizer.eps,
                 max_grad_norm=getattr(self.config.optimizer, 'max_grad_norm', 1.0),
                 momentum_bits=momentum_bits,
-                momentum_block_size=getattr(ink_section, 'momentum_block_size', 256),
+                momentum_block_size=self._declared(ink_section, 'momentum_block_size', 256),
                 variance_bits=variance_bits,
-                variance_block_size=getattr(ink_section, 'variance_block_size', 256),
+                variance_block_size=self._declared(ink_section, 'variance_block_size', 256),
                 sparse_ratio=sparse_ratio,
-                sparse_warmup_steps=int(getattr(ink_section, 'sparse_warmup_steps', ink_defaults.sparse_warmup_steps)),
+                sparse_warmup_steps=int(self._declared(ink_section, 'sparse_warmup_steps', ink_defaults.sparse_warmup_steps)),
                 sparse_adaptive=True,
-                ortho_momentum=getattr(ink_section, 'ortho_momentum', 0.9),
+                ortho_momentum=self._declared(ink_section, 'ortho_momentum', 0.9),
+                num_update_blocks=num_update_blocks,
                 galore_rank=galore_rank,
-                galore_update_proj_gap=getattr(ink_section, 'galore_update_proj_gap', 200),
-                galore_quantization_bits=getattr(ink_section, 'galore_quantization_bits', 8),
+                galore_update_proj_gap=self._declared(ink_section, 'galore_update_proj_gap', 200),
+                galore_quantization_bits=self._declared(ink_section, 'galore_quantization_bits', 8),
                 galore_min_rank=max(8, galore_rank // 4),
                 galore_max_rank=galore_rank * 2,
-                galore_rank_adapt_interval=getattr(ink_section, 'galore_rank_adapt_interval', 1000),
-                galore_rank_adapt_threshold=getattr(ink_section, 'galore_rank_adapt_threshold', 0.1),
-                galore_memory_efficient=getattr(ink_section, 'galore_memory_efficient', True),
-                galore_moe_expert_only=getattr(ink_section, 'galore_moe_expert_only', False),
-                fp4_block_size=getattr(ink_section, 'fp4_block_size', 16),
-                fp4_stochastic_rounding=getattr(ink_section, 'fp4_stochastic_rounding', True),
-                fp4_master_weights_dtype=getattr(ink_section, 'fp4_master_weights_dtype', 'fp32'),
-                root_ortho_steps=getattr(ink_section, 'root_ortho_steps', 5),
-                root_soft_threshold=getattr(ink_section, 'root_soft_threshold', 0.1),
-                root_spectral_norm_clip=getattr(ink_section, 'root_spectral_norm_clip', 1.0),
-                root_min_dim_for_ortho=getattr(ink_section, 'root_min_dim_for_ortho', 16),
-                gradient_bits=getattr(ink_section, 'gradient_bits', 8),
-                gradient_block_size=getattr(ink_section, 'gradient_block_size', 128),
+                galore_rank_adapt_interval=self._declared(ink_section, 'galore_rank_adapt_interval', 1000),
+                galore_rank_adapt_threshold=self._declared(ink_section, 'galore_rank_adapt_threshold', 0.1),
+                galore_memory_efficient=self._declared(ink_section, 'galore_memory_efficient', True),
+                galore_moe_expert_only=self._declared(ink_section, 'galore_moe_expert_only', False),
+                fp4_block_size=self._declared(ink_section, 'fp4_block_size', 16),
+                fp4_stochastic_rounding=self._declared(ink_section, 'fp4_stochastic_rounding', True),
+                fp4_master_weights_dtype=self._declared(ink_section, 'fp4_master_weights_dtype', 'fp32'),
+                root_ortho_steps=self._declared(ink_section, 'root_ortho_steps', 5),
+                root_soft_threshold=self._declared(ink_section, 'root_soft_threshold', 0.1),
+                root_spectral_norm_clip=self._declared(ink_section, 'root_spectral_norm_clip', 1.0),
+                root_min_dim_for_ortho=self._declared(ink_section, 'root_min_dim_for_ortho', 16),
+                gradient_bits=self._declared(ink_section, 'gradient_bits', 8),
+                gradient_block_size=self._declared(ink_section, 'gradient_block_size', 128),
                 gradient_sparse_ratio=gradient_sparse,
-                kv_cache_bits=getattr(ink_section, 'kv_cache_bits', 8),
-                kv_cache_block_size=getattr(ink_section, 'kv_cache_block_size', 64),
-                max_experts_on_gpu=int(getattr(ink_section, 'max_experts_on_gpu', ink_defaults.max_experts_on_gpu)),
-                moe_offload_threshold=getattr(ink_section, 'moe_offload_threshold', 0.8),
-                moe_lru_cache_size=getattr(ink_section, 'moe_lru_cache_size', 8),
-                checkpoint_transformer=getattr(ink_section, 'checkpoint_transformer', True),
-                checkpoint_ratio=float(getattr(ink_section, 'checkpoint_ratio', ink_defaults.checkpoint_ratio)),
-                checkpoint_preserve_ratio=getattr(ink_section, 'checkpoint_preserve_ratio', 0.3),
+                kv_cache_bits=self._declared(ink_section, 'kv_cache_bits', 8),
+                kv_cache_block_size=self._declared(ink_section, 'kv_cache_block_size', 64),
+                max_experts_on_gpu=int(self._declared(ink_section, 'max_experts_on_gpu', ink_defaults.max_experts_on_gpu)),
+                moe_offload_threshold=self._declared(ink_section, 'moe_offload_threshold', 0.8),
+                moe_lru_cache_size=self._declared(ink_section, 'moe_lru_cache_size', 8),
+                checkpoint_transformer=self._declared(ink_section, 'checkpoint_transformer', True),
+                checkpoint_ratio=float(self._declared(ink_section, 'checkpoint_ratio', ink_defaults.checkpoint_ratio)),
+                checkpoint_preserve_ratio=self._declared(ink_section, 'checkpoint_preserve_ratio', 0.3),
             )
 
             self.optimizer = PiscesLxInkOptimizer(trainable_params, config=ink_config)
@@ -1907,6 +1929,26 @@ class PiscesLxTrainingOperator(object):
         outputs = self._call_training_model(self.model, **model_batch)
         if self.response_only_loss and 'response_mask' in model_batch:
             outputs['loss'] = self._apply_response_mask_loss(outputs, model_batch)
+            self._reattach_auxiliary_objective(outputs)
+        return outputs
+
+    def _reattach_auxiliary_objective(self, outputs: Dict[str, Any]) -> Dict[str, Any]:
+        """Put the model's auxiliary losses back after a stage that recomputed ``loss``.
+
+        ``YvModel.forward`` already folds the summed MoE routing/balance (and sparsity) terms
+        into ``outputs['loss']``. Stages that recompute the loss from logits — response
+        masking, SFT masking — would otherwise drop that term a second time, which is how the
+        balance gradient stayed disconnected even after the forward was fixed
+        (docs/audit A67). Idempotent: only called where ``loss`` was replaced.
+        """
+        aux = outputs.get('aux_loss')
+        loss = outputs.get('loss')
+        model_config = getattr(self.model, 'config', None)
+        aux_free = bool(getattr(model_config, 'moe_aux_loss_free', True))
+        weight = float(getattr(model_config, 'moe_aux_loss_weight', 1.0))
+        if (not aux_free and isinstance(aux, torch.Tensor) and aux.requires_grad
+                and isinstance(loss, torch.Tensor) and weight != 0.0):
+            outputs['loss'] = loss + weight * aux
         return outputs
 
     def _prepare_model_batch(self, batch: Dict[str, Any]) -> Dict[str, Any]:
@@ -2143,7 +2185,7 @@ class PiscesLxTrainingOperator(object):
                 token_positions = torch.arange(prompt_mask.shape[1], device=prompt_mask.device).unsqueeze(0)
                 prompt_mask = prompt_mask.masked_fill(token_positions < cutoff.unsqueeze(1), 0)
             outputs['loss'] = self._compute_masked_lm_loss(outputs, labels, prompt_mask)
-        
+        self._reattach_auxiliary_objective(outputs)
         return outputs
     
     def _apply_response_mask_loss(self, outputs: Dict[str, Any], batch: Dict[str, torch.Tensor]) -> torch.Tensor:

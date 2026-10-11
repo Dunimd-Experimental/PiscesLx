@@ -1277,3 +1277,365 @@ CPU 上拒 bf16 与 flash、Turing 上拒 bf16、sm_90 上全放行、
 2. 对这 45 个提交做**本地历史清洗**（把明文换成指针），未推送过所以外泄面仍为零，代价是改写历史（AGENTS 需批准）；
 3. **轮换密码**后把新值移出仓库（`.pisceslx/` 已被忽略，或环境变量），历史里的旧值作废；
 4. 只推私有的 `*-exp` 并明文入库 —— 风险最低但把口令长期留在 git 历史里，不推荐。
+
+## 45 · 权重双平台上传实现（铁律 3 的一半此前是空的）
+
+`tools/publish` 原先只有 Docker 镜像的 export/build/push，"权重上 Hugging Face + ModelScope"
+在仓库里**没有任何实现**。补上：
+
+- `tools/publish/hub.py`：`PiscesLxHubConfig`（两个仓 id、revision、是否随附 tokenizer）+
+  `PiscesLxModelHubPublisher.plan/publish`。**默认 dry-run**——上传打错目标不可廉价回滚；
+  `--publish` 才真上传。凭据只从环境变量 `HUGGINGFACE_TOKEN` / `MODELSCOPE_API_TOKEN` 读，
+  `credentials()` 只报布尔值、**永不返回 token 内容**；无凭据时直接拒发而不是半途上传统一。
+- 防泄露两条硬规则：随附的 `.md/.yaml/.json` 若含本地绝对路径（`C:\Users\`、`/home/` 等）**拒绝发布**；
+  上传用各家 SDK，缺 SDK 就报错，**不手搓 HTTP**（两个仓的 revision 语义不同）。
+- CLI 接线：`hub` 子命令进 `create_parser` 与 `main` 的 commands 分派表，避免成为死代码。
+
+**实测**：`python -m tools.publish.cli hub --checkpoint E:/pisceslx-coverage/ckpt/final_model.pt
+--model_config configs/model/0.01B.yaml` 列出 4 个文件、252,910,748 B、双仓目标，
+上传状态为 `skipped (dry-run)`；不存在的权重如实拒绝。
+新契约套件 `tools/test/test_hub_publish_contract.py` 6/6，
+其中一条把"源码备份不含权重"变成可复核断言（`git ls-files` 内无任何 `.pt/.safetensors/.bin`）。
+`manage.py test --stage 10` 增至 **10/10**；静态违规 4029 / 6。
+
+**过程中的自我纠正**：`blocks_local_path_leak` 首次失败并不是检测没生效——异常**确实抛了**，
+失败在我的断言与错误信息里列表 repr 的二次转义不匹配。选择修**源头的信息写法**
+（`' and '.join(leaked)`，对人更好读）而不是放宽断言，避免把真检测改松。
+
+## 47 · 又一层"声明未接线"：12 份模型 YAML 的 `ink_optimizer` 段此前从未被读到
+
+**发现路径**：为 A4 收口而排查多任务引用时顺带查到 `YvConfig` 的 Ink 字段是**扁平**的
+（`ink_momentum_bits` / `ink_variance_bits` / `ink_sparse_ratio`），而所有模型 YAML 写的是
+**嵌套段** `ink_optimizer:`；训练器一侧写的是
+`ink_section = getattr(self.config, 'ink_optimizer', None) or self.config`，
+其中 `self.config` 是**训练配置**，它没有这个字段 → `ink_section` 落到训练配置本身，
+于是 33 处 `getattr(ink_section, 'variance_bits', …)` 全部命中兜底值。
+更糟的是即便把 YAML 的 dict 传进来，`getattr(dict, 'key')` 也只会静默返回兜底 ——
+所以这条链上有两处会"看起来在工作、实际读默认值"。
+结论：**十二档的声明位宽/稀疏率/galore_rank/max_experts 全是死配置**，
+§30 我只说到"代码按规模改写声明值"，低估了范围：声明根本没到这里。
+
+**修复（三环，每环都可测）**：
+1. `PiscesLxTrainingConfig.ink_optimizer: Dict[str, Any]` —— 段有了落脚处；
+2. `orchestrator._apply_model_ink_config(raw_model_cfg)` —— 从模型文件把段搬到训练配置（两条建模路径都调）；
+3. `PiscesLxTrainingOperator._declared(section, key, fallback)` —— 映射与对象**都**能读，
+   33 处调用点统一改用它（`getattr` 对 dict 静默兜底的行为被彻底移除）。
+
+**证据**：新机器测试 `tools/test/test_ink_declaration_chain.py` **4/4**，逐环断言
+（YAML 确有声明 → 读取器两种形态都对 → 训练配置带得上 → 解析结果等于声明值而非 dataclass 默认：
+`momentum_bits=8 variance_bits=8 sparse_ratio=0.01 galore_rank=80`）。
+`manage.py test --stage 10` 增至 **11/11**；静态违规 `tools/check` 实测 **4026 errors / 6 warnings**（本轮起点 4032，A4 删除死文件后曾降到 4025，新文件净增 1）。
+夜间 0.1B 起训时将首次真正使用各档自己声明的优化器设置。
+
+**A4 同步收口**：删除 `opss/train/multitask.py`（486 行）。可达性三条独立证据：
+无任何 `import`；不在 `opss/train/__init__.py` 的惰性导出表里；注册与使用的是
+`tools/train/pipeline.py::PiscesLxMultiTaskTrainingOperator`（注意大小写不同，此前把两者混为一谈过）。
+其自带的 `zero_grad/backward/optimizer.step` 第二训练循环随之消失。
+**不静默遗忘的代价**：该文件里的 `PiscesLxMultitaskDataset`（多任务交织数据集）是唯一有价值、
+且当前活轨道没有的东西 —— 登记到阶段 4：真实多任务训练要在 `multitask_uncertainty` 那条轨上重建它，
+而不是把死文件复活。
+
+## 48 · 更正 A5（不是冗余双轨），并登记一个更实质的缺陷 A21：寻址码本从不学习
+
+**A5 撤回"双轨冗余"的定性**。实测 0.01B 层一次前向反传后：
+`dual_injector.subconscious.router.output_proj.weight`（6,609,990 元素）**有梯度**（max|g|=3.596e+02），
+legacy subconscious 14 个张量里 9 个带梯度；而 SBF `block_field` 走的是块读取/注入。
+两者职责不同——前者产生 FiLM 条件化（`get_film_params` → 主干 `film_params` → `YvFiLMModulation`），
+后者按块调取知识域权重——不是同一机制的两份实现。§13 里"同一 state_dict 两套 router 参数即冗余"
+的说法据此**撤销**；真正的重叠问题另有其人（见 §39 的两份 `thinking_head`）。
+
+**A21（新发现，优先级高）**：`model/core/block_addresser.py:157`
+`self.traces = nn.Parameter(randn(trace_count, trace_dim) * 0.02)` 是**可学习码本**
+（`raw = query @ self.traces.T` 用于寻址，另处 `einsum("btk,nk->btn", query, self.traces)`），
+实测 `block_field` 的 2 个张量、177,152 个元素**全部 `grad is None`**。
+也就是说：**共振残迹寻址的码本从不更新**，寻址打分永远停在随机初始化 + 滞回/驻留偏置上。
+这直接动摇铁律 2 的"查算分离是模型自身权重且被训练"——池内块权重确实在训练
+（实测 `knowledge` 1,048,576 元素 `with_grad=1`、MoE `experts` 30/30 有梯度），
+但**决定"调哪一块"的那部分不训练**。
+
+根因形状清楚：top-k 选块走的是索引（argmax），打分本身不在 loss 通路上，
+所以码本拿不到梯度。修法必须是**设计而不是补丁**——需要一个让码本对齐查询分布的可微目标
+（commitment/InfoNCE 一类），并按 §8 附证明与 §7 附机检（例如"训练后 `block_field.addresser.traces`
+必须出现在被更新张量集合里"作为验收断言）。因此登记在册，不在白天草率实现。
+
+> **§48 后续更正（同日，2026-10-11）**：上面那句"commitment/InfoNCE 一类"**是错的猜想，已被实测否证**。
+> (1) 把对齐项折进 `total_aux_loss` 后，`aux_loss` 由 2.27 抬到 26.17 而 `traces.grad` 仍为 `None`——
+> 该桶只被报告、从不进 `loss = lm_loss + reasoner_loss` 的真实组合点（MoE 辅助项之所以仍在训练，
+> 是 `tools/train/core.py:2549` 从 MoE 算子另走一条收集通路）；(2) 即便接通，
+> `CE(softmax(s), argmax s)` 的梯度 `p − onehot(c)` 与"这块是否真的有用"无关，属自指放大，
+> 其退化固定点是一个块吃掉全部 query，反而破坏"被激活的知识块参与训练"。
+> **实际交付的机制是直通门**：`block_field._straight_through_gate` 令注入 `h' = h + g·Δ`，
+> `g = 1 + (p_c − stopgrad(p_c))`；值恒为 1（前向逐位不变，推理不构造该门），
+> 梯度是软选择在硬点处的路径级梯度 `⟨∂L/∂h', Δ⟩·p_c(1[n=c] − p_n)`，
+> 符号由 LM loss 对该块调制的满意度决定，无新超参，幅度由 Theorem 5 的 `κ = α(γ_max+c)` 界定。
+> 真软选择需读 628 块 ≈ 6.9e11 FLOPs/token（≈主干 500×），故门是该族里唯一满足检索预算的成员。
+> 证明：`docs/proofs/03-trace-codebook-straight-through.md`；机检：`tools/test/test_sbf_addressing_gradient.py`
+> 8/8（含阴性对照"去掉门 → `traces.grad is None`"），已计入 `manage.py test --stage 10`（现 12/12）。
+> 半成品的 `alignment_loss` 与 `sbf_alignment_weight` 已删除，不留新旧并存。
+> **A21 据此在机制层关闭**；端到端断言（真实 checkpoint 的"被更新张量集合"里必须出现
+> `block_field.addresser.traces`）**尚未取得证据**，其取证条件与已知的三个阻断缺陷（A23 旗标静默半忽略、
+> A24 致命错误 exit 0、A25 内存闸门在 3.0GB/0.36GB 组合下未拒绝建模）一并登记在
+> `docs/iterations/2026-10-11-a21-trace-codebook-straight-through.md`（追加状态与 A25 取证两节）。
+
+**顺带澄清的一个数量问题**：0.01B 层 44.10M 元素中，两个 `thinking_head.weight` 各 9,705,344，
+合计 **44%**，与主干 tied embedding 同形同宽；因当前语料无推理 span 标注而梯度为 0
+（见 §33 的定性），这既是 §9 禁止的功能重叠，也是阶段 4 数据必须带上 span 标注的理由。
+
+## 49 · 检查器不再自我命中：warnings 归零，NO-STUB 清零；两处路径字面量留档
+
+`NO-STUB-NOR-TODO` 剩下的 6 处**全部在 `tools/check/checks_style.py` 自己身上**：规则的模式表
+（`\bFIXME\b`）、`_DEFERRED_LANGUAGE` 正则正文、违规消息字符串本身、以及解释抽象契约的
+docstring 里的 `raise NotImplementedError`。也就是说规则在检查自己定义检查什么的地方。
+处置是**窄而显式的自免**（只免这一个模块，注释写明理由，比照 AGENTS §4.3 的 stdlib-logging
+白名单先例），而不是放宽匹配逻辑；`tools/check/` 其余文件与其它一切路径仍照查。
+结果：`NO-STUB-NOR-TODO` 6 → **0**，`warnings` 6 → **0**，`errors` 4029 → **4026**。
+
+**新引入的 2 处 `NO-HARDCODED-PATH` 不掩盖**：`tools/publish/hub.py:53` 与
+`tools/test/test_hub_publish_contract.py:135` 里的 `C:\Users\` 是**泄露检测签名**，
+不是用来访问文件系统的路径；检查器无法从字面上区分这两者。我没有为它加白名单
+（那会让规则漏掉真的硬编码路径），而是留此记录：若要消掉，正确做法是让检查器只把
+出现在 I/O 调用实参位置的字面量当作硬编码路径，而不是任何字符串。
+
+## 50 · 模型本体两处改动：RPI 初始化（已实现）+ A67 辅助损失接线（含反例）
+
+**一、RPI 共振配对初始化（`docs/design/10`，实现 `YvSubconsciousBlockField.paired_initialize`）**
+寻址码本 `traces` 与块内容 `memory` 原是两个独立随机抽取，step 0 的"哪块命中"与"哪块做什么"
+毫无相关。现在 trace 写成块自身贡献方向在寻址度量下的最小二乘代表：
+
+```
+u_i = W_out · mean_j LN(mem_j)          R̃_i = (W Wᵀ)⁺ W u_i          R_i = (ρ/rms)·R̃_i
+```
+
+`<W h, R_i> = (ρ/rms)·<h, P u_i>`（`P` 为到 `row(W)` 的正交投影）——step 0 的寻址排序**就是**
+内容排序的被投影像。实测（`test_sbf_paired_init_contract`，7/7；`--stage 10` 13/13）：
+恒等式偏差 1.2e−6；`k=d` 时 Kendall τ = **1.000**（随机 trace 对照 −0.010）。
+**踩到的第一个反例**：最初对每个 trace 单独单位化，`1/‖R̃_i‖` 这个逐块因子把排序打乱，τ 掉到 0.865；
+改为全局唯一缩放后回到 1.000。**任何逐块归一化都会破坏"分数全局可比"。**
+**新设计律**：对齐精度由 `k/d` 决定，`τ ≈ (2/π)arcsin(√(k/d))`；要 `τ≥0.6` 需 `k/d≥0.65`。
+`block_trace_dim` 现固定 256，而 7B 的 `d=4096` → `k/d=0.0625` → 预期 τ≈0.11，
+**RPI 在旗舰档几乎不起作用**；修正方向是让 `k` 随 `d` 放大到 ≈0.65d（4096→~2700，trace 常驻
+仅 628×2700≈1.7M 元素≈3.4MB）。已登记为阶段 6 的必改项。
+**RPI 改为惰性**：初始版本在 `__init__` 里执行，会立刻物化一个块（满配 0.5B 参数），
+实测触发 `DefaultCPUAllocator: not enough memory: 1998897152 bytes`；改为首次前向时执行
+（`_ensure_paired`），仍早于任何优化器步，且不新建任何参数。
+
+**二、A67 复核与接线（结论与最初判断不同，以此为准）**
+`model/core/model.py` 把 `total_aux_loss` 只放在独立键 `aux_loss` 上，**从未并入被优化的 `loss`**
+——每个 block 的 `routing_loss = alpha*balance + z_loss`、`sparsity_loss`、`phi`、`lr/mod` 全是摆设，
+"MoE 负载 CV ≤ 0.3" 背后没有任何机制。已改为在 `loss` 里并入（`moe_aux_loss_weight` 单一系数），
+并在训练器两条**重算 loss** 的分支（response-mask / SFT-mask）后调 `_reattach_auxiliary_objective`
+补回，否则会被第二次丢掉。
+
+**但直接把这一坨按权重 1.0 并进去会摧毁训练**，实测（0.01B，2 层，4 专家）训练态：
+
+| 量 | 值 |
+|----|----|
+| `aux_loss`（训练态） | **749.27** |
+| `lm_loss` | 6.59 |
+| 比值 | **113×** |
+| `aux_loss`（eval 态） | 0.020 |
+
+即训练态的辅助项由**只在训练期生效的项**（稀疏/噪声类）主导，量级是语言建模项的 113 倍。
+因此并入必须**受 `moe_aux_loss_free` 门控**（该字段原为声明却无人读的死旋钮，本轮接上）：
+`moe_aux_loss_free=True`（默认）时辅助项不进目标，平衡由 gate-bias 机制承担；为 `False` 时才并入。
+**门控的双向证据**（同一模型、同一 batch）：
+`free=True, weight=1000` → `loss = 10.029`（未并入）；`free=False, weight=1000` → `loss = 749281.94
+= 1000×749.27 + 10.6`（并入且精确）。同时暴露一个**待办**：这一坨仍把目标项（routing）与
+观测项（sparsity/phi/lr/mod）混在一起，必须拆分后才能真正用于 `aux_loss_free=False` 档。
+
+**三、顺带发现的缺陷（登记，未修）**
+- **前向不可复现**：同模型、同输入、eval 态、`moe_noise_std=0`，两次前向 loss 分别为
+  10.112583160 / 10.074472427 —— **逐次不同**。这与 A53（mamba3 前向里 `torch.randn`）、
+  寻址器 `_step`/驻留状态、SBF 池状态等有状态组件一致；在确定性问题修掉前，
+  任何"同种子两次运行应逐位相同"的断言的适用范围都要写清楚。
+- **A3/A14 复现**：`model/multimodal/seer_executor.py:250` `if agent_id == 0:` 在 `agent_id`
+  为张量时抛 `RuntimeError: Boolean value of Tensor with more than one value is ambiguous`；
+  默认前向（`return_tool_outputs` 未显式关掉）即崩。
+
+## 51 · A53 真因与修复：SSM 的时间常数曾是随机数
+
+**症状（我先测到、后定位）**：同模型、同输入、eval 态、`moe_noise_std=0`，连续前向的
+`logits` 逐次不同（最大差 6.1e−1），即**推理不可复现**。
+
+**定位方法（可复用）**：① 逐模块前向钩子比对两次调用的输出，找"最小差异模块"；
+② 在模块执行前后取 `torch.random.get_rng_state()`，找"消费全局 RNG 的模块"；
+③ 前向前后比对 `named_parameters()` 与 `named_buffers()`，排除参数/缓冲被改写。
+三步得到结论：差异来自**前向里的 RNG 调用**，最小肇事模块是
+`layers.N.ssm.mamba3_block.ss_duality`，以及 `mamba3_block` 内的四类 SSM 包装器。
+
+**真因**：`model/core/mamba3.py` 里 `YvBidirectionalSSM`(1033/1034)、`YvGatedSSM`(1082)、
+`YvMultiHeadSSM`(1137)、`YvSSDuality`(1291) 都用
+`delta = torch.randn(batch, seq_len, dt_rank) * 0.1` **现造** SSM 的离散化步长，再喂给核心
+`YvSelectiveScan`（后者本身是正确的：`B=B_proj(u)`、`C=C_proj(u)`、`delta=softplus(dt_proj(·))`）。
+后果有两层，比"不可复现"严重得多：**(a)** 每次前向注入新噪声；**(b)** Δ 与输入无关，
+**SSM 的时间常数根本无法学习**——所谓 SSM 分支实际是在往隐状态里灌随机数。
+
+**修复**：四处一律改为**输入的线性投影**——`YvBidirectionalSSM` 增 `delta_proj_fwd/bwd`、
+`YvGatedSSM` 以 `delta_proj` 取代从未被 forward 使用的死参数 `dt_proj`、
+`YvMultiHeadSSM` 用一个 GEMM 产出全部头的 Δ 再 `chunk`、
+`YvSSDuality` 以 `delta_proj` 取代"算完即弃"的死参数 `mode_proj` 及其死计算 `mode_weight`。
+
+**证据**：
+- `rng_state` 在一次前向中**不再变化**（此前为变化）。
+- 连续前向 logits 最大差：**7.6e−1 → 3.1e−3**；再修掉下一处后，暖机完成的对之间为 **0**。
+- `delta_proj*` 全部 12 个张量拿到非零梯度（如 `layers.0...gated_ssm.delta_proj.weight` 梯度
+  和 2.97e1），即**时间常数进入可训练集合**——这是能力修复，不只是数值修复。
+
+**同族第二处（已修）**：`model/moe/layer.py:954` 的
+`expert_evolution.update_expert_usage(...)` 无 `self.training` 门控——一个把统计量回灌到路由的
+**学习步骤**在 `eval()` 下照跑，使两次相同推理给出不同结果。已加门控（推理不得学习）。
+修后暖机对之间由 3.1e−3 降到 **0**。
+
+**残留（登记，未修）**：`torch.set_num_threads(1)` 后，连续前向仍有 ~3e−5 且逐次变化的漂移，
+说明除线程归约顺序（默认 8 线程下会被不稳定分量放大到 1.7e−1）外，**仍有一处有状态来源**。
+定性结论：**默认线程下"同输入不可复现"主要由 CPU 归约顺序放大所致；去掉线程因素后仍有小漂移。**
+
+**顺带查明的两个"配置不接线"**（A36 同族，已登记）：
+`use_mamba3=False` 且 `mamba3_layers=[]` **并未**移除每层的 `ssm.mamba3_block`；
+`moe_layers=[]` **并未**移除 MoE（`layers.1.mlp` 仍是 `YvDeepSeekMoELayer`）——即这两个开关
+名义存在、实际不控制构建。
+
+**仍是死代码（删除候选）**：`YvParallelScan`(904/905) 与 `YvChunkedParallelScan`(967/968)
+前向里仍有 `torch.randn` 造 B/C，且**全仓无任何构造点**（只被 `model/__init__.py`、
+`model/core/__init__.py` 再导出）。
+
+**本轮闸门**：`manage.py test --stage 10` **13/13**；`tools/check` **4111 errors / 1 warning**
+（较本轮起点 4118 净减 7）。
+
+## 52 · A26 已清：删掉第二套"知识池"，查算分离回归"模型自身权重"
+
+**核实（不是引用旧结论）**：`model/core/knowledge_experts.py::YvKnowledgeExpertPool` 确实存在且**在活动路径上**——
+`dual_injector.py:40-42` 在 `use_knowledge_experts and use_subconscious` 时构造它并 `set_knowledge_pool`，
+而 `subconscious.py:120-121` 在 `get_film_params`（每层都被 `YvDualInjector.inject` 调用的活动路径）里
+调 `self.knowledge_pool(...)`；`model/config.py` 的两个预设还把它显式打开。
+
+**它与 P0 直接冲突**：专家从磁盘 `expert_{idx}.pt` 载入（`torch.load`）、`freeze()` 冻结、
+整个 forward 包在 `torch.no_grad()` 里。这正是用户反复强调禁止的形态——
+**它是索引库/向量库，不是模型权重；被激活的"知识块"根本不参与训练。**
+
+**处置（§9/§14：合并优先、先减后加、禁功能重叠并存）**：删除该第二套实现，知识侧只保留
+`YvSubconsciousBlockField`（块即模型权重、可训练）。改动清单（全部一次性除根）：
+- 删 `model/core/knowledge_experts.py`（`YvKnowledgeExpert` + `YvKnowledgeExpertPool`）。
+- `dual_injector.py`：去导入、去 `use_knowledge_experts` 与池构造。
+- `subconscious.py`：去 `knowledge_pool`/`set_knowledge_pool`/池调用/`clear_cache` 分支；
+  `YvKnowledgeRouter.expert_input_dim` 原取自被删字段，改由 `subconscious_knowledge_dim` 提供
+  （该投影现在只喂 `output_proj`，宽度收敛到知识宽度）。
+- `model/config.py`：删 `use_knowledge_experts` 与 4 个 `knowledge_expert_*` 字段、两个预设里的开关
+  （保留 `knowledge_num_experts`，它仍被路由与分档推导使用）。
+- `model/core/__init__.py`：删导入与两条 `__all__`（包导出真实性）。
+- `opss/subconscious_trainer.py::warm_start_knowledge_field`：改为如实报告——知识块在主干块场里，
+  该 trainer 只拥有路由/FiLM（它原先报告的"池已就绪"来自一个它并不掌控的冻结存储）。
+
+**证据**：全仓 `grep` 无 `knowledge_experts|YvKnowledgeExpert|use_knowledge_experts|knowledge_expert_` 残留；
+`YvConfig` 中相关字段计数为 0；以 `use_subconscious=True` 构建并前向通过（loss 9.4031），
+`named_modules()` 中磁盘池模块数为 0。
+
+**闸门**：`--stage 10` **13/13**；`tools/check` **4110 errors / 1 warning**（文件数 348→347）。
+
+## 53 · 删除两个"前向里造随机数"的死 SSM 类（A53 同族的清除）
+
+`model/core/mamba3.py` 的 `YvParallelScan`（前向 `B = torch.randn(batch, seq, d_state)`、
+`C = torch.randn(...)`）与 `YvChunkedParallelScan`（前向 `B/C = torch.randn(...) * 0.1`）：
+**全仓除再导出外没有任何构造点**（`grep "YvParallelScan("` 无命中），是 §14 明令清除的
+"未完成/占位实现"——它们不只是死代码，还是"前向里造随机状态"这一缺陷族的样板。
+
+处置：删掉两个类（连同其段前注释共 131 行）及其在 `model/core/__init__.py`、`model/__init__.py`
+里的导入与 `__all__` 条目，并把模块 docstring 第 4 节的清单项从 `YvParallelScan`
+改为实际承重的 `YvSelectiveScan`。删除后 `mamba3.py` 残留的 `torch.randn` 全部在 `__init__`
+（参数初始化）或 docstring 示例里，前向内不再有 RNG。
+
+证据：`import model` 正常；`grep -rn "YvParallelScan\|YvChunkedParallelScan" (*.py)` 无残留；
+文件数 348→347。闸门：`--stage 10` **13/13**；`tools/check` **4108 errors / 1 warning**。
+
+## 54 · A57 与 A28：两处"声明了却不参与前向"的模型缺陷
+
+**A57（已修）**：`model/core/hybrid.py:1215` 声明 `residual_scale_ssm`，但它**从不进入前向**——
+第 1338-1351 行只用 `residual_scale_attn` 与 `residual_scale_mlp`。与 A21（寻址码本）同一族：
+**声明的参数在整轮训练里 `grad is None`**。修法：SSM 分路的贡献先乘自己的残差尺度再进融合
+（三者初值同为 `(2·n_layer)^{-0.5}`，故这是把已声明的语义接上，而不是新开开关）。
+实测该参数梯度由 `None` 变为非零（layer0 0.0557 / layer1 0.1721）。
+
+**同时做了一次"惰性参数"普查（有价值的新证据）**：0.01B 层一次前向+反传后，
+**142 个参数 / 711,295 元素（占全模型 7,922,109 的 9.0%）`grad is None`**，另有 8 个梯度为零。
+但逐个核验后**不能直接删**：多数是**条件使用**，例如
+`ss_duality.conv_mode.B/C`（只在 `seq_len > threshold` 走）、`rope_decompress`/`kv_compress`/
+`embedding_gate`（只在我们未走的 MLA/缓存分支走）、以及
+`subconscious.router.router.weight`（只被 `opss/subconscious_trainer.py` 的 RL 路径消费）。
+**教训**：把"本次探针没走到"当成"死代码"会删掉活代码——参数梯度普查必须配上"每条分支是否可达"的核验。
+本轮的删除只针对**全仓无任何构造点**的类（§53）。
+
+**A28（已修，两处）**：`use_alibi=True` 时——
+1. `alibi_bias` 在 `attention.py` 里算出来后**从不传入打分**：而同一开关下 rotary 也不构建
+   （`if not self.use_alibi` 守卫着 `rope` 的构造），于是模型**完全没有位置信号**。
+2. 前向第 5685 行**无条件**调 `self.rope(...)`，而该模式下 `rope` 根本不存在 →
+   `AttributeError: 'YvAttention' object has no attribute 'rope'`，即该配置分支**一用就崩**。
+
+修法：把 ALiBi 偏差**并入两条计算路径都消费的可加 mask**（按 4D/3D/2D 三种 mask 形状分别广播），
+并把 MLA 内部那段 rope 调用改为 `if not self.use_alibi` 守卫（ALiBi 提供位置时不再重复计位置）。
+实测（常量 token 序列，位置是唯一信号）：`use_alibi=False/use_rope=True` 位置间 logits 差 3.3564；
+`use_alibi=True/use_rope=False` 由**崩溃**变为 **3.1364**，即位置信号回来了。
+其余三处 `self.rope(` 调用本就有 `hasattr(self,'rope') and not rope_done` 守卫（已核）。
+
+闸门：`--stage 10` **13/13**；`tools/check` **4108 errors / 1 warning**。
+
+## 55 · A55：18 个稀疏门标量从不训练——收尾（7 个已接上，2 类属特性未启用）
+
+**新增共享实现（§4.6 DRY）**：把直通因子移到
+`model/utils/safety.py::YvNumericalGuard.straight_through_gate`（唯一实现），
+`YvAttention._straight_through_gate` 改为委托，MoE 与 SSM 直接调用它。
+
+**本轮接上的四处（值中性，前向逐位不变）**：
+- MoE 路由的四个门（`gate.py`）：每个辅助头原本写 `logits += w_<name> * <head_logits>`，
+  门只被 `_should_compute_aux_head`（预热/剪枝的 Python 判断）看，**从不作为可微乘子**；
+  而它们唯一的损失通路是 `sparsity_loss`，被包在 `total_loss` 里，又因 `moe_aux_loss_free=True`
+  不进目标（A67 同族）。现改为 `(w_<name> * factor) * <head_logits>`。
+- SSM 门（`hybrid.py::_forward_ssm`）：门原仅用于 `ssm_gate.item() < threshold` 的跳过判断，
+  现把 SSM 输出乘上 factor。
+
+**证据（逐个实测，不是推断）**：
+| 门 | 修前 | 修后 |
+|----|------|------|
+| `attention.sparse_gate_dsa`（1100 token） | None | **5.198e-05 / 1.695e-06** |
+| `attention.sparse_gate_lca`（4200 token） | None | **1.839e-07** |
+| `ssm.sparse_gate_ssm`（1100 token） | None | **2.075e-03 / 1.454e-03** |
+| `mlp.router.sparse_gate_{hicl,got,soft_moe,expert_orient}` | None | **6.6e-09 各（单元级：直接调 `YvMoEGate.forward` 并把 `_routing_heads_enabled=True`、预热置 0）** |
+| 直通因子本身 | — | `[-3,0,5,20]` 上逐位 **== 1.0** |
+
+**仍未接上的 2 个，已查明是"特性未启用"而非缺陷**：`sparse_gate_la` 属于 HydraHead 的 LA 头组，
+`n_la = n_head − max(1, int(n_head·(1−la_ratio)))`，默认 `la_ratio=0` ⇒ `n_la=0` ⇒ 该分支整个不进；
+`sparse_gate_duo_streaming` 在 duo tiling 关闭时短路。二者在各自特性关闭时不参与计算，
+故无梯度是正确的；但**参数仍在声明**——属"特性关闭还留参数"的次要问题，登记待清。
+另记：MoE 辅助头前 500 步（`_routing_head_warmup_steps`）**根本不计算**，
+所以这四个门在真实训练里要到预热结束才活，本轮用单元级验证绕开了预热。
+
+闸门：`--stage 10` **13/13**；`tools/check` **4108 errors / 1 warning**。
+
+## 56 · A55：18 个稀疏门标量从不训练——定位与根因
+
+**实测（先有数据再定性）**：0.01B 层、1100 token（已进入 DSA 分支 `kv_len > 1024`）、训练态一次
+前向+反传后，**18 个 `sparse_gate_*` 参数全部 `grad is None`**：
+每层 `attention.sparse_gate_{lca,dsa,la,duo_streaming}`、`ssm.sparse_gate_ssm`、
+`mlp.router.sparse_gate_{hicl,got,soft_moe,expert_orient}`。它们初值都是 `torch.tensor(5.0)`，
+即 `sigmoid(5)=0.993` —— 整轮训练里永远停在"几乎全开"，是**又一处"声明了却不参与训练"**。
+
+**根因（两处叠加，都是把门从计算图上摘掉）**：
+1. 分支开关写成 `if self.training or lca_gate.item() >= self.gate_sparsity_threshold:` ——
+   `.item()` 返回 Python 数，`sigmoid(门)` 与后续计算之间**没有张量通路**；
+   `sparse_gate_lca` 与 `sparse_gate_dsa` 都是这个形状。
+2. 更根本的：即使开关不可微，门也必须以**可微方式**作用在分支输出上才有梯度；原实现只做判断。
+
+**修法（复用 A21 已证明的直通模式，值中性）**：新增
+`YvAttention._straight_through_gate = sigmoid(g) / sigmoid(g).detach()`，
+其值**恒为 1.0**（实测 `[-3,0,5,20]` 四个输入上逐位为 `1.0`），把分支输出乘上它：
+前向数值与分支决策**逐位不变**，梯度则回灌到门上。已接在 DSA（gather 后）与 LCA（condense 后）两处。
+
+**证据**：`sparse_gate_dsa` 由 `None` → **1.664e-03 / 9.272e-06**（两层，1100 token）；
+`sparse_gate_lca` 由 `None` → **1.839e-07**（4200 token，`kv_len > 4096` 才进入该分支）。
+两处流程均不崩、不改变输出数值。
+
+**仍待处理（同族，各有不同成因，不照搬）**：其余 16 个门——`sparse_gate_la`（HydraHead 的 LA 头组
+为空时该分支不进）、`sparse_gate_duo_streaming`（tiling 关闭时短路）、`sparse_gate_ssm`，
+以及 MoE 路由的四个门（`hicl/got/soft_moe/expert_orient`，各自有本地开关）——须逐个查明
+"分支为何不走、门为何不在通路上"再定修法。
+
+闸门：`--stage 10` **13/13**；`tools/check` **4108 errors / 1 warning**。

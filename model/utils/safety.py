@@ -34,6 +34,21 @@ class YvEPS:
 
 class YvNumericalGuard:
     @staticmethod
+    def straight_through_gate(scalar: torch.Tensor) -> torch.Tensor:
+        """A multiplicative factor equal to exactly 1.0 that carries gradient into ``scalar``.
+
+        Sparsity gates were consulted only through Python booleans (``.item()`` comparisons and
+        prune flags), which removes the gate from the autograd graph — so all eighteen
+        ``sparse_gate_*`` parameters stayed at their initial value for an entire run with
+        ``grad is None`` (measured; docs/audit A55). ``sigmoid(g) / sigmoid(g).detach()`` is
+        exactly 1.0, so multiplying a branch output by it leaves every value — and therefore
+        every branch decision — bit-identical while the gate becomes trainable from the task
+        loss alone, with no auxiliary term re-introduced into the objective.
+        """
+        gate = torch.sigmoid(scalar)
+        return gate / gate.detach()
+
+    @staticmethod
     def get_eps(dtype: torch.dtype) -> float:
         if dtype in (torch.float16, torch.bfloat16):
             return max(YvEPS.DEFAULT, torch.finfo(dtype).eps * 10)

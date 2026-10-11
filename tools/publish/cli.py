@@ -307,7 +307,67 @@ class PiscesLxPublishCli:
             help="Registry to list from"
         )
 
+        # -------------------------------------------------------------------------
+        # HUB SUBCOMMAND: weights to Hugging Face + ModelScope (iron rule 3)
+        # -------------------------------------------------------------------------
+        hub_parser = subparsers.add_parser(
+            "hub",
+            help="Publish a checkpoint to Hugging Face and ModelScope (weights only; source "
+                 "remotes must never receive weights)"
+        )
+        hub_parser.add_argument(
+            "--checkpoint",
+            required=True,
+            help="Weight file to publish (e.g. .pisceslx/ckpt/final_model.pt)"
+        )
+        hub_parser.add_argument(
+            "--model_config",
+            required=True,
+            help="Model configuration the weight was trained under, shipped alongside it"
+        )
+        hub_parser.add_argument(
+            "--hf-repo",
+            default=None,
+            help="Target Hugging Face repository id (default: publisher configuration)"
+        )
+        hub_parser.add_argument(
+            "--ms-repo",
+            default=None,
+            help="Target ModelScope repository id (default: publisher configuration)"
+        )
+        hub_parser.add_argument(
+            "--publish",
+            action="store_true",
+            help="Actually upload. Without this flag the command is a dry run, because a "
+                 "mistargeted hub push is not cheaply reversible."
+        )
+
         return parser
+
+    @staticmethod
+    def cmd_hub(args: argparse.Namespace) -> int:
+        """Plan or perform the two-hub weight publication."""
+        from tools.publish.hub import PiscesLxHubConfig, PiscesLxModelHubPublisher
+
+        config = PiscesLxHubConfig()
+        if args.hf_repo:
+            config.huggingface_repo = args.hf_repo
+        if args.ms_repo:
+            config.modelscope_repo = args.ms_repo
+        publisher = PiscesLxModelHubPublisher(config)
+        try:
+            report = publisher.publish(args.checkpoint, args.model_config,
+                                       dry_run=not args.publish)
+        except (FileNotFoundError, ValueError, RuntimeError) as exc:
+            print(f"hub publication refused: {exc}")
+            return 1
+        for entry in report["files"]:
+            print(f"  {entry['name']:<34} {entry['bytes']:>12,} B  sha256[:12]={entry['fingerprint']}")
+        print(f"total {report['total_bytes']:,} bytes -> "
+              f"{report['huggingface_repo']} (HF) + {report['modelscope_repo']} (ModelScope)")
+        for hub, outcome in report["uploaded"].items():
+            print(f"  {hub}: {outcome}")
+        return 0
 
     @staticmethod
     def cmd_publish(args: argparse.Namespace) -> int:
@@ -642,6 +702,7 @@ class PiscesLxPublishCli:
             "export": PiscesLxPublishCli.cmd_export,
             "build": PiscesLxPublishCli.cmd_build,
             "push": PiscesLxPublishCli.cmd_push,
+            "hub": PiscesLxPublishCli.cmd_hub,
             "validate": PiscesLxPublishCli.cmd_validate,
             "info": PiscesLxPublishCli.cmd_info,
             "list": PiscesLxPublishCli.cmd_list,

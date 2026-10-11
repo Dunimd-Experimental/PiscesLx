@@ -28,29 +28,33 @@ import torch.nn as nn
 from typing import Dict, Optional, Tuple
 
 from .subconscious import YvSubconsciousSystem
-from .knowledge_experts import YvKnowledgeExpertPool
 
 
 class YvDualInjector(nn.Module):
     def __init__(self, cfg, device=None, dtype=None):
         super().__init__()
         self.use_subconscious = getattr(cfg, 'use_subconscious', False)
-        self.use_knowledge_experts = getattr(cfg, 'use_knowledge_experts', False)
         self.subconscious = YvSubconsciousSystem(cfg, device, dtype) if self.use_subconscious else None
-        if self.use_knowledge_experts and self.use_subconscious:
-            self.knowledge_pool = YvKnowledgeExpertPool(cfg, device, dtype)
-            self.subconscious.set_knowledge_pool(self.knowledge_pool)
-        else:
-            self.knowledge_pool = None
 
     def inject(
         self,
         h: torch.Tensor,
         layer_idx: Optional[int] = None,
+        attention_mask: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Dict[str, torch.Tensor]]]:
         film_params = None
+        if attention_mask is not None and attention_mask.dim() == 2 and h.dim() >= 2 \
+                and attention_mask.shape[:2] == h.shape[:2]:
+            # Re-zero padded slots at every layer boundary. Nothing here takes a mask, and an
+            # attention output at a padded position is a weighted sum over real keys, so pad
+            # slots silently regain content from real tokens and feed it into the next layer
+            # (measured: layer-0 pad slots exactly 0, layer-1 pad slots 0.49 and varying with
+            # pad content; docs/audit A54). Keeping them zero is what makes the stack
+            # padding-content independent.
+            h = h * attention_mask.unsqueeze(-1).to(h.dtype)
         if self.subconscious is not None:
-            film_params = self.subconscious.get_film_params(h, layer_idx if layer_idx is not None else 0)
+            film_params = self.subconscious.get_film_params(
+                h, layer_idx if layer_idx is not None else 0, attention_mask)
         return h, None, film_params
 
     def get_trainable_params(self) -> Dict[str, nn.Parameter]:

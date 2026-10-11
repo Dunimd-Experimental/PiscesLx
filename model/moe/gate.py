@@ -323,11 +323,15 @@ class YvMoEGate(nn.Module):
         logits = self.gate(x_flat)
         soft_logits = None
 
-        # Auxiliary routing heads — only compute after warmup + if unpruned
+        # Auxiliary routing heads — only compute after warmup + if unpruned.
+        # Each head's gate multiplies its contribution through a value-neutral straight-through
+        # factor: the gate is otherwise consulted only by a Python bool (warmup/prune), which
+        # left all four with `grad is None` for a whole run (docs/audit A55).
         if self._routing_heads_enabled or not self.training:
             # HiCL DG-gated routing
             if self._should_compute_aux_head(self.sparse_gate_hicl, 'hicl'):
-                logits = logits + self.w_hicl * torch.mm(
+                logits = logits + (self.w_hicl * YvNumericalGuard.straight_through_gate(
+                    self.sparse_gate_hicl)) * torch.mm(
                     self.hicl_dg_encoder(x_flat),
                     self.hicl_prototypes.t(),
                 )
@@ -337,7 +341,8 @@ class YvMoEGate(nn.Module):
                 with torch.no_grad():
                     got_clusters = self.got_graph_builder(x)
                 got_logits = self.got_cluster_proj(x_flat)
-                logits = logits + self.w_got * got_logits
+                logits = logits + (self.w_got * YvNumericalGuard.straight_through_gate(
+                    self.sparse_gate_got)) * got_logits
 
             # SoftMoE routing
             if self._should_compute_aux_head(self.sparse_gate_soft_moe, 'soft_moe'):
@@ -347,14 +352,16 @@ class YvMoEGate(nn.Module):
                 soft_weights = torch.sigmoid((logits_k - threshold) / self.soft_moe_temperature)
                 soft_logits = soft_weights * logits_v.softmax(dim=-1)
                 soft_logits = YvNumericalGuard.safe_div(soft_logits, soft_logits.sum(dim=-1, keepdim=True))
-                logits = logits + self.w_soft * soft_logits
+                logits = logits + (self.w_soft * YvNumericalGuard.straight_through_gate(
+                    self.sparse_gate_soft_moe)) * soft_logits
 
             # Expert-Oriented routing
             if self._should_compute_aux_head(self.sparse_gate_expert_orient, 'expert_orient'):
                 input_emb = self.input_encoder(x_flat)
                 encoded_expert = self.expert_capability_encoder(self.expert_embeddings)
                 sim_logits = torch.mm(input_emb, encoded_expert.t())
-                logits = logits + self.w_expert_orient * sim_logits
+                logits = logits + (self.w_expert_orient * YvNumericalGuard.straight_through_gate(
+                    self.sparse_gate_expert_orient)) * sim_logits
 
         # === Step 3: Modal-aware affinity bias ===
         if modal_id is not None:

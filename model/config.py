@@ -307,6 +307,7 @@ class YvConfig:
     moe_top_k: int = 8
     moe_capacity_factor: float = 1.0
     moe_load_balance_alpha: float = 0.01
+    moe_aux_loss_weight: float = 1.0        # outer weight folding aux losses into the objective
     moe_noise_std: float = 0.1
     moe_use_stable_gate: bool = True
     moe_min_capacity: int = 4
@@ -1012,19 +1013,16 @@ class YvConfig:
     # Knowledge experts: up to 628 × 0.5B real SwiGLU FFN weights on disk.
     # ========================================
     use_subconscious: bool = False
-    use_knowledge_experts: bool = False
     subconscious_knowledge_dim: int = 1024
     subconscious_state_dim: int = 1024
     subconscious_expert_top_k: int = 4
     # Width of the router's RL value head (declared part of the routing architecture).
     subconscious_value_head_width: int = 256
 
-    # Knowledge expert pool (frozen 314B for 7B core, 0 = auto-compute via formula)
+    # Knowledge capacity per tier (0 = auto-derive from the compute/lookup split). The lookup
+    # side is the model's own block field, whose blocks are trainable weights — there is no
+    # separate disk-backed expert pool (removed: docs/audit A26).
     knowledge_num_experts: int = 0
-    knowledge_expert_input_dim: int = 6455
-    knowledge_expert_hidden_dim: int = 25820
-    knowledge_expert_path: str = "./knowledge_experts"
-    knowledge_expert_cache_size: int = 8
 
 
     # ========================================
@@ -1035,6 +1033,7 @@ class YvConfig:
     # in engine code (coding standard 4.7).
     # ========================================
     use_subconscious_blocks: bool = True
+
     block_count: int = 628                      # 314B / 0.5B blocks
     # 0 means "derive": the row count is whatever makes a block equal to
     # block_size_params, so the geometry can never contradict the declared block size.
@@ -1052,6 +1051,7 @@ class YvConfig:
     block_staleness_gain: float = 0.002         # mu, keeps cold blocks reachable
     block_staleness_cap_tokens: int = 4096      # saturation of the staleness bonus
     block_min_dwell_tokens: int = 17            # ceil(transfer_ms / budget_ms) = 83.3/5
+    block_init_seed: int = 20261011             # per-block init stream; RPI needs stable draws
 
         # ========================================
     # MoVE (Mixture of Vision Encoders)
@@ -1543,7 +1543,6 @@ class YvConfig:
             lookup_params_total=0,
             use_dual_inject=True,
             use_subconscious=True,
-            use_knowledge_experts=True,
             use_eg_mla=True,
             use_duo_attention=False,
             use_ttt_e2e=True,
@@ -1574,7 +1573,6 @@ class YvConfig:
             lookup_params_total=270000000,
             use_dual_inject=True,
             use_subconscious=True,
-            use_knowledge_experts=True,
             use_eg_mla=False,
             use_duo_attention=False,
             use_ttt_e2e=False,

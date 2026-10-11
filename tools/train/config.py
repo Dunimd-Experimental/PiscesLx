@@ -691,6 +691,13 @@ class PiscesLxTrainingConfig:
     })
     kfac: Dict[str, Any] = field(default_factory=lambda: {"enabled": True})
     multitask: Dict[str, Any] = field(default_factory=lambda: {"enabled": True})
+    #: The model configuration's ``ink_optimizer`` block, carried verbatim so the declared
+    #: per-tier optimiser settings can reach `PiscesLxInkConfig`. Until now nothing read it:
+    #: `YvConfig` exposes flat ``ink_*`` fields and the trainer looked for a section on the
+    #: *train* config, which had none -- so all twelve configs/model/*.yaml declared values
+    #: (momentum/variance bits, sparse_ratio, galore_rank, max_experts_on_gpu) were dead
+    #: and every tier silently ran the dataclass defaults (docs/audit/00 §47).
+    ink_optimizer: Dict[str, Any] = field(default_factory=dict)
     modality_scheduler: Dict[str, Any] = field(default_factory=lambda: {"enabled": True})
     
     enable_dpo: bool = True

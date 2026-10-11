@@ -189,6 +189,7 @@ from .norms import YvRMSNorm, YvDeepNorm, YvFiLMModulation
 from .attention import YvAttention
 from .mamba3 import YvMamba3Integration, YvMamba3Config
 from ..moe import YvDeepSeekMoELayer
+from ..utils import YvNumericalGuard
 
 
 
@@ -1290,7 +1291,10 @@ class YvHybridBlock(nn.Module):
         else:
             ssm_out = self.ssm(x_norm, mask)
             ssm_selective = self.selective_ssm(x_norm)
-        return ssm_out + ssm_selective, sparsity_loss
+        # Value-neutral straight-through so the gate is trainable: it was consulted only by the
+        # `.item()` skip test above, which detached it (docs/audit A55).
+        factor = YvNumericalGuard.straight_through_gate(self.sparse_gate_ssm)
+        return (ssm_out + ssm_selective) * factor, sparsity_loss
 
     def _forward_mlp(self, x, modal_id=None):
         x_norm = self.norm_mlp(x)
@@ -1331,7 +1335,11 @@ class YvHybridBlock(nn.Module):
 
         # === Unified fusion ===
         if ssm_out is not None:
-            fused = self.fusion(attn_out, ssm_out, hidden_states, seq_len)
+            # `residual_scale_ssm` was declared next to the attention and MLP scales but never
+            # read, so it stayed at its initial value for the whole run with `grad is None` —
+            # the same "declared but inert" defect as the trace codebook (docs/audit A21/A57).
+            # Each sublayer's contribution is scaled by its own residual scale before fusion.
+            fused = self.fusion(attn_out, self.residual_scale_ssm * ssm_out, hidden_states, seq_len)
         else:
             fused = attn_out  # SSM skipped, pure attention
 

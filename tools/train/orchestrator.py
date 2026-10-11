@@ -334,6 +334,16 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
                 continue
         return None
 
+    def _apply_model_ink_config(self, raw_model_cfg: Dict[str, Any]) -> None:
+        """Carry the model file's ``ink_optimizer`` block onto the training configuration.
+
+        Without this the block is parsed from YAML and then dropped, so a tier cannot state
+        its own optimiser state widths or coverage: see docs/audit/00 §47.
+        """
+        section = raw_model_cfg.get("ink_optimizer")
+        if isinstance(section, dict):
+            self.train_config.ink_optimizer = dict(section)
+
     def _apply_model_training_config(self, model_train_cfg: Dict[str, Any]):
         """
         Apply training configuration from model config file.
@@ -1010,8 +1020,10 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         # because YvConfig.from_yaml filters unknown keys.
         try:
             if isinstance(raw_model_cfg, dict) and raw_model_cfg.get("training_config"):
+                self._apply_model_ink_config(raw_model_cfg)
                 self._apply_model_training_config(raw_model_cfg.get("training_config"))
             elif hasattr(model_cfg, "training_config") and getattr(model_cfg, "training_config"):
+                self._apply_model_ink_config(getattr(model_cfg, "training_config", {}) or {})
                 self._apply_model_training_config(getattr(model_cfg, "training_config"))
         except Exception:
             pass

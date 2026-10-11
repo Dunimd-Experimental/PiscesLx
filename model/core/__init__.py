@@ -240,8 +240,6 @@ from .mamba3 import (
     YvComplexStateSpace,
     YvMIMOStateSpace,
     YvSelectiveScan,
-    YvParallelScan,
-    YvChunkedParallelScan,
     YvBidirectionalSSM,
     YvGatedSSM,
     YvMultiHeadSSM,
@@ -253,7 +251,6 @@ from .mamba3 import (
     YvFlashSSM,
 )
 
-from .knowledge_experts import YvKnowledgeExpert, YvKnowledgeExpertPool
 from .dual_injector import YvDualInjector
 from .subconscious import (
     YvSubconsciousSystem,
@@ -356,8 +353,6 @@ __all__ = [
     "YvComplexStateSpace",
     "YvMIMOStateSpace",
     "YvSelectiveScan",
-    "YvParallelScan",
-    "YvChunkedParallelScan",
     "YvBidirectionalSSM",
     "YvGatedSSM",
     "YvMultiHeadSSM",
@@ -373,9 +368,6 @@ __all__ = [
     "YvREFORM",
     "YvSparseSSM",
     "YvGatedDeltaNetwork",
-
-    "YvKnowledgeExpert",
-    "YvKnowledgeExpertPool",
 
     "YvDualInjector",
 

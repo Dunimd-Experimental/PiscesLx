@@ -138,12 +138,18 @@ class PiscesLxSubconsciousTrainer:
         )
 
     def warm_start_knowledge_field(self, teacher_embeddings: torch.Tensor) -> Dict[str, float]:
-        _LOG.info(f"Warm start: verifying expert pool with {teacher_embeddings.shape[0]} teacher embeddings")
-        knowledge_pool = getattr(self.subconscious, 'knowledge_pool', None)
-        if knowledge_pool is not None:
-            _LOG.info(f"Knowledge expert pool ready: {knowledge_pool.num_experts} experts")
-            return {"num_experts": knowledge_pool.num_experts}
-        _LOG.warning("No knowledge expert pool attached; routing will use projected embeddings only")
+        """Report the knowledge side's status before training starts.
+
+        The knowledge pool is the trunk's ``YvSubconsciousBlockField``, whose blocks are model
+        weights trained alongside the trunk. The former disk-backed expert pool that was
+        attached here is gone: a file-loaded, frozen, ``no_grad`` store is a vector index, not
+        model weights, and the P0 rule requires the activated blocks to train
+        (docs/audit A26). This trainer owns only the routing/FiLM modules, so it no longer
+        reports a pool it does not control.
+        """
+        _LOG.info(
+            f"Warm start: routing/FiLM owned here; knowledge blocks live in the trunk block "
+            f"field. Teacher embeddings: {int(teacher_embeddings.shape[0])}")
         return {"num_experts": 0}
 
     def get_router_aux_loss(self, router_logits: torch.Tensor) -> torch.Tensor:

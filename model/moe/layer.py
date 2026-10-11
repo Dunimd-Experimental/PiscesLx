@@ -951,7 +951,11 @@ class YvDynamicMoELayer(nn.Module):
             final_output = self._apply_skip_residual(final_output, shared_output)
         
         # Expert Evolution: Update usage statistics and apply Hebbian learning
-        if self.use_expert_evolution and hasattr(self, 'expert_evolution'):
+        # Training-only: this is a learning step whose statistics feed back into routing, so
+        # running it under `eval()` made two identical inference calls return different logits
+        # (measured 1.3e-3 divergence between consecutive warm calls, with no parameter, buffer
+        # or RNG change — docs/audit A53 family). Inference must not learn.
+        if self.training and self.use_expert_evolution and hasattr(self, 'expert_evolution'):
             self.expert_evolution.update_expert_usage(routing_weights, expert_indices)
 
         self._step += 1

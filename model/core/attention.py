@@ -5567,6 +5567,11 @@ class YvAttention(nn.Module):
 
         return aux_gate * aux_out.transpose(1, 2).reshape(b, t, self.n_head * self.head_dim)
 
+    @staticmethod
+    def _straight_through_gate(scalar: torch.Tensor) -> torch.Tensor:
+        """See :meth:`YvNumericalGuard.straight_through_gate` — one implementation, two sites."""
+        return YvNumericalGuard.straight_through_gate(scalar)
+
     def sparsity_loss(self) -> torch.Tensor:
         """GSA-style sparsity regulariser over the four sparse gates.
 
@@ -5661,6 +5666,8 @@ class YvAttention(nn.Module):
             lca_gate = torch.sigmoid(self.sparse_gate_lca)
             if self.training or lca_gate.item() >= self.gate_sparsity_threshold:
                 k, v = self.lca_attention.condense_kv(k, v, hidden_states=x)
+                factor = self._straight_through_gate(self.sparse_gate_lca)
+                k, v = k * factor, v * factor
                 kv_len = k.shape[2]
 
         # --- 5. Q projection ---
@@ -5682,14 +5689,18 @@ class YvAttention(nn.Module):
                 else:
                     k_pe = self.rope_decompress(kv_latent_for_cache).view(b, kv_len, 1, rope_dim)
                     k_pe = k_pe.expand(-1, -1, self.n_kv_head, -1).transpose(1, 2)
-                k_pe = self.rope(k_pe, kv_len)
+                # The MLA rope slice is position inside the head. When ALiBi supplies position
+                # instead, `self.rope` is not built at all, so an unconditional call made
+                # `use_alibi=True` crash before a single token was processed (docs/audit A28).
+                if not self.use_alibi:
+                    k_pe = self.rope(k_pe, kv_len)
 
                 if k_pe.shape[:3] != k.shape[:3]:
                     raise RuntimeError(
                         f"Enhanced MLA RoPE shape mismatch: k={tuple(k.shape)}, k_pe={tuple(k_pe.shape)}"
                     )
 
-                q_pe = self.rope(q[..., -rope_dim:], t)
+                q_pe = q[..., -rope_dim:] if self.use_alibi else self.rope(q[..., -rope_dim:], t)
                 q = torch.cat([q[..., :-rope_dim], q_pe], dim=-1)
                 k = torch.cat([k[..., :-rope_dim], k_pe], dim=-1)
                 rope_done = True
@@ -5729,8 +5740,8 @@ class YvAttention(nn.Module):
                         imp = k.norm(dim=-1).mean(dim=1)
                     _, topk = torch.topk(imp, kv_sparse_cnt, dim=-1)
                     idx = topk.unsqueeze(1).unsqueeze(-1).expand(-1, self.n_kv_head, -1, self.head_dim)
-                k = k.gather(2, idx)
-                v = v.gather(2, idx)
+                k = k.gather(2, idx) * self._straight_through_gate(self.sparse_gate_dsa)
+                v = v.gather(2, idx) * self._straight_through_gate(self.sparse_gate_dsa)
                 kv_len = k.shape[2]
 
         # --- 11. Cache capture (before extra KV prepend in post-cache) ---
@@ -5742,9 +5753,23 @@ class YvAttention(nn.Module):
         kv_len = k.shape[2]
 
         # --- 13. ALiBi ---
-        alibi_bias = None
         if hasattr(self, 'alibi'):
-            alibi_bias = self.alibi(kv_len, x.device).unsqueeze(0)
+            # A bias that is computed and then never passed to the scores is worse than no
+            # ALiBi: with `use_alibi=True` the rotary path is not built either (see the
+            # `if not self.use_alibi` guard where `rope` is constructed), so dropping it left
+            # the model with **no positional signal at all** (docs/audit A28). Fold it into
+            # the additive mask that both compute paths consume.
+            bias = self.alibi(kv_len, x.device).to(dtype=q.dtype).unsqueeze(0)
+            if bias.shape[-2] != t:
+                bias = bias[..., -t:, :]
+            if mask is None:
+                mask = bias
+            elif mask.dim() == 4:  # [b, heads, t, kv_len] — add head-wise
+                mask = mask + bias
+            elif mask.dim() == 3:  # [b, t, kv_len] — broadcast over heads
+                mask = mask.unsqueeze(1) + bias
+            else:  # 2D [t, kv_len] — broadcast over batch and heads
+                mask = mask.unsqueeze(0).unsqueeze(0) + bias
 
         # --- 14. Attention computation: Ring (long context) or HydraHead ---
         use_ring = self.use_ring_attention and hasattr(self, 'ring_attn') and kv_len > self.ring_attention_threshold

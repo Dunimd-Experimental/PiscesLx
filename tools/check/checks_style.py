@@ -341,6 +341,13 @@ class PiscesLxIncompleteMarkerCheck(PiscesLxStandardCheck):
     rule = "NO-STUB-NOR-TODO"
     description = "TODO/FIXME/placeholder/not-implemented markers are forbidden in shipped code"
 
+    #: Explicit, narrow self-exemption: this file *is* the rule's pattern table -- the regex
+    #: text, the violation message and the abstract-contract docstring all contain the very
+    #: markers the rule searches for, so it matched itself six times. The exemption covers
+    #: this module only (mirroring the documented stdlib-logging whitelist in AGENTS §4.3);
+    #: every other file, including the rest of tools/check/, is still policed.
+    _SELF_EXEMPT = "tools/check/checks_style.py"
+
     _PATTERNS = (
         # Uppercase only, as every linter does: ``todo`` is an ordinary variable name
         # for a work list, and matching it case-insensitively made the cleaning
@@ -402,6 +409,8 @@ class PiscesLxIncompleteMarkerCheck(PiscesLxStandardCheck):
         return lines
 
     def inspect(self, source: PiscesLxSourceFile) -> list:
+        if source.path.as_posix().endswith(self._SELF_EXEMPT):
+            return []
         """Report each marker hit with severity warning inside docs/tests."""
         violations = []
         relative = source.path.relative_to(source.root).as_posix()

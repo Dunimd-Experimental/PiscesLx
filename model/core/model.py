@@ -2061,6 +2061,17 @@ class YvModel(nn.Module):
             self._vram_monitor.check_and_adjust()
 
         text_emb = self.embed(input_ids)
+        # Padded slots must carry no content. Attention masks the *keys*, but several mixing
+        # operators in this trunk take no mask at all — the HydraHead linear-attention heads
+        # and the depthwise conv + bidirectional scan of the SSM branch — so masked-out slots
+        # still contributed their token content to real positions. Measured: changing only the
+        # content of masked slots moved the logits of real tokens by 0.4346 (la_ratio=0.5) and
+        # by 0.1619 with all-FA heads, i.e. two independent leak paths (docs/audit A54).
+        # Zeroing the embedding of padded slots makes every downstream operator independent of
+        # padding content, whatever each operator does internally.
+        if (attention_mask is not None and attention_mask.dim() == 2
+                and attention_mask.shape == input_ids.shape):
+            text_emb = text_emb * attention_mask.unsqueeze(-1).to(text_emb.dtype)
         modal_features = {'text': text_emb}
 
         if images is not None and getattr(self, 'vision', None) is not None:
@@ -2201,7 +2212,8 @@ class YvModel(nn.Module):
                     h_chunk = chunk
                     for layer_idx, layer in enumerate(self.layers):
                         past_kv = None
-                        h_chunk, extra_kv, film_params = self.dual_injector.inject(h_chunk, layer_idx)
+                        h_chunk, extra_kv, film_params = self.dual_injector.inject(
+                            h_chunk, layer_idx, chunk_mask)
 
                         if hasattr(layer, 'set_sequence_length'):
                             layer.set_sequence_length(h_chunk.shape[1])
@@ -2239,7 +2251,8 @@ class YvModel(nn.Module):
                 h = x
                 for layer_idx, layer in enumerate(self.layers):
                     past_kv = None
-                    h, extra_kv, film_params = self.dual_injector.inject(h, layer_idx)
+                    h, extra_kv, film_params = self.dual_injector.inject(
+                        h, layer_idx, attention_mask)
 
                     if hasattr(layer, 'set_sequence_length'):
                         layer.set_sequence_length(h.shape[1])
@@ -2298,7 +2311,8 @@ class YvModel(nn.Module):
                                 use_mixed_precision_cache=use_mixed_precision_cache,
                             )
 
-                        h, extra_kv, film_params = self.dual_injector.inject(h, layer_idx)
+                        h, extra_kv, film_params = self.dual_injector.inject(
+                        h, layer_idx, attention_mask)
 
                         if hasattr(layer, 'set_sequence_length'):
                             layer.set_sequence_length(seq_len)
@@ -2512,6 +2526,21 @@ class YvModel(nn.Module):
                 seer_loss = seer_result.get('seer_loss')
                 if seer_loss is not None:
                     total_aux_loss = total_aux_loss + seer_loss
+
+        # Every MoE routing/balance term is computed on the graph inside the block forward
+        # (blocks.py `routing_loss = alpha*balance + z_loss`, plus sparsity/phi terms) and
+        # summed into `total_aux_loss`, which no caller folded into any objective: "MoE load
+        # CV <= 0.3" had no mechanism behind it (docs/audit A67). The fold is gated on the
+        # declared balancing mode — `moe_aux_loss_free=True` means the balance is carried by
+        # the gate-bias update, so the loss term must stay out of the objective, not merely
+        # be reported. Measured at 0.01B: the lump is 749.27 nats against an lm_loss of 6.59,
+        # i.e. 113x, so folding it in at unit weight would optimise balance at the cost of
+        # language modelling. The lump also still mixes objective terms (routing) with
+        # observability terms (sparsity/phi/lr/mod); separating those is the next step.
+        if (loss is not None and not self.config.moe_aux_loss_free
+                and isinstance(total_aux_loss, torch.Tensor)
+                and total_aux_loss.requires_grad):
+            loss = loss + self.config.moe_aux_loss_weight * total_aux_loss
 
         result = YvModelOutput({
             "logits": logits,

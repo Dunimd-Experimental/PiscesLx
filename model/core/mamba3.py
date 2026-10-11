@@ -92,11 +92,8 @@ Architecture Overview:
          * Compatible with learnable step sizes
 
     4. Efficient Computation:
-       - YvParallelScan: Parallel scan implementation
-         * O(log n) parallel complexity
-         * Associative scan algorithm
-         * GPU-optimized implementation
-         * Supports chunked processing
+       - YvSelectiveScan: selective scan with a sequential (short) and associative (long)
+         scan path; input-dependent B, C and delta
        
        - YvChunkedSSM: Chunked processing
          * Processes long sequences in chunks
@@ -864,137 +861,6 @@ class YvSelectiveScan(nn.Module):
 
         return output
 
-# Paper: Blelloch, "Prefix Sums and Their Applications", 1990 (parallel scan); Dao & Gu, "Mamba-2", arXiv:2405.21060, 2024
-class YvParallelScan(nn.Module):
-    """
-    Parallel scan for efficient SSM computation.
-
-    Implements parallel associative scan algorithm for O(log n) sequential
-    computation on parallel hardware. Based on Mamba-2 optimizations.
-    """
-
-    def __init__(self, d_model: int, d_state: int, chunk_size: int = 256):
-        super().__init__()
-        self.d_model = d_model
-        self.d_state = d_state
-        self.chunk_size = chunk_size
-
-        self.A_log = nn.Parameter(torch.randn(d_state, d_model))
-        nn.init.uniform_(self.A_log, -3.0, -1.0)
-
-    def _scan_chunk(self, x: torch.Tensor, A: torch.Tensor, B: torch.Tensor, C: torch.Tensor) -> torch.Tensor:
-        batch, chunk_len, d_model = x.shape
-        d_state = A.shape[0]
-
-        h = torch.zeros(batch, d_state, d_model, device=x.device, dtype=x.dtype)
-        outputs = []
-
-        for t in range(chunk_len):
-            h = A * h + B[:, t].unsqueeze(-1) * x[:, t].unsqueeze(-2)
-            y = torch.einsum('bs,bsd->bd', C[:, t], h)
-            outputs.append(y)
-
-        return torch.stack(outputs, dim=1)
-
-    def forward(self, u: torch.Tensor, delta: torch.Tensor) -> torch.Tensor:
-        batch, seq_len, d_model = u.shape
-
-        A = -torch.exp(self.A_log.float())
-
-        B = torch.randn(batch, seq_len, self.d_state, device=u.device)
-        C = torch.randn(batch, seq_len, self.d_state, device=u.device)
-
-        n_chunks = (seq_len + self.chunk_size - 1) // self.chunk_size
-        outputs = []
-
-        for i in range(n_chunks):
-            start = i * self.chunk_size
-            end = min((i + 1) * self.chunk_size, seq_len)
-
-            chunk_u = u[:, start:end]
-            chunk_B = B[:, start:end]
-            chunk_C = C[:, start:end]
-
-            chunk_out = self._scan_chunk(chunk_u, A, chunk_B, chunk_C)
-            outputs.append(chunk_out)
-
-        output = torch.cat(outputs, dim=1)
-
-        if torch.isnan(output).any() or torch.isinf(output).any():
-            return torch.zeros_like(u)
-
-        return output
-
-class YvChunkedParallelScan(nn.Module):
-    """
-    Chunked parallel scan combining benefits of parallel and recurrent modes.
-
-    Divides sequence into chunks for parallel processing within chunks,
-    then combines chunk results sequentially. Optimal for long sequences.
-    """
-
-    def __init__(self, d_model: int, d_state: int, chunk_size: int = 256):
-        super().__init__()
-        self.d_model = d_model
-        self.d_state = d_state
-        self.chunk_size = chunk_size
-
-        self.A_log = nn.Parameter(torch.randn(d_state, d_model))
-        self.D = nn.Parameter(torch.ones(d_model))
-
-        nn.init.uniform_(self.A_log, -3.0, -1.0)
-
-    def _chunk_scan(self, x: torch.Tensor, A: torch.Tensor, B: torch.Tensor, C: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        batch, chunk_len, d_model = x.shape
-        d_state = self.d_state
-
-        A_mat = -torch.exp(A.float())
-
-        h = torch.zeros(batch, d_state, d_model, device=x.device, dtype=x.dtype)
-        outputs = []
-
-        for t in range(chunk_len):
-            h = A_mat * h + B[:, t].unsqueeze(-1) * x[:, t].unsqueeze(-2)
-            y = torch.einsum('bs,bsd->bd', C[:, t], h)
-            outputs.append(y)
-
-        return torch.stack(outputs, dim=1), h
-
-    def forward(self, u: torch.Tensor, delta: torch.Tensor) -> torch.Tensor:
-        batch, seq_len, d_model = u.shape
-
-        A = self.A_log
-        B = torch.randn(batch, seq_len, self.d_state, device=u.device) * 0.1
-        C = torch.randn(batch, seq_len, self.d_state, device=u.device) * 0.1
-
-        n_chunks = (seq_len + self.chunk_size - 1) // self.chunk_size
-        outputs = []
-        h_carry = torch.zeros(batch, self.d_state, d_model, device=u.device, dtype=u.dtype)
-
-        for i in range(n_chunks):
-            start = i * self.chunk_size
-            end = min((i + 1) * self.chunk_size, seq_len)
-
-            chunk_u = u[:, start:end]
-            chunk_B = B[:, start:end]
-            chunk_C = C[:, start:end]
-
-            chunk_out, h_new = self._chunk_scan(chunk_u, A, chunk_B, chunk_C)
-
-            A_mat = -torch.exp(A.float())
-            chunk_out = chunk_out + torch.einsum('bts,bsd->btd', chunk_C, A_mat * h_carry)
-
-            h_carry = h_new
-            outputs.append(chunk_out)
-
-        output = torch.cat(outputs, dim=1)
-        output = output + u * self.D.unsqueeze(0).unsqueeze(0)
-
-        if torch.isnan(output).any() or torch.isinf(output).any():
-            return torch.zeros_like(u)
-
-        return output
-
 # Paper: Original contribution by Dunimd Team (Yv Architecture — bidirectional SSM extension)
 class YvBidirectionalSSM(nn.Module):
     """
@@ -1011,6 +877,14 @@ class YvBidirectionalSSM(nn.Module):
 
         self.forward_ssm = YvSelectiveScan(d_model, math.ceil(d_model / 16))
         self.backward_ssm = YvSelectiveScan(d_model, math.ceil(d_model / 16))
+
+        # Delta must be a function of the input, never of the RNG. A random delta made this
+        # module (a) non-reproducible run to run — measured: identical eval calls differed by
+        # 3.0e0 at this submodule — and (b) unable to learn its time constant, because the
+        # discretisation step carried zero information from x. Every SSM here was therefore
+        # injecting noise into the hidden state rather than processing it (docs/audit A53).
+        self.delta_proj_fwd = nn.Linear(d_model, math.ceil(d_model / 16), bias=True)
+        self.delta_proj_bwd = nn.Linear(d_model, math.ceil(d_model / 16), bias=True)
 
         self.combine = nn.Linear(2 * d_model, d_model, bias=False)
 
@@ -1029,9 +903,8 @@ class YvBidirectionalSSM(nn.Module):
         x_bwd = self.conv1d_bwd(x_bwd)[:, :, :seq_len]
         x_bwd = rearrange(x_bwd, 'b d l -> b l d')
 
-        dt_rank = math.ceil(d_model / 16)
-        delta_fwd = torch.randn(batch, seq_len, dt_rank, device=x.device) * 0.1
-        delta_bwd = torch.randn(batch, seq_len, dt_rank, device=x.device) * 0.1
+        delta_fwd = self.delta_proj_fwd(x_fwd)
+        delta_bwd = self.delta_proj_bwd(x_bwd)
 
         fwd_out = self.forward_ssm(x_fwd, delta_fwd)
         bwd_out = self.backward_ssm(x_bwd, delta_bwd)
@@ -1065,7 +938,10 @@ class YvGatedSSM(nn.Module):
         self.gate_proj = nn.Linear(d_model, d_model, bias=False)
         self.out_proj = nn.Linear(d_model, d_model, bias=False)
 
-        self.dt_proj = nn.Linear(math.ceil(d_model / 16), d_model, bias=True)
+        # Learned delta projection; `self.dt_proj` (dt_rank -> d_model) was never used by this
+        # forward and is removed rather than left as dead weight. Delta is dt_rank-wide and
+        # now derived from the input, so the scan's time constant is trainable (docs/audit A53).
+        self.delta_proj = nn.Linear(d_model, math.ceil(d_model / 16), bias=True)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         batch, seq_len, d_model = x.shape
@@ -1078,8 +954,7 @@ class YvGatedSSM(nn.Module):
         x_ssm = rearrange(x_ssm, 'b d l -> b l d')
         x_ssm = F.silu(x_ssm)
 
-        dt_rank = math.ceil(d_model / 16)
-        delta = torch.randn(batch, seq_len, dt_rank, device=x.device) * 0.1
+        delta = self.delta_proj(x_ssm)
 
         ssm_out = self.ssm(x_ssm, delta)
 
@@ -1117,6 +992,10 @@ class YvMultiHeadSSM(nn.Module):
             for _ in range(n_heads)
         ])
 
+        # One GEMM yields every head's delta, so each scan's time constant is a learned
+        # function of the input rather than RNG noise (docs/audit A53).
+        self.delta_proj = nn.Linear(d_model, n_heads * math.ceil(self.head_dim / 16), bias=True)
+
         self.conv1d = nn.Conv1d(d_model, d_model, kernel_size=d_conv, padding=d_conv-1, groups=d_model)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -1127,15 +1006,13 @@ class YvMultiHeadSSM(nn.Module):
         x = rearrange(x, 'b d l -> b l d')
 
         x = self.in_proj(x)
+        deltas = self.delta_proj(x).chunk(self.n_heads, dim=-1)
 
         x = rearrange(x, 'b l (h d) -> b l h d', h=self.n_heads)
 
         head_outputs = []
-        dt_rank = math.ceil(self.head_dim / 16)
-
         for i, head in enumerate(self.heads):
-            delta = torch.randn(batch, seq_len, dt_rank, device=x.device) * 0.1
-            head_out = head(x[:, :, i], delta)
+            head_out = head(x[:, :, i], deltas[i])
             head_outputs.append(head_out)
 
         output = torch.stack(head_outputs, dim=2)
@@ -1266,18 +1143,18 @@ class YvSSDuality(nn.Module):
         self.recurrent_mode = YvSelectiveScan(d_model, math.ceil(d_model / 16))
         self.conv_mode = YvVKernel(d_model, d_state)
 
-        self.mode_proj = nn.Linear(d_model, 1, bias=True)
-        nn.init.constant_(self.mode_proj.bias, 0.5)
+        # `mode_proj`/`mode_weight` were computed and then ignored by both branches — a dead
+        # parameter. The mode is chosen by sequence length as the docstring states, so the
+        # projection is removed and replaced by the delta projection the recurrent branch
+        # actually needs: delta was RNG noise, which made every forward non-reproducible and
+        # left the scan's time constant untrainable (docs/audit A53).
+        self.delta_proj = nn.Linear(d_model, math.ceil(d_model / 16), bias=True)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         batch, seq_len, d_model = x.shape
 
-        mode_weight = torch.sigmoid(self.mode_proj(x.mean(dim=1, keepdim=True)))
-        mode_weight = mode_weight.expand(-1, seq_len, -1)
-
         if seq_len <= self.threshold:
-            dt_rank = math.ceil(d_model / 16)
-            delta = torch.randn(batch, seq_len, dt_rank, device=x.device) * 0.1
+            delta = self.delta_proj(x)
             recurrent_out = self.recurrent_mode(x, delta)
             return recurrent_out
         else:

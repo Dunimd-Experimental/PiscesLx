@@ -9,12 +9,12 @@
 | 要求 | 证据 | 状态 |
 |---|---|---|
 | 交付真实可用权重 | `E:/pisceslx-coverage/ckpt/final_model.pt`（证据 `verify_evidence.txt`）：strict 载入 `missing=[]/unexpected=[]`、478/567 被更新、留出 next-token CE **9.5699 vs uniform 11.9293**（低 2.36 nats）→ `verdict=true` | **部分**：仅 0.01B 主机可行性档（281 个优化器步、约 4 万 token 语料），PPL≈1.43e4（verify 报告 14,327.52，uniform 基线约 1.52e5） 远不足以"执行任务"；0.1B/0.5B/7B 无任何权重；本轮增益未做单因子消融（覆盖率 vs `attention.scale` 入图叠加，docs/audit §43） |
-| 权重上 HF + ModelScope | **远端已就位**（`gitee`/`github` 主仓库 + `gitee-exp`/`github-exp` 私用仓库，`credential.helper=manager` 探测可读）；但**权重上传实现仍无**——`tools/publish/cli.py` 是 Docker 镜像的 export/build/push（`cmd_publish`/`cmd_export`），不是模型仓上传 | **受阻**：等 HF/ModelScope 账号 token；另有推送前的凭据泄露阻塞项（见 §44） |
+| 权重上 HF + ModelScope | **实现已落地**（§45）：`tools/publish/hub.py` 的 `PiscesLxHubConfig` + `PiscesLxModelHubPublisher.plan/publish`，CLI 子命令 `python -m tools.publish.cli hub --checkpoint … --model_config …`；默认 dry-run（`--publish` 才真上传），凭据只从 `HUGGINGFACE_TOKEN`/`MODELSCOPE_API_TOKEN` 环境变量读且永不回显，卡片含本地绝对路径即拒发，缺 SDK 直接报错不手搓 HTTP。实测 dry-run 列出 4 文件 / 252,910,748 B / 双仓目标。契约测试 `test_hub_publish_contract.py` 6/6，其中一条把"源码备份不含权重"变成可复核断言 | **部分**：实现与离线验证完成；**真实上传仍等账号 token**，且属外部可见动作需你点头 |
 | 源码上 Gitee + GitHub（不含权重） | `.gitignore` 已覆盖 `.pisceslx/` 与 `*.pt`；未创建远端 | **受阻**：等仓库；且 §13 禁止推主仓库，只能推私用仓库 |
 | 真实训练（非随机/非半成品） | `docs/iterations/2026-10-11-host-tier-training-link.md`；同种子两次运行权重 **567/567 逐位相同**（`utils/seed.PiscesLxDeterminism`） | 已达标（主机层范围） |
 | 无 mock/伪造 | `python -m tools.check` 14 条规则；`NO-STUB-NOR-TODO` 6 项在册待清 | **部分** |
 | MoE 非 Dense（全家族） | 12 份 `configs/model/*.yaml`（0.01B…1T）均含 `moe_num_experts/top_k`；`manage.py test --stage 10` 内 `test_moe_routing_contract` 8/8 | 已达标（配置与契约层面；1T 从未实跑） |
-| 查算分离为自身权重 | `model/core/block_field.py`、`block_addresser.py`；本轮修通注入后 `router/state_evolver/film_generators` 取得梯度，死元素 32.36M→21.41M；`test_sbf_mechanism` 17/17、`test_sbf_constants` | 已达标（机制与训练通路）；**314B 池的磁盘后备/异步传输未实现** |
+| 查算分离为自身权重 | 池内块权重与 MoE 专家实测在训练（`knowledge` 1,048,576 元素有梯度；`experts` 30/30 有梯度）；FiLM 注入接通后 `router/state_evolver/film_generators` 取得梯度，死元素 32.36M→21.41M；`test_sbf_mechanism` 17/17、`test_sbf_constants` | **未达标**：A21 — 寻址码本 `block_addresser.traces`（177,152 元素）`grad is None`，"调哪一块"从不学习（§48）；314B 池的磁盘后备/异步传输未实现 |
 | 模态恰为 4 种 | `model/multimodal/types.py::YvModality.CORE = (TEXT, IMAGE, AUDIO, VIDEO)`；代码中 `YvModality.DOCUMENT/AGENT` 命中数 **0**；`docs/design` 有说明 | 已达标 |
 | 编码规范 | `tools/check` 14 条：命名 / 顶层裸函数 / dmsc 日志 / 版权头逐字 / 硬编码 / 包导出真实性 等 | **部分**：NO-MAGIC-NUMBER 3854、NO-SILENT-EXCEPT 182、NO-STUB 6 待清 |
 | 证明正确且与实现一一对应 | `docs/proofs/00-sbf-theorems.md`、`01-multipath-reasoning.md`、`02-ink-variance-log-grid.md`（后者含"结论↔代码↔测试"对应表，且 8/8 套件执行） | **部分**：并非每个创新都有证明 |

@@ -43,6 +43,10 @@ from tools.check.checks_errors import (
     PiscesLxDetachedScalarCheck,
     PiscesLxSilentExceptCheck,
 )
+from tools.check.checks_config import (
+    PiscesLxDeadConfigFieldCheck,
+    PiscesLxUndeclaredConfigReadCheck,
+)
 from tools.check.checks_hygiene import (
     PiscesLxDanglingImportCheck,
     PiscesLxEngineIsolationCheck,
@@ -80,6 +84,8 @@ class PiscesLxCheckCatalog:
         PiscesLxDanglingImportCheck,
         PiscesLxDanglingExportCheck,
         PiscesLxIncompleteMarkerCheck,
+        PiscesLxUndeclaredConfigReadCheck,
+        PiscesLxDeadConfigFieldCheck,
     )
 
     @classmethod

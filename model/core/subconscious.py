@@ -33,7 +33,10 @@ class YvKnowledgeRouter(nn.Module):
     def __init__(self, cfg, device=None, dtype=None):
         super().__init__()
         self.hidden_size = cfg.hidden_size
-        self.expert_input_dim = cfg.knowledge_expert_input_dim
+        # Width of the router's expert-input projection. It used to be sized to match the
+        # disk-backed expert pool's input; with that pool removed (docs/audit A26) the
+        # projection only feeds `output_proj`, so it collapses to the knowledge width.
+        self.expert_input_dim = cfg.subconscious_knowledge_dim
         self.knowledge_dim = cfg.subconscious_knowledge_dim
         self.num_experts = cfg.knowledge_num_experts
         self.top_k = cfg.subconscious_expert_top_k
@@ -76,8 +79,24 @@ class YvSubconsciousState(nn.Module):
         self.hidden_proj = nn.Linear(self.hidden_size, self.state_dim, bias=False, device=device, dtype=dtype)
         self.knowledge_proj = nn.Linear(self.knowledge_dim, self.state_dim, bias=False, device=device, dtype=dtype)
 
-    def forward(self, s_prev: Optional[torch.Tensor], h: torch.Tensor, k_t: torch.Tensor) -> torch.Tensor:
-        h_pooled = h.mean(dim=1, keepdim=True)
+    @staticmethod
+    def _masked_mean(x: torch.Tensor, attention_mask: Optional[torch.Tensor]) -> torch.Tensor:
+        """Mean over the real (unpadded) positions of ``x [B, T, d]``.
+
+        Both the FiLM summary and the recurrent state used to average over *every* position,
+        padding included, and the result then modulated every position — so the content of
+        masked-out slots changed the logits of real tokens (measured leak 0.43 at real
+        positions, positive control 0.42; docs/audit A54).
+        """
+        if attention_mask is None:
+            return x.mean(dim=1, keepdim=True)
+        weights = attention_mask.to(dtype=x.dtype).unsqueeze(-1)
+        denominator = weights.sum(dim=1, keepdim=True).clamp_min(1.0)
+        return (x * weights).sum(dim=1, keepdim=True) / denominator
+
+    def forward(self, s_prev: Optional[torch.Tensor], h: torch.Tensor, k_t: torch.Tensor,
+                attention_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        h_pooled = self._masked_mean(h, attention_mask)
         h_proj = self.hidden_proj(h_pooled)
         k_proj = self.knowledge_proj(k_t.mean(dim=1, keepdim=True))
         if s_prev is None:
@@ -109,19 +128,19 @@ class YvSubconsciousSystem(nn.Module):
         ])
         self._current_s: Optional[torch.Tensor] = None
         self._current_k_t: Optional[torch.Tensor] = None
-        self.knowledge_pool = None
 
-    def set_knowledge_pool(self, pool):
-        self.knowledge_pool = pool
-
-    def get_film_params(self, h: torch.Tensor, layer_idx: int) -> Dict[str, torch.Tensor]:
+    def get_film_params(self, h: torch.Tensor, layer_idx: int,
+                        attention_mask: Optional[torch.Tensor] = None) -> Dict[str, torch.Tensor]:
         if layer_idx == 0:
-            expert_input, top_k_weights, top_k_indices, _ = self.router(h)
-            if self.knowledge_pool is not None:
-                expert_output = self.knowledge_pool(expert_input, top_k_indices, top_k_weights)
-            else:
-                expert_output = expert_input
-            expert_summary = expert_output.mean(dim=1, keepdim=True)
+            expert_input, _top_k_weights, _top_k_indices, _ = self.router(h)
+            # The knowledge pool is the model's own `YvSubconsciousBlockField`, applied once per
+            # forward in the trunk — not a second, disk-loaded pool here. A file-backed frozen
+            # (no_grad) pool is a vector store, which the P0 rule forbids: the activated blocks
+            # must be model weights that train. That parallel implementation was removed
+            # (docs/audit A26).
+            # Pooled over real positions only: the summary used to include masked slots, and
+            # the FiLM it produces modulates every position (docs/audit A54).
+            expert_summary = YvSubconsciousState._masked_mean(expert_input, attention_mask)
             k_t = self.router.output_proj(expert_summary)
             self._current_k_t = k_t
             # The state is carried across samples, so the incoming copy is detached:
@@ -130,7 +149,7 @@ class YvSubconsciousSystem(nn.Module):
             # layers below still read the live tensor, so the state evolver keeps its
             # gradient.
             carried = None if self._current_s is None else self._current_s.detach()
-            s_t = self.state_evolver(carried, h, k_t)
+            s_t = self.state_evolver(carried, h, k_t, attention_mask)
             self._current_s = s_t
         gamma, beta = self.film_generators[layer_idx](self._current_s)
         return {"scale": gamma, "shift": beta}
@@ -145,5 +164,3 @@ class YvSubconsciousSystem(nn.Module):
     def clear_cache(self):
         self._current_s = None
         self._current_k_t = None
-        if self.knowledge_pool is not None:
-            self.knowledge_pool.clear_cache()
