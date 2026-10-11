@@ -74,10 +74,13 @@ training:
   # 16 GB CPU box ranged 3.41-5.08 GB while other applications ran, and a 5.0 declaration
   # therefore refused every build (docs/audit/00 §38). 2.5 was tried next and the guard
   # aborted a run at step 270: the real peak of a 400-step 0.01B run with checkpoint writes
-  # is 2.51 GB, not the 2.07 GB measured across 20 steps without them. 3.0 clears that
-  # measured peak with margin while staying under the host's daytime availability, and a
-  # breach now writes a checkpoint before aborting so the steps already run are not lost.
-  memory_budget_gb: 3.0
+  # is 2.51 GB, not the 2.07 GB measured across 20 steps without them.
+  # 3.0 then cleared that peak, but on 2026-10-11 the same box offered only 2.68-2.69 GB of
+  # free commit with the rest of the workstation in use, so 3.0 refused every build
+  # outright - the ceiling has to track what this host actually has, not what it once had.
+  # 2.6 stays above the measured 2.51 GB peak and below today's availability. A breach still
+  # writes a checkpoint before aborting, so the steps already run are not lost.
+  memory_budget_gb: 2.6
   # Sized for one foreground invocation on this host: ~10 s/step at batch 1 / seq 32,
   # so 30 steps plus model construction and two checkpoint writes fit in one command.
   max_steps: 30

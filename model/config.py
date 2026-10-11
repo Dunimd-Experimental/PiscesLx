@@ -833,7 +833,8 @@ class YvConfig:
     use_tactic: bool = False
     tactic_cumulative_target: float = 0.8
     tactic_n_bins: int = 64
-    tactic_n_clusters: int = 4
+    tactic_block_size: int = 64
+    tactic_blocks_per_query: int = 8
 
     # Quartet: End-to-End FP4 Training
     use_quartet: bool = True
