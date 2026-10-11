@@ -856,18 +856,8 @@ class PiscesLxTrainingConfig:
         if isinstance(config.get("scheduler"), dict):
             self._apply_fields_to(self.scheduler, config["scheduler"], "scheduler")
         
-        if "data" in config:
-            data = config["data"]
-            if "batch_size" in data:
-                self.data.batch_size = data["batch_size"]
-            if "sequence_length" in data:
-                self.data.sequence_length = data["sequence_length"]
-            if "num_workers" in data:
-                self.data.num_workers = data["num_workers"]
-            if "pin_memory" in data:
-                self.data.pin_memory = data["pin_memory"]
-            if "prefetch_factor" in data:
-                self.data.prefetch_factor = data["prefetch_factor"]
+        if isinstance(config.get("data"), dict):
+            self._apply_fields_to(self.data, config["data"], "data")
         
         if "training" in config:
             train = config["training"]
@@ -879,24 +869,8 @@ class PiscesLxTrainingConfig:
             if isinstance(moe_cfg, dict):
                 self.moe.update(moe_cfg)
         
-        if "loss" in config:
-            loss = config["loss"]
-            if "loss_type" in loss:
-                self.loss_type = loss["loss_type"]
-            if "response_only_loss" in loss:
-                self.response_only_loss = loss["response_only_loss"]
-            if "beta" in loss:
-                self.beta = loss["beta"]
-            if "reference_free" in loss:
-                self.reference_free = loss["reference_free"]
-            if "ppo_epochs" in loss:
-                self.ppo_epochs = loss["ppo_epochs"]
-            if "clip_range" in loss:
-                self.clip_range = loss["clip_range"]
-            if "kl_coef" in loss:
-                self.kl_coef = loss["kl_coef"]
-            if "lambda_orpo" in loss:
-                self.lambda_orpo = loss["lambda_orpo"]
+        if isinstance(config.get("loss"), dict):
+            self._apply_fields_to(self, config["loss"], "loss")
         
         if "advanced_operators" in config:
             adv = config["advanced_operators"]

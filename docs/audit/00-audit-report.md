@@ -2070,3 +2070,16 @@ mamba3 `dt_proj.bias`/`conv_mode.D`、router `w_hicl`/`w_got` 的 warmup 休眠�
 
 （第一次打印 `FAIL` 是我自己的断言写错了期望值 —— 把 `name` 猜成 `adamw`。
 **又一次"检查器的期望值也要被核对"**：断言写错会把正确实现判成失败。）
+
+**A78 收口：`data:` 与 `loss:` 两段也统一到同一实现**。两段的键经核对全是真字段
+（data 的 `batch_size/sequence_length/num_workers/pin_memory/prefetch_factor/datasets`；
+loss 的 8 个键都声明在 `PiscesLxTrainingConfig` 自身），因此可安全走
+`_apply_fields_to`。用真实 YAML 实测：`data 1/32/0/False/2`、`loss_type=lm`、
+`response_only_loss=False`、`max_steps=30`、`seed=20261011`、`memory_budget_gb=4.6`、
+`optimizer adamw8bit/0.001/1.0` —— 全部正确落地。
+（第二次打印 `FAIL` 仍是我的断言写错：把 `max_steps` 猜成 150，而真实配置声明的是 30。
+**同一轮里两次"期望值写错"**：检查断言本身也要对照声明核对。）
+**仍未统一的 20 处 `if "<key>" in ...`** 分两类：① `distributed:` —— `enabled` 映射到
+`self.distributed`（重命名，非同名），通用实现会把它当未知键丢掉，故保留显式映射；
+② `moe:` / `advanced_operators:` / `fp8:` —— 整块 dict 直接赋给对象，不做逐键解析。
+这两类留在原样，并在报告中登记为"非同名映射需专门处理"。
