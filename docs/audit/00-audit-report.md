@@ -1610,7 +1610,35 @@ u_i = W_out · mean_j LN(mem_j)          R̃_i = (W Wᵀ)⁺ W u_i          R_i 
 
 闸门：`--stage 10` **13/13**；`tools/check` **4108 errors / 1 warning**。
 
-## 56 · A55：18 个稀疏门标量从不训练——定位与根因
+## 56 · A62 复核：`YvTokenSparseAttention` 的"稀疏"发生在算完之后
+
+**读码结论（`model/core/token_sparse_attn.py`，且它默认开启：`use_token_sparse_attn: bool = True`，
+经 `model/core/model.py:1182-1212` 在长文 refine 路径上执行）**：
+
+1. 第 158 行 `prelim_scores = Q_lr @ K_lrᵀ / √score_dim` 直接物化 **`[B, H, T, T]`**。
+   "稀疏"只发生在第 164-167 行：先算完全部 `T²` 分数，再用阈值把一部分置 `-inf`。于是
+   **显存与访存依旧是 O(B·H·T²)**，1M 上下文下 `T² = 10¹²` 项，与 P1 的
+   "1M 推理显存 ≤14GB" 直接冲突；prefill ≤15min 也不可能。
+2. 更根本的一层：该模块的掩码接口只接受 **`[T,T]`（或 `[B,T,T]`）**稠密掩码
+   （`_normalize_mask` 明确要求 `shape[-2:] == (seq_len, seq_len)`）。**因果掩码本身就是 `T²`**，
+   1M 下是 10¹² 字节——即使把打分改成块稀疏，只要仍要求整块因果矩阵就依然不可能。
+3. 阈值估计 `_estimate_threshold_via_histogram` 也按 `[B*H*T_q, T_k]` 展开，同样吃满 `T²`。
+
+**因此这不是"把 `matmul` 换成块循环"能了事的补丁**，而需要一次真正的块稀疏重写：
+块级代表（均值/池化）→ 块级打分 `[B,H,T/B_q,T/B_k]` → 按累计质量选块 → **仅在被选块内**做
+注意力，并配 **块内因果**（对角块三角、非对角块整块可见），掩码只以"块可见性位图"形式传入。
+`docs/proofs/` 需给出选择召回下界与复杂度证明。
+
+**本轮不动它有明确理由**：它默认开启且在活动路径上，盲改等于把一条 live 路径换成未验证的新核；
+用户已交代"接下来尽量不在本地跑测试"，而这类核必须靠数值对照才能确认。**登记为下一件需要
+完整窗口 + 可验证工况的施工项**，不在缺验证条件时草率替换。
+
+**已确认的正面性质**：`_normalize_mask` 里那套"显式按位置 reshape、拒绝把序列轴广播进 batch"
+的写法本身是对的（它在注释里记录了此前 `[T,T]` 掩码被 `unsqueeze` 循环撑错 rank 的 bug）。
+
+闸门：`--stage 10` **13/13**；`tools/check` **4108 errors / 1 warning**。
+
+## 57 · A55：18 个稀疏门标量从不训练——定位与根因
 
 **实测（先有数据再定性）**：0.01B 层、1100 token（已进入 DSA 分支 `kv_len > 1024`）、训练态一次
 前向+反传后，**18 个 `sparse_gate_*` 参数全部 `grad is None`**：
@@ -1639,3 +1667,22 @@ u_i = W_out · mean_j LN(mem_j)          R̃_i = (W Wᵀ)⁺ W u_i          R_i 
 "分支为何不走、门为何不在通路上"再定修法。
 
 闸门：`--stage 10` **13/13**；`tools/check` **4108 errors / 1 warning**。
+
+## 58 · A63 已清：删除零引用的 `model/core/embedding.py`（1282 行 / 8 个类）
+
+**核实（不是引用旧结论）**：对 `embedding.py` 里全部 8 个类逐个统计**排除自身与 `__init__.py` 再导出**
+后的引用数——`YvEmbeddingConfig`、`YvAdaptiveEmbeddingScaling`、`YvSinusoidalPositionEmbedding`、
+`YvLearnedPositionEmbedding`、`YvModalityEmbedding`、`YvTokenEmbedding`、`YvUnifiedEmbedding`、
+`YvMultimodalEmbeddingProjector` **全部为 0**；模块导入点只有 `model/core/__init__.py` 的再导出。
+即：整文件（1282 行）没有任何构造点，是一条与主干 `YvModel.embed`（普通 `nn.Embedding`）重复的
+旁路实现。
+
+**处置（§14：先减后加、禁功能重叠并存）**：删文件；同步删除 `model/core/__init__.py` 与
+`model/__init__.py` 里的导入与 `__all__` 条目（各 8 个名字，共 4 处）；并把 `model/core/__init__.py`
+模块 docstring 第 6/7 节里"存在独立嵌入模块"的说法改成事实（主干用 `YvModel.embed`，该旁路已删）。
+
+**证据**：`python -c "import model"` 正常；两个 `__init__.py` 编译通过；
+`grep` 全仓已无这 8 个类的残留引用（仅剩一处 docstring 已改）；
+`tools/check` **4108 → 4107 errors**，文件数 **347 → 346**。包导出真实性规则未报错。
+
+闸门：`tools/check` **4107 errors / 1 warning**（静态检查，未跑重型测试）。

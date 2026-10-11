@@ -73,12 +73,12 @@ Architecture Overview:
     6. Position Embeddings (YvRotaryEmbedding, YvYaRNRotaryEmbedding, etc.):
        - Rotary Position Embeddings (RoPE) with YaRN scaling
        - Dynamic position embeddings for long contexts
-       - Sinusoidal and learned positional embeddings
 
-    7. Embeddings (YvTokenEmbedding, YvMultimodalEmbeddingProjector, etc.):
-       - Token embeddings with adaptive scaling
-       - Modality-aware embeddings for multimodal inputs
-       - Unified embedding interface
+    7. Embeddings:
+       - The trunk's token embedding is `YvModel.embed` (a plain `nn.Embedding`), tied to the
+         LM head when `tie_word_embeddings` is set. The former standalone embedding module
+         (adaptive scaling / sinusoidal / learned / modality / unified variants) had no
+         construction site anywhere in the repository and was removed (docs/audit A63).
 
     8. Hybrid Architecture (YvHybridBlock, YvSelectiveSSM, etc.):
        - Hybrid attention-SSM blocks
@@ -204,17 +204,6 @@ from .norms import (
     YvDynamicYaRNRotaryEmbedding,
 )
 
-from .embedding import (
-    YvEmbeddingConfig,
-    YvAdaptiveEmbeddingScaling,
-    YvSinusoidalPositionEmbedding,
-    YvLearnedPositionEmbedding,
-    YvModalityEmbedding,
-    YvTokenEmbedding,
-    YvUnifiedEmbedding,
-    YvMultimodalEmbeddingProjector,
-)
-
 from .hybrid import (
     YvHybridBlock,
     YvHybridConfig,
@@ -322,14 +311,6 @@ __all__ = [
     "YvYaRNRotaryEmbedding",
     "YvDynamicYaRNRotaryEmbedding",
 
-    "YvEmbeddingConfig",
-    "YvAdaptiveEmbeddingScaling",
-    "YvSinusoidalPositionEmbedding",
-    "YvLearnedPositionEmbedding",
-    "YvModalityEmbedding",
-    "YvTokenEmbedding",
-    "YvUnifiedEmbedding",
-    "YvMultimodalEmbeddingProjector",
 
     "YvHybridBlock",
     "YvHybridConfig",
