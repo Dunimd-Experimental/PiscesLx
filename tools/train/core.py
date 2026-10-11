@@ -2107,10 +2107,29 @@ class PiscesLxTrainingOperator(object):
             if result.is_success() and result.output:
                 _LOG.debug("SFT operator used for forward pass")
                 return result.output
-        except Exception:
-            pass
+        except Exception as error:
+            self._report_operator_fallback("SFT", error)
         return None
     
+    def _report_operator_fallback(self, operator: str, error: Exception) -> None:
+        """Record that a specialised operator was skipped, once per operator.
+
+        The ``_try_*_operator`` probes below fall back to the generic path when their operator
+        cannot serve the batch - and used to swallow every failure with ``pass``, so a genuine
+        bug inside an operator was indistinguishable from an absent one (§7: a swallowed
+        exception is a hidden defect). One warning per operator keeps a per-step probe from
+        flooding the log while still making the degradation visible.
+        """
+        warned = getattr(self, "_operator_fallback_warned", None)
+        if warned is None:
+            warned = set()
+            self._operator_fallback_warned = warned
+        if operator in warned:
+            return
+        warned.add(operator)
+        _LOG.warning(f"Falling back past the {operator} operator: "
+                     f"{type(error).__name__}: {error}")
+
     def _try_dpo_operator(self, batch: Dict[str, torch.Tensor]) -> Optional[Dict[str, Any]]:
         try:
             from opss.train.dpo import PiscesLxDPOTrainingOperator as _DPOOp
@@ -2119,8 +2138,8 @@ class PiscesLxTrainingOperator(object):
             if result.is_success() and result.output:
                 _LOG.debug("DPO operator used for forward pass")
                 return result.output
-        except Exception:
-            pass
+        except Exception as error:
+            self._report_operator_fallback("DPO", error)
         return None
 
     def _try_grpo_operator(self, batch: Dict[str, torch.Tensor]) -> Optional[Dict[str, Any]]:
@@ -2131,8 +2150,8 @@ class PiscesLxTrainingOperator(object):
             if result.is_success() and result.output:
                 _LOG.debug("GRPO operator used for forward pass")
                 return result.output
-        except Exception:
-            pass
+        except Exception as error:
+            self._report_operator_fallback("GRPO", error)
         return None
 
     def _try_rlvr_operator(self, batch: Dict[str, torch.Tensor]) -> Optional[Dict[str, Any]]:
@@ -2143,8 +2162,8 @@ class PiscesLxTrainingOperator(object):
             if result.is_success() and result.output:
                 _LOG.debug("RLVR operator used for forward pass")
                 return result.output
-        except Exception:
-            pass
+        except Exception as error:
+            self._report_operator_fallback("RLVR", error)
         return None
 
     def _compute_distill_forward(self, batch: Dict[str, torch.Tensor]) -> Dict[str, Any]:
