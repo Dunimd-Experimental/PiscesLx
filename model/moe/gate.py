@@ -446,15 +446,24 @@ class YvMoEGate(nn.Module):
             active_count = soft_logits.sum(dim=-1).mean()
             budget_loss_term = 0.01 * (active_count - self.soft_moe_budget.detach()).square()
 
-        sparsity_loss = self.sparsity_reg_weight * (
+        total_loss = load_balance_loss + z_loss + budget_loss_term
+
+        return top_scores, top_idx, total_loss
+
+    def sparsity_loss(self) -> torch.Tensor:
+        """Sparsity regulariser over this router's four auxiliary heads.
+
+        Parameter-only, so the trunk folds it into the objective itself
+        (``YvModel.sparsity_objective``) instead of it riding inside the routing loss, where
+        the declared balancing mode kept the whole lump out of the objective and left the four
+        head weights untrained (docs/audit/00 A72).
+        """
+        return self.sparsity_reg_weight * (
             torch.sigmoid(self.sparse_gate_hicl).mean()
             + torch.sigmoid(self.sparse_gate_got).mean()
             + torch.sigmoid(self.sparse_gate_soft_moe).mean()
             + torch.sigmoid(self.sparse_gate_expert_orient).mean()
         )
-        total_loss = load_balance_loss + z_loss + budget_loss_term + sparsity_loss
-
-        return top_scores, top_idx, total_loss
 
     def prune_routing_heads(self, prune_threshold: float = 0.05) -> None:
         """Prune unused routing heads after training.
