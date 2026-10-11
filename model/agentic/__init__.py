@@ -72,7 +72,6 @@ Usage Example:
 
 Dependencies:
     - model.multimodal.agentic: Core agent implementation
-    - model.multimodal.enhanced_agentic: Advanced agent capabilities
     - model.multimodal.react_agentic: ReAct framework implementation
     - model.multimodal.state_machine: State management infrastructure
     - model.multimodal.tool_executor: Tool execution framework
@@ -83,12 +82,6 @@ Note:
 """
 
 from ..multimodal.agentic import YvAgentic
-from ..multimodal.enhanced_agentic import (
-    YvLongTermPlanner,
-    YvToolOrchestrator,
-    YvSelfEvaluator,
-    YvPersistentMemory,
-)
 from ..multimodal.react_agentic import YvReActAgentic, YvReActEngine
 from ..multimodal.state_machine import (
     YvStateMachine,
@@ -99,10 +92,6 @@ from ..multimodal.tool_executor import YvToolExecutor, YvToolResult
 
 __all__ = [
     "YvAgentic",
-    "YvLongTermPlanner",
-    "YvToolOrchestrator",
-    "YvSelfEvaluator",
-    "YvPersistentMemory",
     "YvReActAgentic",
     "YvReActEngine",
     "YvStateMachine",

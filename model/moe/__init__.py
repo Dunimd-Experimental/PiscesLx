@@ -61,12 +61,6 @@ Module Components:
        - YvFineGrainedRouter: Fine-grained expert segmentation
        - YvDeepSeekMoELayer: DeepSeek-V3 style complete MoE
     
-    4. Diversity Regularization (diversity.py):
-       - YvInformationBottleneckExpert: MINE-based mutual information estimation
-       - YvContrastiveDiversification: Contrastive learning for expert diversity
-       - YvDiversityRegularizer: Combined diversity regularization
-       - YvDiversityConfig: Configuration for diversity components
-
 Key Features:
     - Expert-choice routing with capacity constraints
     - Shared expert isolation (DeepSeek-V3 style)
@@ -135,14 +129,6 @@ from .expert import (
     YvExpertType,
     YvExpertMode,
 )
-from .diversity import (
-    YvDiversityConfig,
-    YvMineStatisticsNetwork,
-    YvInformationBottleneckExpert,
-    YvExpertEmbedding,
-    YvContrastiveDiversification,
-    YvDiversityRegularizer,
-)
 from .expert_init import YvGradientClusterInitializer, YvGradientStatistics, YvClusterInfo
 from .regularization import YvRegularizationConfig, YvExpertDiversityRegularizer
 
@@ -165,12 +151,6 @@ __all__ = [
     "YvExpertConfig",
     "YvExpertType",
     "YvExpertMode",
-    "YvDiversityConfig",
-    "YvMineStatisticsNetwork",
-    "YvInformationBottleneckExpert",
-    "YvExpertEmbedding",
-    "YvContrastiveDiversification",
-    "YvDiversityRegularizer",
     "YvGradientClusterInitializer",
     "YvGradientStatistics",
     "YvClusterInfo",
