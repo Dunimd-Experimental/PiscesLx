@@ -1744,3 +1744,61 @@ u_i = W_out · mean_j LN(mem_j)          R̃_i = (W Wᵀ)⁺ W u_i          R_i 
 `model/core/model.py` 与 `model/multimodal/memory.py` 使用。
 
 闸门：`import model` 通过；`tools/check` **4060 errors / 1 warning**；文件数 338 → 337。
+
+---
+
+## 61 · A68 + A62：轨迹宽度的反正弦定律，与"到位了才叫稀疏"的块稀疏重写
+
+**A68｜`block_trace_dim` 是常量 256，与 `d` 无关**（提交 `5b75e6a` → `7728b31`）。
+RPI 把每条 trace 写成块贡献方向经寻址投影 `W(k×d)` 的像，保序度只取决于 `k/d`：
+`τ(k,d) = (2/π)·arcsin(√(k/d)) + O(d^{-1/2})`。`d=4096` 时 `256/4096 = 1/16` ⇒ `τ = 0.162`，
+即 7B 上配对初始化几乎等于没做。旋钮换成它真正表达的量（`block_alignment_target`，默认 0.60
+作为下界），宽度按 `k = ⌈d·sin²(πτ/2)⌉` 反解并钳位 `[8, d]`。
+实测 Kendall τ 对照公式：`k=d` → 1.000 vs 1.000；`k=d/8` → 0.227 vs 0.230；
+`d=4096` 反解 `k=2681` → **0.613** vs 0.600。证明：`docs/proofs/04`（引理 1 RPI 恒等式 →
+引理 2 反正弦律 → 引理 3 随机子空间投影范数的 Beta 集中 → 定理 1），并附推论：
+`k=d ⇒ P=I`，RPI **精确**；地址器是全局单件，不计入块体积，故"314B = 628×0.5B"不受影响。
+
+**A62｜`YvTokenSparseAttention` 的"稀疏"发生在算完之后**（提交 `a263558`，证明 `docs/proofs/05`）。
+原 `forward` 仍物化整张 `[B,H,T,T]` 分数阵再逐元素掩码，稠密代价照付；**完全没有因果处理**
+（是否自回归取决于调用方是否恰好传了 2-D 因果掩码，传 `None` 就整层泄漏未来）；
+`scores == scores.max()` 在整行被掩时匹配**全部**条目 → softmax 出 NaN 并顺残差污染全网
+（A54 的补丁只把填充槽清零，掩盖而非消除）。改为真块稀疏：键分块、块代表取低秩键均值
+（论文的"聚类"用池化做成精确的）、每查询块按累积质量目标选块、只在选中块内算注意力。
+**同权重对照稠密因果实现**：预算 ≥ 块数时 `max|diff| = 1.04e-07`（精确等价）；块 0 只能
+看到自己；扰动任意 token 其之前位置输出逐位不变；全掩行不再出 NaN；四条投影梯度有限。
+过程中被实测抓出并当场修掉三处自己的错：查询轴漏补零、掩码轴未按选中键 gather、
+以及**因果性真泄漏**（查询侧用整块池化 → 第 8 行的选择依赖第 9–15 行；改为只用每块首行）。
+
+顺带：§60 表里列为"待手术"的 `moe/online_router.py`(732 行) 与 `tokenizer/builder.py`(255 行)
+已在 `5b75e6a` 一并摘除（含 `__init__` 再导出与 `__all__`），该两项关闭。
+
+---
+
+## 62 · A69–A72：把本地 0.1B 训练彻底挡住的四个缺陷
+
+现象：`manage.py train --model_size 0.1B` 连续两次死在构造阶段，报
+`refusing model build: it needs 2.60 GB but only 2.60 GB is usable`，看不出所以然。
+
+| 编号 | 缺陷 | 修法 | 提交 |
+|------|------|------|------|
+| **A69** | `_estimate_model_params` 以 `device='meta'` 数参数，而 `YvModel.__init__` 只在 `device is None` 时才过解析器，字符串 `'meta'` 被当设备对象用到 `device.type` 上 → `'str' object has no attribute 'type'`；异常被 `except` 吞掉，只留一句 "proceeding without feasibility check"，**可行性检查与按参数量算的构造余量整条链静默失效** | 传入的设备字符串一律规范化为 `torch.device`（`'meta'` 语义保留、解析器的自主选择不被覆盖） | `f2e9242` |
+| **A70** | `reserve_host_memory_for_build` 把 `required_gb` 设成**整个声明上限**，判据退化为"空余 ≥ 声明值"：声明值一旦诚实地等于本机真实余量就必然被拒；且报错把 2.596 与 2.600 都印成 "2.60"，读起来自相矛盾 | 按**实测 30.3 B/参数**（224.7M 参数构造提交 6.81 GB，§13）算构造自身占用（63.5M → 1.79 GB），仅在拿不到参数量时退回整个上限；报错精度提到三位小数 | `f2e9242` |
+| **A71** | `python tools/dev/verify_checkpoint.py …`（§13 记载的验收命令）报 `ModuleNotFoundError: No module named 'model'`：脚本路径运行时放入 `sys.path` 的是脚本自身目录而非仓库根。用 `-m` 能跑，这正是它一直没被发现的原因——而它是"权重是否为真实训练产物"的机检入口 | 导入 model 前把仓库根插入 `sys.path` | `a56ae3f` |
+| **A72** | 权重验证器量出 **80/578 个参数在 8 步后完全未变**，头两个是 `layers.0.attention.sparse_gate_lca`/`sparse_gate_dsa`。根因：`moe_aux_loss_free`（默认 `True`）是"**负载均衡**免调"的声明，却把整个 `total_aux_loss` 一起挡在目标函数外，而那包里混着**稀疏正则项**——它们不是负载均衡，挡掉等于让门参数永久死掉 | 稀疏正则只依赖参数、不依赖激活，故由 `YvModel.sparsity_objective()` 遍历子模块直接求和并**无条件**折入 `loss`（自身权重已在项内，默认 `1e-6`）；`YvHybridBlock` 补上与注意力对称的 `sparsity_loss()`；`_forward_ssm` 不再随输出返回正则；hybrid/blocks 的 `aux_loss` 恢复为纯负载均衡项 | `ded7eb4` |
+
+**修完后的实测**（0.1B / `configs/train/pretrain_cpu.yaml` / 本机 CPU）：
+- meta 探针真的数出 **48,599,146** 个参数（此前是 0 并静默跳过检查）；
+- 训练**真的开始**：`Multi-task loss` 10.198 → 9.220 → 7.543，普通 AdamW 连续多步下降；
+- 落地真检查点 `budget_abort_step_8.pt` / `final_model.pt`（各 744 MB）；
+- `verify_checkpoint`：`loadable.ok=True`（578 张量，missing/unexpected/shape_mismatch 全 0）、
+  `trained.ok=True`（**498/578 被优化器改动**）、`perplexity.mean_loss=12.32` vs 均匀 11.93
+  ⇒ 8 步尚不可用（`verdict=False`，工具按设计非零退出）。
+
+**由此暴露的下一道坎（已登记）**：
+1. **Ink 路径 SIGSEGV**：`optimizer.name: adamw8bit`（Ink：8-bit 状态 + GaLore + 稀疏选择）
+   在第 0 步原生崩溃（exit 139，无 Python 回溯）；换成 `adamw` 即正常。与 §A13/A16 的怀疑一致。
+2. **声明值仍是瓶颈**：足迹 2.65 GB 时被声明 2.60 GB 拦下（当时主机空余 8.84 GB），
+   声明已上调到 3.2（提交 `27c7704`）。步中超限仍会**先写检查点再中止**，跨窗口续训即靠此。
+3. 本机单次只能推进约 8–30 步，真正收敛必须走续训循环或换算力平台。
+
