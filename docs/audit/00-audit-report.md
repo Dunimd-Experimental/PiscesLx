@@ -2132,3 +2132,27 @@ loss 的 8 个键都声明在 `PiscesLxTrainingConfig` 自身），因此可安�
 `custom_image_keys` 等），且档位 YAML 里也设了这些键（`version`、`moe_routing_temperature`…）
 却进不了任何对象 —— 与 A77 同族。这是下一批的正题：**把被读的键补成声明**（默认值取读取点的
 现有回退值，不猜），而不是让它们继续藏在 `getattr` 的默认参数里。
+
+---
+
+## 71 · 配置契约收口（续）：`NO-UNDECLARED-CONFIG-READ` 81 → 10，`warnings` 归零
+
+两批补声明，默认值**全部取自各自读取点的现有回退**（`getattr(cfg, 'k', <回退>)` 里的字面量，
+不是新选择），并在注释里标注来源 `文件:行`：
+
+| 批次 | 范围 | 效果 |
+|---|---|---|
+| `356481a` | `model/**` 内读取的 **56** 个模型配置键 → 声明进 `YvConfig` | errors 3964→3900、warnings 1→**0**、`NO-UNDECLARED-CONFIG-READ` 81→17 |
+| 本轮 | 训练器读取的 **5** 个键（`enable_expert_evolution` / `active_modalities` / `ddp_static_graph` / `early_stopping_patience` / `task_weights`）→ 声明进 `PiscesLxTrainingConfig` | errors 3900→**3893**、该规则 17→**10** |
+
+门：`import model` / `import tools.train.core` 通过；`manage.py test --stage 10` **exit=0**。
+
+**一条预期且正确的副作用已验证**：档位 YAML 里原先**被静默丢弃**的键现在真的生效 ——
+`configs/model/0.1B.yaml` 声明 `moe_routing_temperature: 3.0`、`moe_temperature_min/max = 0.8/3.0`，
+补声明前它们进不了对象（A77 的"未知键静默丢弃"），补声明后实测
+`cfg.moe_routing_temperature == 3.0`、`min/max == 0.8/3.0` 全部落地。
+**即：12 个档位此前一直在声明一个从未生效的路由温度。**
+
+**剩余 10 条**（属 data 配置 6 条 `custom_*_keys` / `force_enable_*`、推理 2 条
+`use_tri_route` / `use_brownout_moe`、opss 2 条 `smoothing_factor` / `galore_scale`），
+各自属于不同的配置类，留作下一批。

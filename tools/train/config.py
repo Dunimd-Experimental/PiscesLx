@@ -645,6 +645,14 @@ class PiscesLxTrainingConfig:
     model_name: str = "pisceslx-base"
     output_dir: str = ".pisceslx/ckpt"
     memory_budget_gb: Optional[float] = None
+    #: Declared counterparts of knobs the trainer read with a silent fallback, so a stage file
+    #: can actually set them. Each default is the fallback at the read site it came from, not a
+    #: new choice (docs/audit/00 §70): an undeclared read is a hidden constant.
+    enable_expert_evolution: bool = True            # tools/train/core.py:573
+    active_modalities: List[str] = field(default_factory=list)   # tools/train/core.py:1042
+    ddp_static_graph: bool = True                   # tools/train/core.py:1592
+    early_stopping_patience: Optional[int] = None   # tools/train/core.py:3222
+    task_weights: Optional[Dict[str, float]] = None  # tools/train/orchestrator.py:1773
     #: Random-state pin for the run. A metric from an unseeded run is a sample, not a
     #: result: two host-tier runs at the same 400-step budget scored 11.2703 and 11.6965
     #: held-out nats (docs/audit/00 §37), a spread wider than several P1 margins.
